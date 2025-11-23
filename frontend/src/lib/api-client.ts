@@ -32,46 +32,6 @@ export interface SignOutResponse {
   success: boolean;
 }
 
-export interface ChatMessage {
-  role: string;
-  content: string;
-}
-
-export interface ChatRequest {
-  messages: ChatMessage[];
-  model?: string;
-}
-
-export interface Subscription {
-  id: string;
-  createdAt: string;
-  modifiedAt?: string | null;
-  amount: number;
-  currency: string;
-  recurringInterval: string;
-  status: string;
-  currentPeriodStart: string;
-  currentPeriodEnd: string;
-  cancelAtPeriodEnd: boolean;
-  canceledAt?: string | null;
-  startedAt: string;
-  endsAt?: string | null;
-  endedAt?: string | null;
-  customerId: string;
-  productId: string;
-  discountId?: string | null;
-  checkoutId: string;
-  customerCancellationReason?: string | null;
-  customerCancellationComment?: string | null;
-  metadata?: string | null;
-  customFieldData?: string | null;
-  userId?: string | null;
-}
-
-export interface SubscriptionResponse {
-  subscription?: Subscription | null;
-}
-
 export class APIClient {
   private baseURL: string;
 
@@ -127,25 +87,6 @@ export class APIClient {
 
   async getSession(): Promise<User> {
     return this.request<User>('/api/auth/session');
-  }
-
-  // Chat endpoint
-  async streamChat(messages: ChatMessage[]): Promise<Response> {
-    const url = `${this.baseURL}/api/chat`;
-
-    return fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      credentials: 'include',
-      body: JSON.stringify({ messages }),
-    });
-  }
-
-  // Subscription endpoint
-  async getUserSubscription(): Promise<SubscriptionResponse> {
-    return this.request<SubscriptionResponse>('/api/user/subscription');
   }
 
   // User profile endpoints

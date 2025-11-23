@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 )
 
 type UserHandler struct {
@@ -34,7 +35,7 @@ type UpdateProfileRequest struct {
 
 // GetProfile retrieves the current user's profile
 func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userId").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(string)
 
 	var profile UserProfile
 	err := h.db.Pool.QueryRow(
@@ -66,7 +67,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 // UpdateProfile updates the user's name
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value("userId").(string)
+	userID := r.Context().Value(middleware.UserIDKey).(string)
 
 	var req UpdateProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

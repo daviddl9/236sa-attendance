@@ -82,18 +82,10 @@ func main() {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(db))
 
-			// Chat endpoint
-			chatHandler := handlers.NewChatHandler()
-			r.Post("/chat", chatHandler.StreamChat)
-
 			// User profile routes
 			userHandler := handlers.NewUserHandler(db)
 			r.Get("/user/profile", userHandler.GetProfile)
 			r.Put("/user/profile", userHandler.UpdateProfile)
-
-			// User subscription
-			subscriptionHandler := handlers.NewSubscriptionHandler(db)
-			r.Get("/user/subscription", subscriptionHandler.GetUserSubscription)
 		})
 
 		// Webhook routes (verified via signature)

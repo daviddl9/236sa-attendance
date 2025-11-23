@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
-	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 )
 
 type WebhookHandler struct {
@@ -215,5 +214,3 @@ func verifyPolarSignature(payload []byte, signature, secret string) bool {
 	// Compare signatures
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
-
-var _ = models.Subscription{} // Ensure models package is imported
