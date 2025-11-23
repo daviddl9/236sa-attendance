@@ -11,9 +11,6 @@ import {
 } from '../components/ui/card';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
-import DashboardTopNav from '../components/dashboard/navbar';
-import { SectionCards } from '../components/dashboard/section-cards';
-import { ChartAreaInteractive } from '../components/dashboard/chart-interactive';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
@@ -112,28 +109,9 @@ function IndexComponent() {
     }
 
     if (user) {
-      return (
-        <DashboardTopNav>
-          <section className="flex flex-col items-start justify-start p-6 w-full">
-            <div className="w-full">
-              <div className="flex flex-col items-start justify-center gap-2">
-                <h1 className="text-3xl font-semibold tracking-tight">
-                  Interactive Chart
-                </h1>
-                <p className="text-muted-foreground">
-                  Interactive chart with data visualization and interactive elements.
-                </p>
-              </div>
-              <div className="@container/main flex flex-1 flex-col gap-2">
-                <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
-                  <SectionCards />
-                  <ChartAreaInteractive />
-                </div>
-              </div>
-            </div>
-          </section>
-        </DashboardTopNav>
-      );
+      // Redirect logged-in users to dashboard
+      window.location.href = '/dashboard';
+      return null;
     }
 
     return <SignInContent />;

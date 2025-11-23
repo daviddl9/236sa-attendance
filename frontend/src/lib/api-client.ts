@@ -147,6 +147,14 @@ export class APIClient {
   async getUserSubscription(): Promise<SubscriptionResponse> {
     return this.request<SubscriptionResponse>('/api/user/subscription');
   }
+
+  // User profile endpoints
+  async updateProfile(data: { name: string }): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/api/user/profile', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
 }
 
 export const apiClient = new APIClient();

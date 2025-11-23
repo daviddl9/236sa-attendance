@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"log"
@@ -30,7 +31,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Failed to close database: %v", err)
+		}
+	}()
 
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
@@ -45,8 +50,8 @@ func main() {
 		log.Fatalf("Failed to set dialect: %v", err)
 	}
 
-	if err := goose.Run(command, db, dir, args[2:]...); err != nil {
+	ctx := context.Background()
+	if err := goose.RunContext(ctx, command, db, dir, args[2:]...); err != nil {
 		log.Fatalf("Migration failed: %v", err)
 	}
 }
-

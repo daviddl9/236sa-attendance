@@ -1,6 +1,6 @@
 import { createFileRoute, Navigate } from '@tanstack/react-router';
 import { useAuth } from '../../lib/auth-context';
-import DashboardTopNav from '../../components/dashboard/navbar';
+import DashboardLayout from '../../components/dashboard/layout';
 import { SectionCards } from '../../components/dashboard/section-cards';
 import { ChartAreaInteractive } from '../../components/dashboard/chart-interactive';
 
@@ -24,7 +24,7 @@ function DashboardComponent() {
   }
 
   return (
-    <DashboardTopNav>
+    <DashboardLayout>
       <section className="flex flex-col items-start justify-start p-6 w-full">
         <div className="w-full">
           <div className="flex flex-col items-start justify-center gap-2">
@@ -43,7 +43,7 @@ function DashboardComponent() {
           </div>
         </div>
       </section>
-    </DashboardTopNav>
+    </DashboardLayout>
   );
 }
 
