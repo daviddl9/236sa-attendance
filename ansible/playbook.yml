@@ -1,0 +1,235 @@
+---
+- name: Deploy Go Next.js Starter to Production
+  hosts: all
+  become: yes
+  vars_files:
+    - group_vars/all.yml
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install system dependencies
+      apt:
+        name:
+          - git
+          - curl
+          - build-essential
+          - postgresql-client
+          - certbot
+          - python3-certbot-nginx
+        state: present
+
+    - name: Install PostgreSQL 17
+      block:
+        - name: Add PostgreSQL 17 repository
+          shell: |
+            echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+            wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
+          args:
+            creates: /etc/apt/sources.list.d/pgdg.list
+
+        - name: Update apt cache after adding PostgreSQL repo
+          apt:
+            update_cache: yes
+
+        - name: Install PostgreSQL 17
+          apt:
+            name:
+              - postgresql-17
+              - postgresql-contrib-17
+            state: present
+
+        - name: Ensure PostgreSQL is running
+          systemd:
+            name: postgresql
+            state: started
+            enabled: yes
+
+    - name: Create PostgreSQL database and user
+      become_user: postgres
+      block:
+        - name: Create application database
+          postgresql_db:
+            name: "{{ db_name }}"
+            state: present
+
+        - name: Create application database user
+          postgresql_user:
+            name: "{{ db_user }}"
+            password: "{{ db_password }}"
+            db: "{{ db_name }}"
+            priv: ALL
+            state: present
+
+    - name: Install Go 1.23.3
+      block:
+        - name: Download Go 1.23.3
+          get_url:
+            url: https://go.dev/dl/go1.23.3.linux-amd64.tar.gz
+            dest: /tmp/go1.23.3.linux-amd64.tar.gz
+            checksum: sha256:a0afb9744c00648bafb1b90b4aba5bdb86f424f02f9275399ce0c20b93a2c3a8
+
+        - name: Remove old Go installation
+          file:
+            path: /usr/local/go
+            state: absent
+
+        - name: Extract Go
+          unarchive:
+            src: /tmp/go1.23.3.linux-amd64.tar.gz
+            dest: /usr/local
+            remote_src: yes
+
+        - name: Add Go to PATH
+          lineinfile:
+            path: /etc/profile.d/go.sh
+            line: 'export PATH=$PATH:/usr/local/go/bin'
+            create: yes
+
+    - name: Create application user
+      user:
+        name: "{{ app_user }}"
+        shell: /bin/bash
+        create_home: yes
+        system: yes
+
+    - name: Create application directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Clone application repository
+      become_user: "{{ app_user }}"
+      git:
+        repo: "{{ git_repo }}"
+        dest: "{{ app_dir }}"
+        version: "{{ git_branch | default('main') }}"
+        force: yes
+      when: git_repo is defined
+
+    - name: Copy environment file
+      template:
+        src: templates/backend.env.j2
+        dest: "{{ app_dir }}/backend/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0600'
+
+    - name: Run database migrations
+      become_user: "{{ app_user }}"
+      shell: |
+        PGPASSWORD="{{ db_password }}" psql -h localhost -U "{{ db_user }}" -d "{{ db_name }}" -f "{{ app_dir }}/backend/migrations/001_initial_schema.sql"
+      args:
+        chdir: "{{ app_dir }}/backend"
+
+    - name: Build Go application
+      become_user: "{{ app_user }}"
+      shell: |
+        export PATH=$PATH:/usr/local/go/bin
+        cd "{{ app_dir }}/backend"
+        go mod download
+        go build -o bin/api ./cmd/api
+      args:
+        chdir: "{{ app_dir }}/backend"
+
+    - name: Create systemd service file
+      template:
+        src: templates/app.service.j2
+        dest: /etc/systemd/system/{{ app_name }}.service
+        mode: '0644'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start application service
+      systemd:
+        name: "{{ app_name }}"
+        state: restarted
+        enabled: yes
+
+    - name: Install and configure Nginx
+      block:
+        - name: Install Nginx
+          apt:
+            name: nginx
+            state: present
+
+        - name: Create Nginx configuration
+          template:
+            src: templates/nginx.conf.j2
+            dest: /etc/nginx/sites-available/{{ app_name }}
+            mode: '0644'
+
+        - name: Enable Nginx site
+          file:
+            src: /etc/nginx/sites-available/{{ app_name }}
+            dest: /etc/nginx/sites-enabled/{{ app_name }}
+            state: link
+
+        - name: Remove default Nginx site
+          file:
+            path: /etc/nginx/sites-enabled/default
+            state: absent
+
+        - name: Test Nginx configuration
+          command: nginx -t
+          register: nginx_test
+          changed_when: false
+
+        - name: Reload Nginx
+          systemd:
+            name: nginx
+            state: reloaded
+          when: nginx_test.rc == 0
+
+    - name: Configure firewall
+      block:
+        - name: Install ufw
+          apt:
+            name: ufw
+            state: present
+
+        - name: Allow SSH
+          ufw:
+            rule: allow
+            port: '22'
+            proto: tcp
+
+        - name: Allow HTTP
+          ufw:
+            rule: allow
+            port: '80'
+            proto: tcp
+
+        - name: Allow HTTPS
+          ufw:
+            rule: allow
+            port: '443'
+            proto: tcp
+
+        - name: Enable UFW
+          ufw:
+            state: enabled
+
+    - name: Setup SSL with Let's Encrypt (optional)
+      command: certbot --nginx -d {{ domain_name }} --non-interactive --agree-tos --email {{ admin_email }}
+      when: domain_name is defined and admin_email is defined
+      ignore_errors: yes
+
+  handlers:
+    - name: restart app
+      systemd:
+        name: "{{ app_name }}"
+        state: restarted
+
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded

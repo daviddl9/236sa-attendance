@@ -1,0 +1,28 @@
+[Unit]
+Description={{ app_name }} Go Backend
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_dir }}/backend
+Environment="PATH=/usr/local/go/bin:/usr/bin:/bin"
+EnvironmentFile={{ app_dir }}/backend/.env
+ExecStart={{ app_dir }}/backend/bin/api
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier={{ app_name }}
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths={{ app_dir }}
+
+[Install]
+WantedBy=multi-user.target

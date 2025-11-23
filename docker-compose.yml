@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: go-nextjs-postgres
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+    container_name: go-nextjs-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app?sslmode=disable
+      PORT: 8080
+      # Variables from ./backend/.env: FRONTEND_URL, BACKEND_URL, ENVIRONMENT, 
+      # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET are loaded via env_file above
+      # These can be overridden here if needed:
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      BACKEND_URL: ${BACKEND_URL:-http://localhost:8080}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend:/app
+    networks:
+      - app-network
+
+  # Uncomment when frontend is ready
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: go-nextjs-frontend
+  #   depends_on:
+  #     - backend
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: http://localhost:8080
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #   networks:
+  #     - app-network
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge

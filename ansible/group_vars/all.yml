@@ -1,0 +1,36 @@
+---
+# Application configuration
+app_name: go-nextjs-starter
+app_user: appuser
+app_dir: /opt/go-nextjs-starter
+app_port: 8080
+
+# Git repository (update with your repo URL)
+git_repo: https://github.com/yourusername/go-nextjs-starter.git
+git_branch: main
+
+# Database configuration
+db_name: app
+db_user: appuser
+db_password: "{{ vault_db_password | default('changeme_insecure_password') }}"
+db_host: localhost
+db_port: 5432
+
+# Application environment
+environment: production
+frontend_url: "https://{{ domain_name | default('localhost') }}"
+
+# Optional: Domain and SSL
+# domain_name: yourdomain.com
+# admin_email: admin@yourdomain.com
+
+# Optional: OAuth
+# google_client_id: your-google-client-id
+# google_client_secret: "{{ vault_google_client_secret }}"
+
+# Optional: OpenAI
+# openai_api_key: "{{ vault_openai_api_key }}"
+
+# Optional: Polar
+# polar_access_token: "{{ vault_polar_access_token }}"
+# polar_webhook_secret: "{{ vault_polar_webhook_secret }}"

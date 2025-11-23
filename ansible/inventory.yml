@@ -1,0 +1,25 @@
+all:
+  children:
+    production:
+      hosts:
+        app_server:
+          ansible_host: your-server-ip
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_python_interpreter: /usr/bin/python3
+      vars:
+        app_name: go-nextjs-starter
+        app_user: appuser
+        app_dir: /opt/go-nextjs-starter
+
+    staging:
+      hosts:
+        staging_server:
+          ansible_host: staging-server-ip
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_python_interpreter: /usr/bin/python3
+      vars:
+        app_name: go-nextjs-starter-staging
+        app_user: appuser
+        app_dir: /opt/go-nextjs-starter-staging
