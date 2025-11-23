@@ -13,9 +13,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Settings2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
 
 export const Route = createFileRoute("/dashboard/settings")({
@@ -57,11 +56,11 @@ function SettingsPage() {
 
   if (!user) {
     return (
-      <div className="p-8">
-        <div className="max-w-4xl mx-auto">
+      <DashboardLayout>
+        <div className="flex flex-col gap-6 p-6">
           <p>Loading...</p>
         </div>
-      </div>
+      </DashboardLayout>
     );
   }
 
@@ -69,56 +68,51 @@ function SettingsPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center gap-2 mb-6">
-            <h1 className="text-3xl font-bold">Settings</h1>
-          </div>
+      <div className="flex flex-col gap-6 p-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
+          <p className="text-muted-foreground mt-2">
+            Manage your account settings and preferences
+          </p>
+        </div>
 
-          <Tabs defaultValue="profile" className="w-full">
-            <TabsList className="grid w-full grid-cols-1 max-w-[400px]">
-              <TabsTrigger value="profile">Profile</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="profile" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Profile Picture</CardTitle>
-                  <CardDescription>
-                    Your profile picture from Google
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex items-center gap-4">
-                  <Avatar className="h-24 w-24">
+        <div className="w-full max-w-4xl">
+          <div className="space-y-6">
+            {/* Profile Information */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Settings2 className="h-5 w-5" />
+                  Profile Information
+                </CardTitle>
+                <CardDescription>
+                  Update your personal information and profile settings
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center gap-4">
+                  <Avatar className="h-20 w-20">
                     <AvatarImage src={user.image || undefined} />
-                    <AvatarFallback className="text-2xl">{userInitial}</AvatarFallback>
+                    <AvatarFallback className="text-xl">{userInitial}</AvatarFallback>
                   </Avatar>
                   <div className="text-sm text-muted-foreground">
                     <p>Profile picture is synced from your Google account</p>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Profile Information</CardTitle>
-                  <CardDescription>
-                    Update your profile details
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleProfileUpdate} className="space-y-4">
+                <form onSubmit={handleProfileUpdate}>
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="name">Name</Label>
                       <Input
                         id="name"
                         value={name}
                         onChange={(e) => setName(e.target.value)}
-                        placeholder="Your name"
+                        placeholder="Enter your name"
                         disabled={loading}
                       />
                     </div>
-
                     <div className="space-y-2">
                       <Label htmlFor="email">Email</Label>
                       <Input
@@ -126,22 +120,17 @@ function SettingsPage() {
                         type="email"
                         value={user.email}
                         disabled
-                        className="bg-muted"
                       />
-                      <p className="text-sm text-muted-foreground">
-                        Email cannot be changed
-                      </p>
                     </div>
+                  </div>
 
-                    <Button type="submit" disabled={loading}>
-                      {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Save Changes
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+                  <Button type="submit" disabled={loading} className="mt-6">
+                    {loading ? "Saving..." : "Save Changes"}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     </DashboardLayout>

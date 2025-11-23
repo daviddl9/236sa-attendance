@@ -68,7 +68,7 @@ export default function UserProfile({ mini }: { mini?: boolean }) {
         <DropdownMenuLabel>My Account</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => navigate({ to: "/dashboard" })}>
+          <DropdownMenuItem onClick={() => navigate({ to: "/dashboard/settings" })}>
             Settings
             <DropdownMenuShortcut>⇧⌘P</DropdownMenuShortcut>
           </DropdownMenuItem>
