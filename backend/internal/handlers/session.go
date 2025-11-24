@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/go-chi/chi/v5"
-	"github.com/skip2/go-qrcode"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -34,7 +32,6 @@ type CreateSessionRequest struct {
 
 type SessionResponse struct {
 	models.AttendanceSession
-	QRCodeImage string `json:"qrCodeImage"` // Base64 encoded PNG
 }
 
 // CreateSession creates a new attendance session with QR code
@@ -76,20 +73,11 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	qrSecret := generateSessionToken() // Use session token generator for QR secret
 	now := time.Now()
 
-	// Create QR code data: session_id:secret:timestamp
-	qrData := fmt.Sprintf("%s:%s:%d", sessionID, qrSecret, now.Unix())
-	qrCode := qrData // Store the QR data directly
-
-	// Generate QR code PNG
-	qrPNG, err := qrcode.Encode(qrData, qrcode.Medium, 256)
-	if err != nil {
-		http.Error(w, "Failed to generate QR code", http.StatusInternalServerError)
-		return
-	}
-	qrCodeImage := base64.StdEncoding.EncodeToString(qrPNG)
+	// Store QR secret for frontend to construct URL
+	qrCode := fmt.Sprintf("%s:%s", sessionID, qrSecret)
 
 	// Insert session into database (start_time defaults to NOW() in database)
-	_, err = h.db.Pool.Exec(ctx, `
+	_, err := h.db.Pool.Exec(ctx, `
 		INSERT INTO attendance_session (
 			id, name, qr_code, qr_code_secret, scope, batteries,
 			status, created_by, start_time, end_time, "createdAt", "updatedAt"
@@ -128,7 +116,6 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	response := SessionResponse{
 		AttendanceSession: session,
-		QRCodeImage:       qrCodeImage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -353,35 +340,6 @@ func (h *SessionHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "Session closed successfully"})
-}
-
-// GetSessionQR retrieves the QR code image for a session
-func (h *SessionHandler) GetSessionQR(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	sessionID := chi.URLParam(r, "id")
-
-	var qrCode, qrSecret string
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code, qr_code_secret FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrCode, &qrSecret)
-
-	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-
-	// Reconstruct QR data
-	qrData := fmt.Sprintf("%s:%s:%d", sessionID, qrSecret, time.Now().Unix())
-
-	// Generate QR code PNG
-	qrPNG, err := qrcode.Encode(qrData, qrcode.Medium, 256)
-	if err != nil {
-		http.Error(w, "Failed to generate QR code", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "image/png")
-	w.Write(qrPNG)
 }
 
 // ExportSessionCSV exports session attendance to CSV

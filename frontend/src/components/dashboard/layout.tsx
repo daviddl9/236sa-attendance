@@ -1,5 +1,6 @@
 import Sidebar from "@/components/sidebar";
 import DashboardTopNav from "./navbar";
+import FirstTimeSignInModal from "./first-time-signin-modal";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -8,6 +9,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <main className="flex-1 overflow-y-auto">
         <DashboardTopNav>{children}</DashboardTopNav>
       </main>
+      <FirstTimeSignInModal />
     </div>
   );
 }

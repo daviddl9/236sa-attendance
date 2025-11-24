@@ -13,9 +13,25 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { Settings2 } from "lucide-react";
 import { apiClient } from "@/lib/api-client";
+
+const VALID_RANKS = [
+  'REC', 'PTE', 'LCP', 'CPL', 'CFC',
+  '3SG', '2SG', '1SG', 'SSG', 'MSG',
+  '3WO', '2WO', '1WO', 'MWO', 'SWO',
+  '2LT', 'LTA', 'CPT', 'MAJ', 'LTC',
+];
+
+const BATTERIES = ['HQ', 'Alpha', 'Bravo'];
 
 export const Route = createFileRoute("/dashboard/settings")({
   component: SettingsPage,
@@ -24,12 +40,22 @@ export const Route = createFileRoute("/dashboard/settings")({
 function SettingsPage() {
   const { user, refetch } = useAuth();
   const [name, setName] = useState("");
+  const [rank, setRank] = useState<string>("");
+  const [battery, setBattery] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   // Initialize form with user data
   useEffect(() => {
     if (user) {
       setName(user.fullName || "");
+      // Only set rank/battery if they exist (not null/undefined)
+      setRank(user.rank ?? "");
+      setBattery(user.battery ?? "");
+    } else {
+      // Reset form when user is not available
+      setName("");
+      setRank("");
+      setBattery("");
     }
   }, [user]);
 
@@ -43,7 +69,19 @@ function SettingsPage() {
 
     setLoading(true);
     try {
-      await apiClient.updateProfile({ fullName: name });
+      const updateData: { fullName: string; rank?: string; battery?: string } = {
+        fullName: name,
+      };
+      
+      if (rank) {
+        updateData.rank = rank;
+      }
+      
+      if (battery) {
+        updateData.battery = battery;
+      }
+      
+      await apiClient.updateProfile(updateData);
       await refetch();
       toast.success("Profile updated successfully");
     } catch (error) {
@@ -112,26 +150,48 @@ function SettingsPage() {
                         disabled={loading}
                       />
                     </div>
-                    {user.rank && (
-                      <div className="space-y-2">
-                        <Label htmlFor="rank">Rank</Label>
-                        <Input
-                          id="rank"
-                          value={user.rank}
-                          disabled
-                        />
-                      </div>
-                    )}
-                    {user.battery && (
-                      <div className="space-y-2">
-                        <Label htmlFor="battery">Battery</Label>
-                        <Input
-                          id="battery"
-                          value={user.battery}
-                          disabled
-                        />
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      <Label htmlFor="rank">Rank</Label>
+                      <Select
+                        key={`rank-select-${user?.id}-${rank || 'none'}`}
+                        value={rank || "none"}
+                        onValueChange={(value) => setRank(value === "none" ? "" : value)}
+                        disabled={loading}
+                      >
+                        <SelectTrigger id="rank">
+                          <SelectValue placeholder="Select Rank" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          {VALID_RANKS.map((r) => (
+                            <SelectItem key={r} value={r}>
+                              {r}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="battery">Battery</Label>
+                      <Select
+                        key={`battery-select-${user?.id}-${battery || 'none'}`}
+                        value={battery || "none"}
+                        onValueChange={(value) => setBattery(value === "none" ? "" : value)}
+                        disabled={loading}
+                      >
+                        <SelectTrigger id="battery">
+                          <SelectValue placeholder="Select Battery" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">None</SelectItem>
+                          {BATTERIES.map((b) => (
+                            <SelectItem key={b} value={b}>
+                              {b}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
                   <Button type="submit" disabled={loading} className="mt-6">

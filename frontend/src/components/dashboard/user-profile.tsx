@@ -18,8 +18,15 @@ export default function UserProfile({ mini }: { mini?: boolean }) {
   const navigate = useNavigate();
 
   const handleSignOut = async () => {
-    await signOut();
-    navigate({ to: "/sign-in" });
+    try {
+      await signOut();
+      // Use window.location for full page reload to ensure clean state
+      window.location.href = '/sign-in';
+    } catch (error) {
+      console.error('Sign out error:', error);
+      // Redirect anyway to ensure user is logged out
+      window.location.href = '/sign-in';
+    }
   };
 
   if (isLoading) {

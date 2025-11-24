@@ -39,10 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try {
       await apiClient.signOut();
+      // Clear manual user state
       setManualUser(null);
+      // Invalidate and remove session query data
+      queryClient.setQueryData(['session'], null);
+      queryClient.invalidateQueries({ queryKey: ['session'] });
+      // Clear all query cache
       queryClient.clear();
     } catch (error) {
       console.error('Sign out error:', error);
+      // Even if API call fails, clear local state
+      setManualUser(null);
+      queryClient.setQueryData(['session'], null);
+      queryClient.clear();
     }
   };
 

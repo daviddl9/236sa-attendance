@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +25,121 @@ func NewAttendanceHandler(db *database.DB) *AttendanceHandler {
 
 type MarkAttendanceRequest struct {
 	QRData string `json:"qrData"`
+}
+
+// HandleQRScan handles QR code scan from URL (public endpoint)
+func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	token := chi.URLParam(r, "token")
+
+	// Parse token: sessionID:secret
+	parts := strings.Split(token, ":")
+	if len(parts) != 2 {
+		http.Error(w, "Invalid QR code format", http.StatusBadRequest)
+		return
+	}
+
+	sessionID := parts[0]
+	secret := parts[1]
+
+	// Verify session exists and is active
+	var qrSecret string
+	var status string
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT qr_code_secret, status FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret, &status)
+
+	if err != nil {
+		http.Error(w, "Invalid session", http.StatusNotFound)
+		return
+	}
+
+	if status != models.SessionStatusActive {
+		http.Error(w, "Session is not active", http.StatusBadRequest)
+		return
+	}
+
+	// Verify secret matches
+	if secret != qrSecret {
+		http.Error(w, "Invalid QR code", http.StatusUnauthorized)
+		return
+	}
+
+	// Check if user is authenticated (optional - check cookie directly)
+	frontendURL := getEnv("FRONTEND_URL", "http://localhost:5173")
+	var userID string
+	var user *models.User
+
+	cookie, err := r.Cookie("session")
+	if err == nil {
+		// Try to validate session
+		err = h.db.Pool.QueryRow(ctx, `
+			SELECT "userId" FROM session
+			WHERE token = $1 AND "expiresAt" > NOW()
+		`, cookie.Value).Scan(&userID)
+
+		if err == nil {
+			// User is authenticated - load user data
+			user = &models.User{}
+			err = h.db.Pool.QueryRow(ctx, `
+				SELECT id, "full_name", rank, battery, "nric_last4", dob, is_superadmin, "createdAt", "updatedAt"
+				FROM "user" WHERE id = $1
+			`, userID).Scan(
+				&user.ID, &user.FullName, &user.Rank, &user.Battery,
+				&user.NRICLast4, &user.DOB, &user.IsSuperadmin,
+				&user.CreatedAt, &user.UpdatedAt,
+			)
+			if err != nil {
+				user = nil
+			}
+		}
+	}
+
+	if user == nil {
+		// Not authenticated - redirect to registration page
+		// Use frontend route instead of API route for redirect
+		frontendQRPath := fmt.Sprintf("/qr/%s", token)
+		redirectURL := fmt.Sprintf("%s/attendance/register?redirect=%s&session=%s", frontendURL, frontendQRPath, sessionID)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
+
+	// User is authenticated - check if already marked
+	var existingID string
+	err = h.db.Pool.QueryRow(ctx, `
+		SELECT id FROM attendance_record WHERE session_id = $1 AND user_id = $2
+	`, sessionID, userID).Scan(&existingID)
+
+	if err == nil {
+		// Already marked - redirect to success page
+		http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
+		return
+	}
+
+	// Mark attendance
+	recordID := generateID()
+	now := time.Now()
+	_, err = h.db.Pool.Exec(ctx, `
+		INSERT INTO attendance_record (
+			id, session_id, user_id, marked_at, marking_method, "createdAt", "updatedAt"
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, recordID, sessionID, userID, now, models.MarkingMethodQRScan, now, now)
+
+	if err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+
+	// Redirect to success page
+	http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 // MarkAttendance marks attendance via QR code scan
@@ -112,7 +228,7 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "Attendance marked successfully",
+		"message":  "Attendance marked successfully",
 		"recordId": recordID,
 	})
 }
@@ -229,7 +345,7 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":     fmt.Sprintf("Marked attendance for %d user(s)", successCount),
+		"message":      fmt.Sprintf("Marked attendance for %d user(s)", successCount),
 		"successCount": successCount,
 		"errors":       errors,
 	})
@@ -282,4 +398,3 @@ func (h *AttendanceHandler) RemoveAttendance(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "Attendance removed successfully"})
 }
-

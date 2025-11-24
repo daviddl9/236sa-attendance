@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
@@ -11,13 +11,11 @@ import {
   CardTitle,
 } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
-import { useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   ArrowLeft,
   Download,
   X,
-  QrCode,
-  Users,
   FileDown,
   FileSpreadsheet,
 } from 'lucide-react';
@@ -32,9 +30,7 @@ export const Route = createFileRoute('/dashboard/sessions/$sessionId')({
 function SessionDetailPage() {
   const { sessionId } = Route.useParams();
   const { user } = useAuth();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [qrImageUrl, setQrImageUrl] = useState<string | null>(null);
 
   const { data: session, isLoading } = useQuery({
     queryKey: ['session', sessionId],
@@ -61,20 +57,41 @@ function SessionDetailPage() {
 
   const canClose = user?.isSuperadmin || session?.createdBy === user?.id;
 
-  const handleDownloadQR = async () => {
-    try {
-      const blob = await apiClient.getSessionQR(sessionId);
-      const url = URL.createObjectURL(blob);
-      setQrImageUrl(url);
+  // Generate QR code URL from session data
+  // session.qrCode may contain "sessionID:secret" or "sessionID:secret:timestamp" format
+  // Extract secret (second part) and construct URL with session.id:secret
+  // Use frontend route for simpler URL that works with frontend domain
+  const qrCodeUrl = session
+    ? (() => {
+        const parts = session.qrCode.split(':');
+        const secret = parts.length >= 2 ? parts[1] : '';
+        return `${window.location.origin}/qr/${session.id}:${secret}`;
+      })()
+    : '';
 
+  const handleDownloadQR = () => {
+    if (!session || !qrCodeUrl) return;
+
+    // Get the QR code SVG element
+    const svgElement = document.querySelector('svg[data-qr-code]') as SVGElement;
+    if (!svgElement) {
+      toast.error('QR code not found');
+      return;
+    }
+
+    try {
+      // Convert SVG to blob and download
+      const svgData = new XMLSerializer().serializeToString(svgElement);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${session?.name || 'session'}_qr.png`;
+      a.download = `${session.name || 'session'}_qr.svg`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (error) {
+    } catch {
       toast.error('Failed to download QR code');
     }
   };
@@ -95,7 +112,7 @@ function SessionDetailPage() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       toast.success(`Exported to ${format.toUpperCase()}`);
-    } catch (error) {
+    } catch {
       toast.error(`Failed to export to ${format.toUpperCase()}`);
     }
   };
@@ -161,14 +178,16 @@ function SessionDetailPage() {
               <CardDescription>Scan this QR code to mark attendance</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col items-center gap-4">
-              {qrImageUrl ? (
-                <img src={qrImageUrl} alt="QR Code" className="w-64 h-64" />
+              {session && qrCodeUrl ? (
+                <div className="bg-white p-4 rounded-lg">
+                  <QRCodeSVG value={qrCodeUrl} size={256} level="H" data-qr-code />
+                </div>
               ) : (
                 <div className="w-64 h-64 bg-muted flex items-center justify-center rounded-lg">
-                  <QrCode className="h-32 w-32 text-muted-foreground" />
+                  <div className="text-muted-foreground">Loading QR Code...</div>
                 </div>
               )}
-              <Button onClick={handleDownloadQR} variant="outline">
+              <Button onClick={handleDownloadQR} variant="outline" disabled={!session || !qrCodeUrl}>
                 <Download className="mr-2 h-4 w-4" />
                 Download QR Code
               </Button>
@@ -228,7 +247,7 @@ function SessionDetailPage() {
           </CardHeader>
         </Card>
 
-        {analytics && analytics.missingUsers.length > 0 && (
+        {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>Missing Users</CardTitle>

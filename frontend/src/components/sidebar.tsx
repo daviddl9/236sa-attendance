@@ -1,8 +1,9 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { HomeIcon, Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
+import { Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
+import { canAccessCommanderFeatures, isSuperadmin } from "../lib/user-utils";
 
 interface NavItem {
   label: string;
@@ -43,12 +44,14 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const isCommander = user?.rank && ['3SG', '2SG', '1SG', 'SSG', 'MSG', '3WO', '2WO', '1WO', 'MWO', 'SWO', '2LT', 'LTA', 'CPT', 'MAJ', 'LTC'].includes(user.rank);
-  const isSuperadmin = user?.isSuperadmin || false;
-  const canAccessCommander = isCommander || isSuperadmin;
+  // Use utility functions that match backend logic
+  const canAccessCommander = canAccessCommanderFeatures(user);
+  const isSuperadminUser = isSuperadmin(user);
 
+  // Filter nav items based on user permissions
+  // This will automatically re-render when user data changes via useAuth()
   const filteredNavItems = navItems.filter((item) => {
-    if (item.requiresSuperadmin && !isSuperadmin) return false;
+    if (item.requiresSuperadmin && !isSuperadminUser) return false;
     if (item.requiresCommander && !canAccessCommander) return false;
     return true;
   });

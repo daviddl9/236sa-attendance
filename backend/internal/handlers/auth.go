@@ -66,14 +66,56 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-		return
-	}
+		// User not found - automatically create a new user
+		userID = generateID()
+		now := time.Now()
 
-	// Verify password
-	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password)); err != nil {
-		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-		return
+		// Extract NRIC Last 4 and DOB from password if it's 10 characters (format: NRICLast4 + DOB)
+		var nricLast4Val, dobVal *string
+		if len(req.Password) == 10 {
+			nricLast4Str := req.Password[:4]
+			dobStr := req.Password[4:]
+			nricLast4Val = &nricLast4Str
+			dobVal = &dobStr
+		}
+
+		// Hash the password
+		hashedPasswordBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+		hashedPassword = string(hashedPasswordBytes)
+
+		// Create the user account
+		_, err = h.db.Pool.Exec(ctx, `
+			INSERT INTO "user" (
+				id, "full_name", rank, battery, "nric_last4", dob, password,
+				"createdAt", "updatedAt", "is_superadmin"
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`, userID, req.Identifier, nil, nil, nricLast4Val, dobVal, hashedPassword, now, now, false)
+
+		if err != nil {
+			http.Error(w, "Failed to create user", http.StatusInternalServerError)
+			return
+		}
+
+		// Set user fields for response
+		fullName = &req.Identifier
+		rank = nil
+		battery = nil
+		nricLast4 = nricLast4Val
+		dob = dobVal
+		isSuperadmin = false
+		createdAt = now
+		updatedAt = now
+	} else {
+		// User exists - verify password
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password)); err != nil {
+			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	// Create new session

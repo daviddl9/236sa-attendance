@@ -1,4 +1,4 @@
-import { createFileRoute, Navigate } from '@tanstack/react-router';
+import { createFileRoute, Navigate, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Button } from '../components/ui/button';
 import {
@@ -22,6 +22,11 @@ import { Info, Eye, EyeOff } from 'lucide-react';
 
 export const Route = createFileRoute('/sign-in')({
   component: SignInComponent,
+  validateSearch: (search: Record<string, unknown>) => {
+    return {
+      redirect: (search.redirect as string) || undefined,
+    };
+  },
 });
 
 function SignInContent() {
@@ -30,6 +35,7 @@ function SignInContent() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const { setUser } = useAuth();
+  const search = useSearch({ from: '/sign-in' }) as { redirect?: string };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +49,13 @@ function SignInContent() {
       const data = await apiClient.signIn({ identifier, password });
       setUser(data.user);
       toast.success('Signed in successfully');
-      window.location.href = '/dashboard';
+      
+      // Redirect to the redirect URL if present, otherwise go to dashboard
+      if (search.redirect) {
+        window.location.href = search.redirect;
+      } else {
+        window.location.href = '/dashboard';
+      }
     } catch (error) {
       setLoading(false);
       const errorMessage = error instanceof Error ? error.message : 'Invalid identifier or password';

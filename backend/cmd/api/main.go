@@ -74,6 +74,10 @@ func main() {
 
 	// API routes
 	r.Route("/api", func(r chi.Router) {
+		// Public QR scan route (must be before protected routes)
+		attendanceHandler := handlers.NewAttendanceHandler(db)
+		r.Get("/qr/{token}", attendanceHandler.HandleQRScan)
+
 		// Auth routes (public)
 		r.Route("/auth", func(r chi.Router) {
 			authHandler := handlers.NewAuthHandler(db)
@@ -81,6 +85,10 @@ func main() {
 			r.Post("/sign-out", authHandler.SignOut)
 			r.Get("/session", authHandler.GetSession)
 		})
+
+		// User registration route (public)
+		userHandler := handlers.NewUserHandler(db)
+		r.Post("/users/register", userHandler.RegisterUser)
 
 		// Protected routes
 		r.Group(func(r chi.Router) {
@@ -102,7 +110,6 @@ func main() {
 			})
 
 			// Attendance routes
-			attendanceHandler := handlers.NewAttendanceHandler(db)
 			r.Post("/attendance/mark", attendanceHandler.MarkAttendance)
 
 			// Session routes (commander+)
@@ -113,7 +120,6 @@ func main() {
 				r.Get("/", sessionHandler.ListSessions)
 				r.Get("/active", sessionHandler.GetActiveSessions)
 				r.Get("/{id}", sessionHandler.GetSession)
-				r.Get("/{id}/qr", sessionHandler.GetSessionQR)
 				r.Put("/{id}/close", sessionHandler.CloseSession)
 				r.Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
 				r.Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)

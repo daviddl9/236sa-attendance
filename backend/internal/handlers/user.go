@@ -13,6 +13,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserHandler struct {
@@ -377,6 +378,34 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		argIndex++
 	}
 
+	if req.Rank != nil {
+		// Validate rank
+		validRank := false
+		for _, r := range models.ValidRanks {
+			if r == *req.Rank {
+				validRank = true
+				break
+			}
+		}
+		if !validRank {
+			http.Error(w, "Invalid rank", http.StatusBadRequest)
+			return
+		}
+		updates = append(updates, fmt.Sprintf("rank = $%d", argIndex))
+		args = append(args, *req.Rank)
+		argIndex++
+	}
+
+	if req.Battery != nil {
+		if *req.Battery != models.BatteryHQ && *req.Battery != models.BatteryAlpha && *req.Battery != models.BatteryBravo {
+			http.Error(w, "Invalid battery (must be HQ, Alpha, or Bravo)", http.StatusBadRequest)
+			return
+		}
+		updates = append(updates, fmt.Sprintf("battery = $%d", argIndex))
+		args = append(args, *req.Battery)
+		argIndex++
+	}
+
 	if len(updates) == 0 {
 		http.Error(w, "No fields to update", http.StatusBadRequest)
 		return
@@ -400,4 +429,155 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 		return
 	}
+}
+
+type RegisterUserRequest struct {
+	FullName  string `json:"fullName"`
+	Rank      string `json:"rank"`
+	Battery   string `json:"battery"`
+	NRICLast4 string `json:"nricLast4"`
+	DOB       string `json:"dob"` // DDMMYY format
+}
+
+type RegisterUserResponse struct {
+	User    models.User `json:"user"`
+	Session string      `json:"session"`
+}
+
+// RegisterUser creates a new user account and automatically logs them in
+func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+	var req RegisterUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if req.FullName == "" || req.Rank == "" || req.Battery == "" || req.NRICLast4 == "" || req.DOB == "" {
+		http.Error(w, "All fields are required", http.StatusBadRequest)
+		return
+	}
+
+	// Validate rank
+	validRank := false
+	for _, rank := range models.ValidRanks {
+		if rank == req.Rank {
+			validRank = true
+			break
+		}
+	}
+	if !validRank {
+		http.Error(w, "Invalid rank", http.StatusBadRequest)
+		return
+	}
+
+	// Validate battery
+	if req.Battery != models.BatteryHQ && req.Battery != models.BatteryAlpha && req.Battery != models.BatteryBravo {
+		http.Error(w, "Invalid battery (must be HQ, Alpha, or Bravo)", http.StatusBadRequest)
+		return
+	}
+
+	// Validate DOB format (DDMMYY, 6 characters)
+	if len(req.DOB) != 6 {
+		http.Error(w, "Invalid DOB format (must be DDMMYY)", http.StatusBadRequest)
+		return
+	}
+
+	// Validate NRIC Last 4 (4 characters)
+	if len(req.NRICLast4) != 4 {
+		http.Error(w, "Invalid NRIC Last 4 (must be 4 characters)", http.StatusBadRequest)
+		return
+	}
+
+	// Check if user already exists using composite key: (full_name, nricLast4, dob)
+	var existingID string
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT id FROM "user" 
+		WHERE "full_name" = $1 AND "nric_last4" = $2 AND dob = $3
+		LIMIT 1
+	`, req.FullName, req.NRICLast4, req.DOB).Scan(&existingID)
+
+	if err == nil {
+		// User already exists - return error suggesting sign-in
+		http.Error(w, "User already exists. Please sign in instead.", http.StatusConflict)
+		return
+	}
+
+	// Generate password: NRIC Last 4 + DOB
+	password := req.NRICLast4 + req.DOB
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate user ID
+	userID := generateID()
+	now := time.Now()
+
+	// Create user account
+	_, err = h.db.Pool.Exec(ctx, `
+		INSERT INTO "user" (
+			id, "full_name", rank, battery, "nric_last4", dob, password,
+			"createdAt", "updatedAt"
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, userID, req.FullName, req.Rank, req.Battery, req.NRICLast4, req.DOB, string(hashedPassword), now, now)
+
+	if err != nil {
+		// Check for unique constraint violation (shouldn't happen after our check, but handle it)
+		if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
+			http.Error(w, "User already exists. Please sign in instead.", http.StatusConflict)
+			return
+		}
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	// Auto-login: Create session
+	sessionToken := generateSessionToken()
+	sessionID := generateID()
+	expiresAt := now.Add(30 * 24 * time.Hour)
+
+	_, err = h.db.Pool.Exec(ctx, `
+		INSERT INTO session (id, "expiresAt", token, "userId", "createdAt", "updatedAt", "ipAddress", "userAgent")
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, sessionID, expiresAt, sessionToken, userID, now, now, r.RemoteAddr, r.UserAgent())
+
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+
+	// Set session cookie
+	setSessionCookie(w, sessionToken)
+
+	// Return user and session
+	fullName := req.FullName
+	rank := req.Rank
+	battery := req.Battery
+	nricLast4 := req.NRICLast4
+	dob := req.DOB
+
+	user := models.User{
+		ID:           userID,
+		FullName:     &fullName,
+		Rank:         &rank,
+		Battery:      &battery,
+		NRICLast4:    &nricLast4,
+		DOB:          &dob,
+		IsSuperadmin: false,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	response := RegisterUserResponse{
+		User:    user,
+		Session: sessionToken,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }

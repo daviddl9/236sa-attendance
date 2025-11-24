@@ -24,6 +24,19 @@ export interface SignInRequest {
   password: string;
 }
 
+export interface RegisterUserRequest {
+  fullName: string;
+  rank: string;
+  battery: string;
+  nricLast4: string;
+  dob: string;
+}
+
+export interface RegisterUserResponse {
+  user: User;
+  session: string;
+}
+
 export interface SignOutResponse {
   success: boolean;
 }
@@ -69,9 +82,7 @@ export interface CreateSessionRequest {
   batteries?: string[];
 }
 
-export interface SessionResponse extends AttendanceSession {
-  qrCodeImage: string;
-}
+export type SessionResponse = AttendanceSession;
 
 export interface AttendanceRecord {
   id: string;
@@ -154,6 +165,19 @@ export interface BulkUploadResponse {
   users?: User[];
 }
 
+// Error type with status code
+export class APIError extends Error {
+  status: number;
+  statusText: string;
+
+  constructor(message: string, status: number, statusText: string) {
+    super(message);
+    this.name = 'APIError';
+    this.status = status;
+    this.statusText = statusText;
+  }
+}
+
 export class APIClient {
   private baseURL: string;
 
@@ -179,8 +203,8 @@ export class APIClient {
     const response = await fetch(url, config);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(error || response.statusText);
+      const errorText = await response.text();
+      throw new APIError(errorText || response.statusText, response.status, response.statusText);
     }
 
     return response.json();
@@ -197,6 +221,13 @@ export class APIClient {
   async signOut(): Promise<SignOutResponse> {
     return this.request<SignOutResponse>('/api/auth/sign-out', {
       method: 'POST',
+    });
+  }
+
+  async registerUser(data: RegisterUserRequest): Promise<RegisterUserResponse> {
+    return this.request<RegisterUserResponse>('/api/users/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
@@ -304,19 +335,6 @@ export class APIClient {
     return this.request<AttendanceSession>(`/api/sessions/${id}`);
   }
 
-  async getSessionQR(id: string): Promise<Blob> {
-    const url = `${this.baseURL}/api/sessions/${id}/qr`;
-    const response = await fetch(url, {
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(error || response.statusText);
-    }
-
-    return response.blob();
-  }
 
   async closeSession(id: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/sessions/${id}/close`, {

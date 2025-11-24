@@ -12,7 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
+import { Route as QrTokenRouteImport } from './routes/qr/$token'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settings'
+import { Route as AttendanceRegisterRouteImport } from './routes/attendance/register'
+import { Route as AttendanceMarkedRouteImport } from './routes/attendance/marked'
 import { Route as DashboardUsersIndexRouteImport } from './routes/dashboard/users/index'
 import { Route as DashboardSessionsIndexRouteImport } from './routes/dashboard/sessions/index'
 import { Route as DashboardReportsIndexRouteImport } from './routes/dashboard/reports/index'
@@ -39,9 +42,24 @@ const DashboardIndexRoute = DashboardIndexRouteImport.update({
   path: '/dashboard/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const QrTokenRoute = QrTokenRouteImport.update({
+  id: '/qr/$token',
+  path: '/qr/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
   id: '/dashboard/settings',
   path: '/dashboard/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttendanceRegisterRoute = AttendanceRegisterRouteImport.update({
+  id: '/attendance/register',
+  path: '/attendance/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AttendanceMarkedRoute = AttendanceMarkedRouteImport.update({
+  id: '/attendance/marked',
+  path: '/attendance/marked',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardUsersIndexRoute = DashboardUsersIndexRouteImport.update({
@@ -102,7 +120,10 @@ const DashboardReportsSessionsSessionIdRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
+  '/attendance/marked': typeof AttendanceMarkedRoute
+  '/attendance/register': typeof AttendanceRegisterRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
@@ -118,7 +139,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
+  '/attendance/marked': typeof AttendanceMarkedRoute
+  '/attendance/register': typeof AttendanceRegisterRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
@@ -135,7 +159,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
+  '/attendance/marked': typeof AttendanceMarkedRoute
+  '/attendance/register': typeof AttendanceRegisterRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/qr/$token': typeof QrTokenRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
@@ -153,7 +180,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/sign-in'
+    | '/attendance/marked'
+    | '/attendance/register'
     | '/dashboard/settings'
+    | '/qr/$token'
     | '/dashboard'
     | '/dashboard/attendance/scan'
     | '/dashboard/reports/batteries'
@@ -169,7 +199,10 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/sign-in'
+    | '/attendance/marked'
+    | '/attendance/register'
     | '/dashboard/settings'
+    | '/qr/$token'
     | '/dashboard'
     | '/dashboard/attendance/scan'
     | '/dashboard/reports/batteries'
@@ -185,7 +218,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/sign-in'
+    | '/attendance/marked'
+    | '/attendance/register'
     | '/dashboard/settings'
+    | '/qr/$token'
     | '/dashboard/'
     | '/dashboard/attendance/scan'
     | '/dashboard/reports/batteries'
@@ -202,7 +238,10 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SignInRoute: typeof SignInRoute
+  AttendanceMarkedRoute: typeof AttendanceMarkedRoute
+  AttendanceRegisterRoute: typeof AttendanceRegisterRoute
   DashboardSettingsRoute: typeof DashboardSettingsRoute
+  QrTokenRoute: typeof QrTokenRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardAttendanceScanRoute: typeof DashboardAttendanceScanRoute
   DashboardReportsBatteriesRoute: typeof DashboardReportsBatteriesRoute
@@ -239,11 +278,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/qr/$token': {
+      id: '/qr/$token'
+      path: '/qr/$token'
+      fullPath: '/qr/$token'
+      preLoaderRoute: typeof QrTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/settings': {
       id: '/dashboard/settings'
       path: '/dashboard/settings'
       fullPath: '/dashboard/settings'
       preLoaderRoute: typeof DashboardSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attendance/register': {
+      id: '/attendance/register'
+      path: '/attendance/register'
+      fullPath: '/attendance/register'
+      preLoaderRoute: typeof AttendanceRegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/attendance/marked': {
+      id: '/attendance/marked'
+      path: '/attendance/marked'
+      fullPath: '/attendance/marked'
+      preLoaderRoute: typeof AttendanceMarkedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/users/': {
@@ -322,7 +382,10 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SignInRoute: SignInRoute,
+  AttendanceMarkedRoute: AttendanceMarkedRoute,
+  AttendanceRegisterRoute: AttendanceRegisterRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,
+  QrTokenRoute: QrTokenRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardAttendanceScanRoute: DashboardAttendanceScanRoute,
   DashboardReportsBatteriesRoute: DashboardReportsBatteriesRoute,
