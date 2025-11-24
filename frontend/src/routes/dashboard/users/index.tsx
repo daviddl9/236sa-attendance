@@ -91,9 +91,9 @@ function UsersPage() {
             </div>
           </div>
           <Select
-            value={batteryFilter}
+            value={batteryFilter || 'all'}
             onValueChange={(value) => {
-              setBatteryFilter(value);
+              setBatteryFilter(value === 'all' ? '' : value);
               setPage(1);
             }}
           >
@@ -101,16 +101,16 @@ function UsersPage() {
               <SelectValue placeholder="All Batteries" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Batteries</SelectItem>
+              <SelectItem value="all">All Batteries</SelectItem>
               <SelectItem value="HQ">HQ</SelectItem>
               <SelectItem value="Alpha">Alpha</SelectItem>
               <SelectItem value="Bravo">Bravo</SelectItem>
             </SelectContent>
           </Select>
           <Select
-            value={rankFilter}
+            value={rankFilter || 'all'}
             onValueChange={(value) => {
-              setRankFilter(value);
+              setRankFilter(value === 'all' ? '' : value);
               setPage(1);
             }}
           >
@@ -118,7 +118,7 @@ function UsersPage() {
               <SelectValue placeholder="All Ranks" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All Ranks</SelectItem>
+              <SelectItem value="all">All Ranks</SelectItem>
               <SelectItem value="REC">REC</SelectItem>
               <SelectItem value="PTE">PTE</SelectItem>
               <SelectItem value="LCP">LCP</SelectItem>
@@ -160,14 +160,14 @@ function UsersPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data?.users.length === 0 ? (
+                  {!data?.users || data.users.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center text-muted-foreground">
                         No users found
                       </TableCell>
                     </TableRow>
                   ) : (
-                    data?.users.map((user) => (
+                    data.users.map((user) => (
                       <TableRow key={user.id}>
                         <TableCell className="font-medium">
                           {user.fullName || 'N/A'}

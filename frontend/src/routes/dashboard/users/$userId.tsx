@@ -145,15 +145,15 @@ function UserDetailPage() {
                 <div className="grid gap-2">
                   <Label htmlFor="rank">Rank</Label>
                   <Select
-                    value={rank}
-                    onValueChange={setRank}
+                    value={rank || 'none'}
+                    onValueChange={(value) => setRank(value === 'none' ? '' : value)}
                     disabled={!canEdit}
                   >
                     <SelectTrigger id="rank">
                       <SelectValue placeholder="Select Rank" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Select Rank</SelectItem>
+                      <SelectItem value="none">None</SelectItem>
                       <SelectItem value="REC">REC</SelectItem>
                       <SelectItem value="PTE">PTE</SelectItem>
                       <SelectItem value="LCP">LCP</SelectItem>
@@ -181,15 +181,15 @@ function UserDetailPage() {
                 <div className="grid gap-2">
                   <Label htmlFor="battery">Battery</Label>
                   <Select
-                    value={battery}
-                    onValueChange={setBattery}
+                    value={battery || 'none'}
+                    onValueChange={(value) => setBattery(value === 'none' ? '' : value)}
                     disabled={!canEdit}
                   >
                     <SelectTrigger id="battery">
                       <SelectValue placeholder="Select Battery" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Select Battery</SelectItem>
+                      <SelectItem value="none">None</SelectItem>
                       <SelectItem value="HQ">HQ</SelectItem>
                       <SelectItem value="Alpha">Alpha</SelectItem>
                       <SelectItem value="Bravo">Bravo</SelectItem>

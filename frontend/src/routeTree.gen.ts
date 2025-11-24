@@ -13,6 +13,16 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settings'
+import { Route as DashboardUsersIndexRouteImport } from './routes/dashboard/users/index'
+import { Route as DashboardSessionsIndexRouteImport } from './routes/dashboard/sessions/index'
+import { Route as DashboardReportsIndexRouteImport } from './routes/dashboard/reports/index'
+import { Route as DashboardUsersBulkUploadRouteImport } from './routes/dashboard/users/bulk-upload'
+import { Route as DashboardUsersUserIdRouteImport } from './routes/dashboard/users/$userId'
+import { Route as DashboardSessionsCreateRouteImport } from './routes/dashboard/sessions/create'
+import { Route as DashboardSessionsSessionIdRouteImport } from './routes/dashboard/sessions/$sessionId'
+import { Route as DashboardReportsBatteriesRouteImport } from './routes/dashboard/reports/batteries'
+import { Route as DashboardAttendanceScanRouteImport } from './routes/dashboard/attendance/scan'
+import { Route as DashboardReportsSessionsSessionIdRouteImport } from './routes/dashboard/reports/sessions/$sessionId'
 
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
@@ -34,18 +44,92 @@ const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
   path: '/dashboard/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardUsersIndexRoute = DashboardUsersIndexRouteImport.update({
+  id: '/dashboard/users/',
+  path: '/dashboard/users/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardSessionsIndexRoute = DashboardSessionsIndexRouteImport.update({
+  id: '/dashboard/sessions/',
+  path: '/dashboard/sessions/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardReportsIndexRoute = DashboardReportsIndexRouteImport.update({
+  id: '/dashboard/reports/',
+  path: '/dashboard/reports/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardUsersBulkUploadRoute =
+  DashboardUsersBulkUploadRouteImport.update({
+    id: '/dashboard/users/bulk-upload',
+    path: '/dashboard/users/bulk-upload',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DashboardUsersUserIdRoute = DashboardUsersUserIdRouteImport.update({
+  id: '/dashboard/users/$userId',
+  path: '/dashboard/users/$userId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardSessionsCreateRoute = DashboardSessionsCreateRouteImport.update({
+  id: '/dashboard/sessions/create',
+  path: '/dashboard/sessions/create',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardSessionsSessionIdRoute =
+  DashboardSessionsSessionIdRouteImport.update({
+    id: '/dashboard/sessions/$sessionId',
+    path: '/dashboard/sessions/$sessionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DashboardReportsBatteriesRoute =
+  DashboardReportsBatteriesRouteImport.update({
+    id: '/dashboard/reports/batteries',
+    path: '/dashboard/reports/batteries',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DashboardAttendanceScanRoute = DashboardAttendanceScanRouteImport.update({
+  id: '/dashboard/attendance/scan',
+  path: '/dashboard/attendance/scan',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardReportsSessionsSessionIdRoute =
+  DashboardReportsSessionsSessionIdRouteImport.update({
+    id: '/dashboard/reports/sessions/$sessionId',
+    path: '/dashboard/reports/sessions/$sessionId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
+  '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
+  '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
+  '/dashboard/sessions/create': typeof DashboardSessionsCreateRoute
+  '/dashboard/users/$userId': typeof DashboardUsersUserIdRoute
+  '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
+  '/dashboard/reports': typeof DashboardReportsIndexRoute
+  '/dashboard/sessions': typeof DashboardSessionsIndexRoute
+  '/dashboard/users': typeof DashboardUsersIndexRoute
+  '/dashboard/reports/sessions/$sessionId': typeof DashboardReportsSessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/sign-in': typeof SignInRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
+  '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
+  '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
+  '/dashboard/sessions/create': typeof DashboardSessionsCreateRoute
+  '/dashboard/users/$userId': typeof DashboardUsersUserIdRoute
+  '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
+  '/dashboard/reports': typeof DashboardReportsIndexRoute
+  '/dashboard/sessions': typeof DashboardSessionsIndexRoute
+  '/dashboard/users': typeof DashboardUsersIndexRoute
+  '/dashboard/reports/sessions/$sessionId': typeof DashboardReportsSessionsSessionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -53,13 +137,66 @@ export interface FileRoutesById {
   '/sign-in': typeof SignInRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
+  '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
+  '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
+  '/dashboard/sessions/create': typeof DashboardSessionsCreateRoute
+  '/dashboard/users/$userId': typeof DashboardUsersUserIdRoute
+  '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
+  '/dashboard/reports/': typeof DashboardReportsIndexRoute
+  '/dashboard/sessions/': typeof DashboardSessionsIndexRoute
+  '/dashboard/users/': typeof DashboardUsersIndexRoute
+  '/dashboard/reports/sessions/$sessionId': typeof DashboardReportsSessionsSessionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/sign-in' | '/dashboard/settings' | '/dashboard'
+  fullPaths:
+    | '/'
+    | '/sign-in'
+    | '/dashboard/settings'
+    | '/dashboard'
+    | '/dashboard/attendance/scan'
+    | '/dashboard/reports/batteries'
+    | '/dashboard/sessions/$sessionId'
+    | '/dashboard/sessions/create'
+    | '/dashboard/users/$userId'
+    | '/dashboard/users/bulk-upload'
+    | '/dashboard/reports'
+    | '/dashboard/sessions'
+    | '/dashboard/users'
+    | '/dashboard/reports/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/sign-in' | '/dashboard/settings' | '/dashboard'
-  id: '__root__' | '/' | '/sign-in' | '/dashboard/settings' | '/dashboard/'
+  to:
+    | '/'
+    | '/sign-in'
+    | '/dashboard/settings'
+    | '/dashboard'
+    | '/dashboard/attendance/scan'
+    | '/dashboard/reports/batteries'
+    | '/dashboard/sessions/$sessionId'
+    | '/dashboard/sessions/create'
+    | '/dashboard/users/$userId'
+    | '/dashboard/users/bulk-upload'
+    | '/dashboard/reports'
+    | '/dashboard/sessions'
+    | '/dashboard/users'
+    | '/dashboard/reports/sessions/$sessionId'
+  id:
+    | '__root__'
+    | '/'
+    | '/sign-in'
+    | '/dashboard/settings'
+    | '/dashboard/'
+    | '/dashboard/attendance/scan'
+    | '/dashboard/reports/batteries'
+    | '/dashboard/sessions/$sessionId'
+    | '/dashboard/sessions/create'
+    | '/dashboard/users/$userId'
+    | '/dashboard/users/bulk-upload'
+    | '/dashboard/reports/'
+    | '/dashboard/sessions/'
+    | '/dashboard/users/'
+    | '/dashboard/reports/sessions/$sessionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -67,6 +204,16 @@ export interface RootRouteChildren {
   SignInRoute: typeof SignInRoute
   DashboardSettingsRoute: typeof DashboardSettingsRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
+  DashboardAttendanceScanRoute: typeof DashboardAttendanceScanRoute
+  DashboardReportsBatteriesRoute: typeof DashboardReportsBatteriesRoute
+  DashboardSessionsSessionIdRoute: typeof DashboardSessionsSessionIdRoute
+  DashboardSessionsCreateRoute: typeof DashboardSessionsCreateRoute
+  DashboardUsersUserIdRoute: typeof DashboardUsersUserIdRoute
+  DashboardUsersBulkUploadRoute: typeof DashboardUsersBulkUploadRoute
+  DashboardReportsIndexRoute: typeof DashboardReportsIndexRoute
+  DashboardSessionsIndexRoute: typeof DashboardSessionsIndexRoute
+  DashboardUsersIndexRoute: typeof DashboardUsersIndexRoute
+  DashboardReportsSessionsSessionIdRoute: typeof DashboardReportsSessionsSessionIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -99,6 +246,76 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/users/': {
+      id: '/dashboard/users/'
+      path: '/dashboard/users'
+      fullPath: '/dashboard/users'
+      preLoaderRoute: typeof DashboardUsersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/sessions/': {
+      id: '/dashboard/sessions/'
+      path: '/dashboard/sessions'
+      fullPath: '/dashboard/sessions'
+      preLoaderRoute: typeof DashboardSessionsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/reports/': {
+      id: '/dashboard/reports/'
+      path: '/dashboard/reports'
+      fullPath: '/dashboard/reports'
+      preLoaderRoute: typeof DashboardReportsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/users/bulk-upload': {
+      id: '/dashboard/users/bulk-upload'
+      path: '/dashboard/users/bulk-upload'
+      fullPath: '/dashboard/users/bulk-upload'
+      preLoaderRoute: typeof DashboardUsersBulkUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/users/$userId': {
+      id: '/dashboard/users/$userId'
+      path: '/dashboard/users/$userId'
+      fullPath: '/dashboard/users/$userId'
+      preLoaderRoute: typeof DashboardUsersUserIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/sessions/create': {
+      id: '/dashboard/sessions/create'
+      path: '/dashboard/sessions/create'
+      fullPath: '/dashboard/sessions/create'
+      preLoaderRoute: typeof DashboardSessionsCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/sessions/$sessionId': {
+      id: '/dashboard/sessions/$sessionId'
+      path: '/dashboard/sessions/$sessionId'
+      fullPath: '/dashboard/sessions/$sessionId'
+      preLoaderRoute: typeof DashboardSessionsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/reports/batteries': {
+      id: '/dashboard/reports/batteries'
+      path: '/dashboard/reports/batteries'
+      fullPath: '/dashboard/reports/batteries'
+      preLoaderRoute: typeof DashboardReportsBatteriesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/attendance/scan': {
+      id: '/dashboard/attendance/scan'
+      path: '/dashboard/attendance/scan'
+      fullPath: '/dashboard/attendance/scan'
+      preLoaderRoute: typeof DashboardAttendanceScanRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/reports/sessions/$sessionId': {
+      id: '/dashboard/reports/sessions/$sessionId'
+      path: '/dashboard/reports/sessions/$sessionId'
+      fullPath: '/dashboard/reports/sessions/$sessionId'
+      preLoaderRoute: typeof DashboardReportsSessionsSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -107,6 +324,17 @@ const rootRouteChildren: RootRouteChildren = {
   SignInRoute: SignInRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,
   DashboardIndexRoute: DashboardIndexRoute,
+  DashboardAttendanceScanRoute: DashboardAttendanceScanRoute,
+  DashboardReportsBatteriesRoute: DashboardReportsBatteriesRoute,
+  DashboardSessionsSessionIdRoute: DashboardSessionsSessionIdRoute,
+  DashboardSessionsCreateRoute: DashboardSessionsCreateRoute,
+  DashboardUsersUserIdRoute: DashboardUsersUserIdRoute,
+  DashboardUsersBulkUploadRoute: DashboardUsersBulkUploadRoute,
+  DashboardReportsIndexRoute: DashboardReportsIndexRoute,
+  DashboardSessionsIndexRoute: DashboardSessionsIndexRoute,
+  DashboardUsersIndexRoute: DashboardUsersIndexRoute,
+  DashboardReportsSessionsSessionIdRoute:
+    DashboardReportsSessionsSessionIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

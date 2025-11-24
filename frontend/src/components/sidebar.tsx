@@ -14,21 +14,16 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
-    label: "Overview",
-    href: "/dashboard",
-    icon: HomeIcon,
-  },
-  {
     label: "Users",
     href: "/dashboard/users",
     icon: Users,
-    requiresCommander: true,
+    requiresSuperadmin: true, // Only superadmins can see users
   },
   {
     label: "Sessions",
     href: "/dashboard/sessions",
     icon: Calendar,
-    requiresCommander: true,
+    requiresCommander: true, // Commanders and superadmins can see sessions
   },
   {
     label: "Scan QR",
@@ -39,7 +34,7 @@ const navItems: NavItem[] = [
     label: "Reports",
     href: "/dashboard/reports",
     icon: BarChart3,
-    requiresCommander: true,
+    requiresSuperadmin: true, // Only superadmins can see reports
   },
 ];
 

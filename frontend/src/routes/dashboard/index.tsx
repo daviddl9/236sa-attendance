@@ -3,6 +3,7 @@ import { useAuth } from '../../lib/auth-context';
 import DashboardLayout from '../../components/dashboard/layout';
 import { SectionCards } from '../../components/dashboard/section-cards';
 import { ChartAreaInteractive } from '../../components/dashboard/chart-interactive';
+import { useEffect } from 'react';
 
 export const Route = createFileRoute('/dashboard/')({
   component: DashboardComponent,
@@ -10,6 +11,16 @@ export const Route = createFileRoute('/dashboard/')({
 
 function DashboardComponent() {
   const { user, isLoading } = useAuth();
+
+  // Check if user is superadmin (only superadmins can access overview)
+  const isSuperadmin = user?.isSuperadmin || false;
+
+  // Redirect non-superadmins (including commanders) to scan page
+  useEffect(() => {
+    if (!isLoading && user && !isSuperadmin) {
+      window.location.href = '/dashboard/attendance/scan';
+    }
+  }, [isLoading, user, isSuperadmin]);
 
   if (isLoading) {
     return (
@@ -21,6 +32,15 @@ function DashboardComponent() {
 
   if (!user) {
     return <Navigate to="/sign-in" />;
+  }
+
+  // Show loading while redirecting non-superadmins
+  if (!isSuperadmin) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-muted-foreground">Redirecting...</div>
+      </div>
+    );
   }
 
   return (

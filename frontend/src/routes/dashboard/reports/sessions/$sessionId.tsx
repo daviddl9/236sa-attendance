@@ -1,17 +1,17 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '../../../lib/api-client';
-import DashboardLayout from '../../../components/dashboard/layout';
+import { apiClient } from '../../../../lib/api-client';
+import DashboardLayout from '../../../../components/dashboard/layout';
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from '../../../components/ui/card';
+} from '../../../../components/ui/card';
 import { ArrowLeft, Users, TrendingUp, AlertCircle } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
-import { Button } from '../../../components/ui/button';
+import { Button } from '../../../../components/ui/button';
 
 export const Route = createFileRoute('/dashboard/reports/sessions/$sessionId')({
   component: SessionReportPage,
@@ -101,12 +101,12 @@ function SessionReportPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-3xl font-bold">{analytics.missingUsers.length}</p>
+              <p className="text-3xl font-bold">{analytics.missingUsers?.length || 0}</p>
             </CardContent>
           </Card>
         </div>
 
-        {Object.keys(analytics.byBattery).length > 0 && (
+        {analytics.byBattery && Object.keys(analytics.byBattery).length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>By Battery</CardTitle>
@@ -139,7 +139,7 @@ function SessionReportPage() {
           </Card>
         )}
 
-        {analytics.missingUsers.length > 0 && (
+        {analytics.missingUsers && analytics.missingUsers.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>Missing Users</CardTitle>

@@ -43,7 +43,7 @@ function SignInContent() {
       const data = await apiClient.signIn({ identifier, password });
       setUser(data.user);
       toast.success('Signed in successfully');
-      window.location.href = '/dashboard';
+      window.location.href = '/dashboard/attendance/scan';
     } catch (error) {
       setLoading(false);
       const errorMessage = error instanceof Error ? error.message : 'Invalid identifier or password';
@@ -149,7 +149,7 @@ function IndexComponent() {
   }
 
   if (user) {
-    return <Navigate to="/dashboard" />;
+    return <Navigate to="/dashboard/attendance/scan" />;
   }
 
   return <SignInContent />;

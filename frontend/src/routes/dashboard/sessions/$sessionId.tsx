@@ -201,7 +201,7 @@ function SessionDetailPage() {
                 </div>
                 <div className="pt-4 border-t">
                   <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
-                  <p className="text-lg font-semibold">{analytics.missingUsers.length}</p>
+                  <p className="text-lg font-semibold">{analytics.missingUsers?.length || 0}</p>
                 </div>
               </CardContent>
             </Card>

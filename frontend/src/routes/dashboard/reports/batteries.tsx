@@ -47,12 +47,12 @@ function BatteryReportsPage() {
 
   // Prepare comparison data
   const comparisonData =
-    hqReport && alphaReport && bravoReport
+    hqReport && alphaReport && bravoReport && hqReport.sessions
       ? hqReport.sessions.map((session, index) => ({
           session: session.sessionName,
           HQ: session.attendancePercentage,
-          Alpha: alphaReport.sessions[index]?.attendancePercentage || 0,
-          Bravo: bravoReport.sessions[index]?.attendancePercentage || 0,
+          Alpha: alphaReport.sessions?.[index]?.attendancePercentage || 0,
+          Bravo: bravoReport.sessions?.[index]?.attendancePercentage || 0,
         }))
       : [];
 
@@ -91,7 +91,8 @@ function BatteryReportsPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-4">
-                      {currentReport.sessions.map((session) => (
+                      {currentReport.sessions && currentReport.sessions.length > 0 ? (
+                        currentReport.sessions.map((session) => (
                         <div
                           key={session.sessionId}
                           className="flex items-center justify-between p-4 border rounded"
@@ -111,7 +112,12 @@ function BatteryReportsPage() {
                             </p>
                           </div>
                         </div>
-                      ))}
+                      ))
+                      ) : (
+                        <div className="text-center text-muted-foreground py-8">
+                          No sessions found for this battery
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
