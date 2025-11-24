@@ -34,20 +34,14 @@ function CreateSessionPage() {
   const queryClient = useQueryClient();
 
   const [name, setName] = useState('');
-  const [sessionType, setSessionType] = useState('morning_formation');
   const [scope, setScope] = useState('unit_wide');
   const [batteries, setBatteries] = useState<string[]>([]);
-  const [startTime, setStartTime] = useState(
-    new Date().toISOString().slice(0, 16)
-  );
 
   const createMutation = useMutation({
     mutationFn: (data: {
       name: string;
-      sessionType: string;
       scope: string;
       batteries?: string[];
-      startTime: string;
     }) => apiClient.createSession(data),
     onSuccess: (data) => {
       toast.success('Session created successfully');
@@ -73,7 +67,7 @@ function CreateSessionPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!name || !startTime) {
+    if (!name) {
       toast.error('Please fill in all required fields');
       return;
     }
@@ -85,10 +79,8 @@ function CreateSessionPage() {
 
     createMutation.mutate({
       name,
-      sessionType,
       scope,
       batteries: scope === 'battery_specific' ? batteries : undefined,
-      startTime: new Date(startTime).toISOString(),
     });
   };
 
@@ -123,24 +115,6 @@ function CreateSessionPage() {
                   placeholder="e.g., Monday Morning Formation"
                   required
                 />
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="sessionType">Session Type *</Label>
-                <Select
-                  value={sessionType}
-                  onValueChange={setSessionType}
-                  required
-                >
-                  <SelectTrigger id="sessionType">
-                    <SelectValue placeholder="Select session type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="first_parade">First Parade</SelectItem>
-                    <SelectItem value="morning_formation">Morning Formation</SelectItem>
-                    <SelectItem value="custom">Custom</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
 
               <div className="grid gap-2">
@@ -184,17 +158,6 @@ function CreateSessionPage() {
                   </div>
                 </div>
               )}
-
-              <div className="grid gap-2">
-                <Label htmlFor="startTime">Start Time *</Label>
-                <Input
-                  id="startTime"
-                  type="datetime-local"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  required
-                />
-              </div>
 
               <div className="flex justify-end gap-2 pt-4">
                 <Button type="submit" disabled={createMutation.isPending}>

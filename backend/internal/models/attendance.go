@@ -2,13 +2,6 @@ package models
 
 import "time"
 
-// Session types
-const (
-	SessionTypeFirstParade     = "first_parade"
-	SessionTypeMorningFormation = "morning_formation"
-	SessionTypeCustom          = "custom"
-)
-
 // Session scopes
 const (
 	SessionScopeUnitWide      = "unit_wide"
@@ -30,7 +23,6 @@ const (
 type AttendanceSession struct {
 	ID            string    `json:"id"`
 	Name          string    `json:"name"`
-	SessionType   string    `json:"sessionType"`
 	QRCode        string    `json:"qrCode"`
 	QRCodeSecret  string    `json:"-"` // Never serialize secret
 	Scope         string    `json:"scope"`

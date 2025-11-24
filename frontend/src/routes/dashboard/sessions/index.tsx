@@ -77,7 +77,7 @@ function SessionsPage() {
                       <CardHeader>
                         <CardTitle className="text-lg">{session.name}</CardTitle>
                         <CardDescription>
-                          {session.sessionType.replace('_', ' ').toUpperCase()}
+                          {new Date(session.startTime).toLocaleDateString()}
                         </CardDescription>
                       </CardHeader>
                       <CardContent>

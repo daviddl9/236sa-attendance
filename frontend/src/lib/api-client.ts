@@ -51,7 +51,6 @@ export interface UpdateUserRequest {
 export interface AttendanceSession {
   id: string;
   name: string;
-  sessionType: string;
   qrCode: string;
   scope: string;
   batteries: string[];
@@ -66,11 +65,8 @@ export interface AttendanceSession {
 
 export interface CreateSessionRequest {
   name: string;
-  sessionType: string;
   scope: string;
   batteries?: string[];
-  startTime: string;
-  endTime?: string | null;
 }
 
 export interface SessionResponse extends AttendanceSession {

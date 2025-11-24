@@ -133,7 +133,6 @@ function SessionDetailPage() {
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">{session.name}</h1>
               <p className="text-muted-foreground">
-                {session.sessionType.replace('_', ' ').toUpperCase()} •{' '}
                 {new Date(session.startTime).toLocaleString()}
               </p>
             </div>

@@ -26,12 +26,10 @@ func NewSessionHandler(db *database.DB) *SessionHandler {
 }
 
 type CreateSessionRequest struct {
-	Name        string     `json:"name"`
-	SessionType string     `json:"sessionType"`
-	Scope       string     `json:"scope"`
-	Batteries   []string   `json:"batteries,omitempty"`
-	StartTime   time.Time  `json:"startTime"`
-	EndTime     *time.Time `json:"endTime,omitempty"`
+	Name      string     `json:"name"`
+	Scope     string     `json:"scope"`
+	Batteries []string   `json:"batteries,omitempty"`
+	EndTime   *time.Time `json:"endTime,omitempty"`
 }
 
 type SessionResponse struct {
@@ -50,19 +48,6 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	// Validate session type
-	validType := false
-	for _, t := range []string{models.SessionTypeFirstParade, models.SessionTypeMorningFormation, models.SessionTypeCustom} {
-		if req.SessionType == t {
-			validType = true
-			break
-		}
-	}
-	if !validType {
-		http.Error(w, "Invalid session type", http.StatusBadRequest)
 		return
 	}
 
@@ -103,32 +88,39 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	qrCodeImage := base64.StdEncoding.EncodeToString(qrPNG)
 
-	// Insert session into database
+	// Insert session into database (start_time defaults to NOW() in database)
 	_, err = h.db.Pool.Exec(ctx, `
 		INSERT INTO attendance_session (
-			id, name, session_type, qr_code, qr_code_secret, scope, batteries,
+			id, name, qr_code, qr_code_secret, scope, batteries,
 			status, created_by, start_time, end_time, "createdAt", "updatedAt"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, sessionID, req.Name, req.SessionType, qrCode, qrSecret, req.Scope,
-		req.Batteries, models.SessionStatusActive, user.ID, req.StartTime, req.EndTime, now, now)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
+	`, sessionID, req.Name, qrCode, qrSecret, req.Scope,
+		req.Batteries, models.SessionStatusActive, user.ID, req.EndTime, now, now)
 
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
+	// Get the actual start_time from database (which defaults to NOW())
+	var startTime time.Time
+	err = h.db.Pool.QueryRow(ctx, `SELECT start_time FROM attendance_session WHERE id = $1`, sessionID).Scan(&startTime)
+	if err != nil {
+		http.Error(w, "Failed to retrieve session", http.StatusInternalServerError)
+		return
+	}
+
 	session := models.AttendanceSession{
 		ID:           sessionID,
 		Name:         req.Name,
-		SessionType:  req.SessionType,
 		QRCode:       qrCode,
 		QRCodeSecret: qrSecret,
 		Scope:        req.Scope,
 		Batteries:    req.Batteries,
 		Status:       models.SessionStatusActive,
 		CreatedBy:    user.ID,
-		StartTime:    req.StartTime,
+		StartTime:    startTime,
 		EndTime:      req.EndTime,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -155,7 +147,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	query := `
 		SELECT 
-			id, name, session_type, qr_code, qr_code_secret, scope, batteries,
+			id, name, qr_code, qr_code_secret, scope, batteries,
 			status, created_by, start_time, end_time, closed_at,
 			"createdAt", "updatedAt"
 		FROM attendance_session
@@ -202,7 +194,6 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		err := rows.Scan(
 			&session.ID,
 			&session.Name,
-			&session.SessionType,
 			&session.QRCode,
 			&session.QRCodeSecret,
 			&session.Scope,
@@ -237,7 +228,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT 
-			id, name, session_type, qr_code, qr_code_secret, scope, batteries,
+			id, name, qr_code, qr_code_secret, scope, batteries,
 			status, created_by, start_time, end_time, closed_at,
 			"createdAt", "updatedAt"
 		FROM attendance_session
@@ -245,7 +236,6 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	`, sessionID).Scan(
 		&session.ID,
 		&session.Name,
-		&session.SessionType,
 		&session.QRCode,
 		&session.QRCodeSecret,
 		&session.Scope,
@@ -276,7 +266,7 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT 
-			id, name, session_type, qr_code, qr_code_secret, scope, batteries,
+			id, name, qr_code, qr_code_secret, scope, batteries,
 			status, created_by, start_time, end_time, closed_at,
 			"createdAt", "updatedAt"
 		FROM attendance_session
@@ -297,7 +287,6 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 		err := rows.Scan(
 			&session.ID,
 			&session.Name,
-			&session.SessionType,
 			&session.QRCode,
 			&session.QRCodeSecret,
 			&session.Scope,
