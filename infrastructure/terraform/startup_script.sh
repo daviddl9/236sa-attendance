@@ -56,12 +56,12 @@ systemctl enable postgresql
 
 echo "PostgreSQL 17 installed and configured"
 
-# Install Go 1.23
-echo "Installing Go 1.23..."
-wget https://go.dev/dl/go1.23.3.linux-amd64.tar.gz
+# Install Go 1.25.3
+echo "Installing Go 1.25.3..."
+wget https://go.dev/dl/go1.25.3.linux-amd64.tar.gz
 rm -rf /usr/local/go
-tar -C /usr/local -xzf go1.23.3.linux-amd64.tar.gz
-rm go1.23.3.linux-amd64.tar.gz
+tar -C /usr/local -xzf go1.25.3.linux-amd64.tar.gz
+rm go1.25.3.linux-amd64.tar.gz
 
 # Add Go to PATH for all users
 echo 'export PATH=$PATH:/usr/local/go/bin' >> /etc/profile
