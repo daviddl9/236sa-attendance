@@ -85,8 +85,8 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 				SELECT id, "full_name", rank, battery, "nric_last4", dob, is_superadmin, "createdAt", "updatedAt"
 				FROM "user" WHERE id = $1
 			`, userID).Scan(
-				&user.ID, &user.FullName, &user.Rank, &user.Battery,
-				&user.NRICLast4, &user.DOB, &user.IsSuperadmin,
+				&user.ID, user.FullName, user.Rank, user.Battery,
+				user.NRICLast4, user.DOB, &user.IsSuperadmin,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 			if err != nil {

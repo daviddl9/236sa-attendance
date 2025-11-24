@@ -71,10 +71,12 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 
 		// Extract NRIC Last 4 and DOB from password if it's 10 characters (format: NRICLast4 + DOB)
+		// Allocate strings at function scope to avoid dangling pointers
+		var nricLast4Str, dobStr string
 		var nricLast4Val, dobVal *string
 		if len(req.Password) == 10 {
-			nricLast4Str := req.Password[:4]
-			dobStr := req.Password[4:]
+			nricLast4Str = req.Password[:4]
+			dobStr = req.Password[4:]
 			nricLast4Val = &nricLast4Str
 			dobVal = &dobStr
 		}
