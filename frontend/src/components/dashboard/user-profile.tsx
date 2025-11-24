@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Loader2 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth-context";
 
 export default function UserProfile({ mini }: { mini?: boolean }) {
@@ -47,19 +47,18 @@ export default function UserProfile({ mini }: { mini?: boolean }) {
           className={`flex gap-2 justify-start items-center w-full rounded ${mini ? "" : "px-4 pt-2 pb-3"}`}
         >
           <Avatar>
-            {user.image ? (
-              <AvatarImage src={user.image} alt="User Avatar" />
-            ) : (
-              <AvatarFallback>
-                {user.name && user.name.charAt(0).toUpperCase()}
-              </AvatarFallback>
-            )}
+            <AvatarFallback>
+              {user.fullName && user.fullName.length > 0 ? user.fullName.charAt(0).toUpperCase() : 'U'}
+            </AvatarFallback>
           </Avatar>
           {mini ? null : (
             <div className="flex items-center gap-2">
               <p className="font-medium text-md">
-                {user.name || "User"}
+                {user.fullName || "User"}
               </p>
+              {user.rank && (
+                <span className="text-xs text-muted-foreground">{user.rank}</span>
+              )}
             </div>
           )}
         </div>

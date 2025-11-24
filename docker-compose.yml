@@ -29,6 +29,8 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      # DATABASE_URL must use 'postgres' hostname (service name) not 'localhost'
+      # This overrides any DATABASE_URL from env_file
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app?sslmode=disable
       PORT: 8080
       # Variables from ./backend/.env: FRONTEND_URL, BACKEND_URL, ENVIRONMENT, 
@@ -40,6 +42,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
+      # Mount source code for development, but exclude .env to prevent conflicts
       - ./backend:/app
     networks:
       - app-network

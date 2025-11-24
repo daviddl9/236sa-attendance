@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState } from 'react';
+import type { ReactNode } from 'react';
 import { apiClient } from './api-client';
 import type { User } from './api-client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -9,23 +10,21 @@ interface AuthContextType {
   isAuthenticated: boolean;
   signOut: () => Promise<void>;
   refetch: () => void;
+  setUser: (user: User | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [user, setUser] = useState<User | null>(null);
+  const [manualUser, setManualUser] = useState<User | null>(null);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['session'],
     queryFn: async () => {
       try {
-        const userData = await apiClient.getSession();
-        setUser(userData);
-        return userData;
-      } catch (error) {
-        setUser(null);
+        return await apiClient.getSession();
+      } catch {
         return null;
       }
     },
@@ -34,16 +33,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     throwOnError: false,
   });
 
-  useEffect(() => {
-    if (data) {
-      setUser(data);
-    }
-  }, [data]);
+  // Use manual user if set, otherwise use query data
+  const user = manualUser || data || null;
 
   const signOut = async () => {
     try {
       await apiClient.signOut();
-      setUser(null);
+      setManualUser(null);
       queryClient.clear();
     } catch (error) {
       console.error('Sign out error:', error);
@@ -60,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refetch: () => {
           refetch();
         },
+        setUser: setManualUser,
       }}
     >
       {children}

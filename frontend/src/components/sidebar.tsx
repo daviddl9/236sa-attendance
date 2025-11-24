@@ -1,12 +1,15 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { HomeIcon } from "lucide-react";
+import { HomeIcon, Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
+import { useAuth } from "../lib/auth-context";
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  requiresCommander?: boolean;
+  requiresSuperadmin?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -15,11 +18,45 @@ const navItems: NavItem[] = [
     href: "/dashboard",
     icon: HomeIcon,
   },
+  {
+    label: "Users",
+    href: "/dashboard/users",
+    icon: Users,
+    requiresCommander: true,
+  },
+  {
+    label: "Sessions",
+    href: "/dashboard/sessions",
+    icon: Calendar,
+    requiresCommander: true,
+  },
+  {
+    label: "Scan QR",
+    href: "/dashboard/attendance/scan",
+    icon: ScanLine,
+  },
+  {
+    label: "Reports",
+    href: "/dashboard/reports",
+    icon: BarChart3,
+    requiresCommander: true,
+  },
 ];
 
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  const isCommander = user?.rank && ['3SG', '2SG', '1SG', 'SSG', 'MSG', '3WO', '2WO', '1WO', 'MWO', 'SWO', '2LT', 'LTA', 'CPT', 'MAJ', 'LTC'].includes(user.rank);
+  const isSuperadmin = user?.isSuperadmin || false;
+  const canAccessCommander = isCommander || isSuperadmin;
+
+  const filteredNavItems = navItems.filter((item) => {
+    if (item.requiresSuperadmin && !isSuperadmin) return false;
+    if (item.requiresCommander && !canAccessCommander) return false;
+    return true;
+  });
 
   return (
     <div className="min-[1024px]:block hidden w-64 border-r h-full bg-background">
@@ -29,19 +66,19 @@ export default function Sidebar() {
             to="/"
             className="flex items-center font-semibold hover:cursor-pointer"
           >
-            <span>Go Next.js Starter</span>
+            <span>236SA Attendance</span>
           </Link>
         </div>
 
         <nav className="flex flex-col h-full justify-between items-start w-full space-y-1">
           <div className="w-full space-y-1 p-4">
-            {navItems.map((item) => (
+            {filteredNavItems.map((item) => (
               <div
                 key={item.href}
                 onClick={() => navigate({ to: item.href })}
                 className={clsx(
                   "flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:cursor-pointer",
-                  location.pathname === item.href
+                  location.pathname === item.href || location.pathname.startsWith(item.href + '/')
                     ? "bg-primary/10 text-primary hover:bg-primary/20"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}

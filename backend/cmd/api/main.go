@@ -20,7 +20,9 @@ import (
 )
 
 func main() {
-	// Load environment variables
+	// Load environment variables from .env file (only if not already set)
+	// godotenv.Load() does NOT override existing environment variables,
+	// so Docker Compose env vars will take precedence
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
@@ -36,6 +38,11 @@ func main() {
 	migrationsDir := getEnv("MIGRATIONS_DIR", "./migrations")
 	if err := database.RunMigrations(os.Getenv("DATABASE_URL"), migrationsDir); err != nil {
 		log.Fatalf("Failed to run migrations: %v", err)
+	}
+
+	// Seed admin user
+	if err := database.SeedAdminUser(db); err != nil {
+		log.Printf("Warning: Failed to seed admin user: %v", err)
 	}
 
 	// Initialize router
@@ -70,22 +77,69 @@ func main() {
 		// Auth routes (public)
 		r.Route("/auth", func(r chi.Router) {
 			authHandler := handlers.NewAuthHandler(db)
-			r.Post("/sign-up", authHandler.SignUp)
 			r.Post("/sign-in", authHandler.SignIn)
 			r.Post("/sign-out", authHandler.SignOut)
 			r.Get("/session", authHandler.GetSession)
-			r.Get("/oauth/google", authHandler.GoogleOAuthRedirect)
-			r.Get("/oauth/callback", authHandler.GoogleOAuthCallback)
 		})
 
 		// Protected routes
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(db))
+			r.Use(middleware.LoadUser(db))
 
 			// User profile routes
 			userHandler := handlers.NewUserHandler(db)
 			r.Get("/user/profile", userHandler.GetProfile)
 			r.Put("/user/profile", userHandler.UpdateProfile)
+
+			// User management routes (commander+)
+			r.Route("/users", func(r chi.Router) {
+				r.Use(middleware.RequireCommander(db))
+				r.Get("/", userHandler.ListUsers)
+				r.Get("/{id}", userHandler.GetUser)
+				r.Put("/{id}", userHandler.UpdateUser)
+				r.Delete("/{id}", userHandler.DeleteUser)
+			})
+
+			// Attendance routes
+			attendanceHandler := handlers.NewAttendanceHandler(db)
+			r.Post("/attendance/mark", attendanceHandler.MarkAttendance)
+
+			// Session routes (commander+)
+			r.Route("/sessions", func(r chi.Router) {
+				sessionHandler := handlers.NewSessionHandler(db)
+				r.Use(middleware.RequireCommander(db))
+				r.Post("/", sessionHandler.CreateSession)
+				r.Get("/", sessionHandler.ListSessions)
+				r.Get("/active", sessionHandler.GetActiveSessions)
+				r.Get("/{id}", sessionHandler.GetSession)
+				r.Get("/{id}/qr", sessionHandler.GetSessionQR)
+				r.Put("/{id}/close", sessionHandler.CloseSession)
+				r.Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
+				r.Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
+				r.Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
+
+				// Attendance marking for sessions (commander+)
+				r.Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
+				r.Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
+			})
+
+			// Reports routes (commander+)
+			r.Route("/reports", func(r chi.Router) {
+				r.Use(middleware.RequireCommander(db))
+				reportsHandler := handlers.NewReportsHandler(db)
+				r.Get("/sessions/{id}/analytics", reportsHandler.GetSessionAnalytics)
+				r.Get("/sessions/{id}/missing", reportsHandler.GetMissingUsers)
+				r.Get("/user/{userId}", reportsHandler.GetUserReport)
+				r.Get("/battery/{battery}", reportsHandler.GetBatteryReport)
+			})
+
+			// Admin routes (superadmin only)
+			r.Route("/admin", func(r chi.Router) {
+				r.Use(middleware.RequireSuperadmin(db))
+				adminHandler := handlers.NewAdminHandler(db)
+				r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
+			})
 		})
 
 		// Webhook routes (verified via signature)

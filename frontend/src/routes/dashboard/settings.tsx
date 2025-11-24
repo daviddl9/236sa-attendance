@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import DashboardLayout from "@/components/dashboard/layout";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -29,7 +29,7 @@ function SettingsPage() {
   // Initialize form with user data
   useEffect(() => {
     if (user) {
-      setName(user.name || "");
+      setName(user.fullName || "");
     }
   }, [user]);
 
@@ -43,7 +43,7 @@ function SettingsPage() {
 
     setLoading(true);
     try {
-      await apiClient.updateProfile({ name });
+      await apiClient.updateProfile({ fullName: name });
       await refetch();
       toast.success("Profile updated successfully");
     } catch (error) {
@@ -64,7 +64,7 @@ function SettingsPage() {
     );
   }
 
-  const userInitial = user.name?.charAt(0).toUpperCase() || user.email?.charAt(0).toUpperCase() || "U";
+  const userInitial = user.fullName && user.fullName.length > 0 ? user.fullName.charAt(0).toUpperCase() : "U";
 
   return (
     <DashboardLayout>
@@ -93,11 +93,10 @@ function SettingsPage() {
               <CardContent className="space-y-6">
                 <div className="flex items-center gap-4">
                   <Avatar className="h-20 w-20">
-                    <AvatarImage src={user.image || undefined} />
                     <AvatarFallback className="text-xl">{userInitial}</AvatarFallback>
                   </Avatar>
                   <div className="text-sm text-muted-foreground">
-                    <p>Profile picture is synced from your Google account</p>
+                    <p>Profile information</p>
                   </div>
                 </div>
 
@@ -113,15 +112,26 @@ function SettingsPage() {
                         disabled={loading}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={user.email}
-                        disabled
-                      />
-                    </div>
+                    {user.rank && (
+                      <div className="space-y-2">
+                        <Label htmlFor="rank">Rank</Label>
+                        <Input
+                          id="rank"
+                          value={user.rank}
+                          disabled
+                        />
+                      </div>
+                    )}
+                    {user.battery && (
+                      <div className="space-y-2">
+                        <Label htmlFor="battery">Battery</Label>
+                        <Input
+                          id="battery"
+                          value={user.battery}
+                          disabled
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <Button type="submit" disabled={loading} className="mt-6">

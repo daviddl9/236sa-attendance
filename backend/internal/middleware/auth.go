@@ -10,6 +10,7 @@ import (
 type contextKey string
 
 const UserIDKey contextKey = "userID"
+const UserKey contextKey = "user"
 
 func Auth(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
