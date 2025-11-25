@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -12,18 +12,18 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../../../components/ui/table';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../../components/ui/dialog';
 import { useState } from 'react';
-import { Plus, Search, Upload } from 'lucide-react';
+import { Search, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
-import { Link } from '@tanstack/react-router';
+import { UserTable } from '../../../components/users/user-table';
 
 export const Route = createFileRoute('/dashboard/users/')({
   component: UsersPage,
@@ -32,24 +32,63 @@ export const Route = createFileRoute('/dashboard/users/')({
 function UsersPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [batteryFilter, setBatteryFilter] = useState('');
   const [rankFilter, setRankFilter] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
 
   const isSuperadmin = user?.isSuperadmin || false;
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['users', page, search, batteryFilter, rankFilter],
-    queryFn: () =>
-      apiClient.listUsers({
-        page,
-        limit: 20,
-        search: search || undefined,
-        battery: batteryFilter || undefined,
-        rank: rankFilter || undefined,
-      }),
+    queryFn: async () => {
+      try {
+        const result = await apiClient.listUsers({
+          page,
+          limit: 20,
+          search: search || undefined,
+          battery: batteryFilter || undefined,
+          rank: rankFilter || undefined,
+        });
+        console.log('Users API response:', result);
+        return result;
+      } catch (err) {
+        console.error('Error fetching users:', err);
+        throw err;
+      }
+    },
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: (userId: string) => apiClient.deleteUser(userId),
+    onSuccess: () => {
+      toast.success('User deleted successfully');
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete user');
+    },
+  });
+
+  const handleDeleteClick = (userId: string) => {
+    const targetUser = data?.users.find((u) => u.id === userId);
+    setUserToDelete({
+      id: userId,
+      name: targetUser?.fullName || 'Unknown User',
+    });
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (userToDelete) {
+      deleteMutation.mutate(userToDelete.id);
+    }
+  };
 
   const handleBulkUpload = () => {
     navigate({ to: '/dashboard/users/bulk-upload' });
@@ -147,46 +186,28 @@ function UsersPage() {
           <div className="flex items-center justify-center py-12">
             <div className="text-muted-foreground">Loading...</div>
           </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-2">
+            <div className="text-destructive font-semibold">
+              Error loading users: {error instanceof Error ? error.message : 'Unknown error'}
+            </div>
+            {error instanceof Error && error.message.includes('403') && (
+              <div className="text-sm text-muted-foreground">
+                You may not have permission to view users. Commander or superadmin access required.
+              </div>
+            )}
+            <Button onClick={() => refetch()} variant="outline" className="mt-2">
+              Retry
+            </Button>
+          </div>
         ) : (
           <>
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Full Name</TableHead>
-                    <TableHead>Rank</TableHead>
-                    <TableHead>Battery</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {!data?.users || data.users.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground">
-                        No users found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    data.users.map((user) => (
-                      <TableRow key={user.id}>
-                        <TableCell className="font-medium">
-                          {user.fullName || 'N/A'}
-                        </TableCell>
-                        <TableCell>{user.rank || 'N/A'}</TableCell>
-                        <TableCell>{user.battery || 'N/A'}</TableCell>
-                        <TableCell>
-                          <Link to="/dashboard/users/$userId" params={{ userId: user.id }}>
-                            <Button variant="ghost" size="sm">
-                              View
-                            </Button>
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+            {data && (
+              <div className="text-sm text-muted-foreground mb-2">
+                Found {data.total} user{data.total !== 1 ? 's' : ''}
+              </div>
+            )}
+            <UserTable users={data?.users || []} showActions={true} onDelete={handleDeleteClick} />
 
             {data && data.total > 20 && (
               <div className="flex items-center justify-between">
@@ -215,6 +236,29 @@ function UsersPage() {
           </>
         )}
       </div>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete User</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{userToDelete?.name}</strong>? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

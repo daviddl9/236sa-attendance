@@ -120,7 +120,9 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // ListSessions retrieves sessions with optional filters
@@ -161,7 +163,6 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if to != "" {
 		query += fmt.Sprintf(" AND start_time <= $%d", argIndex)
 		args = append(args, to)
-		argIndex++
 	}
 
 	query += " ORDER BY start_time DESC"
@@ -202,7 +203,9 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sessions)
+	if err := json.NewEncoder(w).Encode(sessions); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // GetSession retrieves a single session by ID
@@ -244,7 +247,9 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	session.ClosedAt = closedAt
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(session)
+	if err := json.NewEncoder(w).Encode(session); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // GetActiveSessions retrieves all active sessions
@@ -295,7 +300,9 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sessions)
+	if err := json.NewEncoder(w).Encode(sessions); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // CloseSession closes an active session
@@ -339,7 +346,9 @@ func (h *SessionHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Session closed successfully"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Session closed successfully"}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // ExportSessionCSV exports session attendance to CSV
@@ -377,7 +386,10 @@ func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request
 	defer writer.Flush()
 
 	// Write header
-	writer.Write([]string{"Full Name", "Rank", "Battery", "Status", "Marked At", "Method"})
+	if err := writer.Write([]string{"Full Name", "Rank", "Battery", "Status", "Marked At", "Method"}); err != nil {
+		http.Error(w, "Failed to write CSV header", http.StatusInternalServerError)
+		return
+	}
 
 	// Write data
 	for rows.Next() {
@@ -403,14 +415,16 @@ func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request
 			batteryStr = *battery
 		}
 
-		writer.Write([]string{
+		if err := writer.Write([]string{
 			fullNameStr,
 			rankStr,
 			batteryStr,
 			"Present",
 			markedAt.Format("2006-01-02 15:04:05"),
 			markingMethod,
-		})
+		}); err != nil {
+			continue
+		}
 	}
 }
 
@@ -429,17 +443,28 @@ func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Reque
 
 	// Create Excel file
 	f := excelize.NewFile()
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	sheetName := "Attendance"
-	f.NewSheet(sheetName)
-	f.DeleteSheet("Sheet1")
+	if _, err := f.NewSheet(sheetName); err != nil {
+		http.Error(w, "Failed to create Excel sheet", http.StatusInternalServerError)
+		return
+	}
+	if err := f.DeleteSheet("Sheet1"); err != nil {
+		http.Error(w, "Failed to delete default sheet", http.StatusInternalServerError)
+		return
+	}
 
 	// Set headers
 	headers := []string{"Full Name", "Rank", "Battery", "Status", "Marked At", "Method"}
 	for i, header := range headers {
 		cell := fmt.Sprintf("%c1", 'A'+i)
-		f.SetCellValue(sheetName, cell, header)
+		if err := f.SetCellValue(sheetName, cell, header); err != nil {
+			http.Error(w, "Failed to set Excel header", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Get attendance records
@@ -482,18 +507,32 @@ func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Reque
 			batteryStr = *battery
 		}
 
-		f.SetCellValue(sheetName, fmt.Sprintf("A%d", rowNum), fullNameStr)
-		f.SetCellValue(sheetName, fmt.Sprintf("B%d", rowNum), rankStr)
-		f.SetCellValue(sheetName, fmt.Sprintf("C%d", rowNum), batteryStr)
-		f.SetCellValue(sheetName, fmt.Sprintf("D%d", rowNum), "Present")
-		f.SetCellValue(sheetName, fmt.Sprintf("E%d", rowNum), markedAt.Format("2006-01-02 15:04:05"))
-		f.SetCellValue(sheetName, fmt.Sprintf("F%d", rowNum), markingMethod)
+		if err := f.SetCellValue(sheetName, fmt.Sprintf("A%d", rowNum), fullNameStr); err != nil {
+			continue
+		}
+		if err := f.SetCellValue(sheetName, fmt.Sprintf("B%d", rowNum), rankStr); err != nil {
+			continue
+		}
+		if err := f.SetCellValue(sheetName, fmt.Sprintf("C%d", rowNum), batteryStr); err != nil {
+			continue
+		}
+		if err := f.SetCellValue(sheetName, fmt.Sprintf("D%d", rowNum), "Present"); err != nil {
+			continue
+		}
+		if err := f.SetCellValue(sheetName, fmt.Sprintf("E%d", rowNum), markedAt.Format("2006-01-02 15:04:05")); err != nil {
+			continue
+		}
+		if err := f.SetCellValue(sheetName, fmt.Sprintf("F%d", rowNum), markingMethod); err != nil {
+			continue
+		}
 		rowNum++
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s_attendance.xlsx\"", sessionName))
-	f.Write(w)
+	if err := f.Write(w); err != nil {
+		http.Error(w, "Failed to write Excel file", http.StatusInternalServerError)
+	}
 }
 
 // ExportSessionPDF exports session attendance to PDF (simplified - returns JSON for now)
@@ -568,9 +607,11 @@ func (h *SessionHandler) ExportSessionPDF(w http.ResponseWriter, r *http.Request
 
 	// Return JSON for now (PDF can be implemented later)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"sessionName": sessionName,
 		"records":     records,
 		"note":        "PDF export coming soon. Use CSV or Excel export for now.",
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }

@@ -5,12 +5,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -46,40 +49,45 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Find user by full_name (or admin identifier)
+	// Extract NRIC Last 4 and DOB from password FIRST (before lookup)
+	// Password format: NRIC_LAST_4 (4 chars) + DOB (6 chars in DDMMYY format)
+	var nricLast4Val, dobVal *string
+	if len(req.Password) == 10 {
+		nricLast4Str := req.Password[:4]
+		dobStr := req.Password[4:]
+		nricLast4Val = &nricLast4Str
+		dobVal = &dobStr
+	}
+
+	// Find user by full_name AND nric_last4 (allows multiple users with same name)
 	var userID, hashedPassword string
 	var fullName, rank, battery *string
 	var nricLast4, dob *string
 	var isSuperadmin bool
 	var createdAt, updatedAt time.Time
 
-	// Try to find user by full_name
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT 
+		SELECT
 			u.id, u."full_name", u.rank, u.battery, u."nric_last4", u.dob, u."is_superadmin",
 			u."createdAt", u."updatedAt", u.password
 		FROM "user" u
-		WHERE u."full_name" = $1
-		LIMIT 1
-	`, req.Identifier).Scan(
+		WHERE u."full_name" = $1 AND u."nric_last4" IS NOT DISTINCT FROM $2
+	`, req.Identifier, nricLast4Val).Scan(
 		&userID, &fullName, &rank, &battery, &nricLast4, &dob, &isSuperadmin, &createdAt, &updatedAt, &hashedPassword,
 	)
 
 	if err != nil {
 		// User not found - automatically create a new user
+		if !errors.Is(err, pgx.ErrNoRows) {
+			// Unexpected error querying user table
+			log.Printf("[SignIn] Error querying user table: %v", err)
+			http.Error(w, "Failed to query user", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[SignIn] User not found, creating new user: %s", req.Identifier)
+
 		userID = generateID()
 		now := time.Now()
-
-		// Extract NRIC Last 4 and DOB from password if it's 10 characters (format: NRICLast4 + DOB)
-		// Allocate strings at function scope to avoid dangling pointers
-		var nricLast4Str, dobStr string
-		var nricLast4Val, dobVal *string
-		if len(req.Password) == 10 {
-			nricLast4Str = req.Password[:4]
-			dobStr = req.Password[4:]
-			nricLast4Val = &nricLast4Str
-			dobVal = &dobStr
-		}
 
 		// Hash the password
 		hashedPasswordBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -99,9 +107,11 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		`, userID, req.Identifier, nil, nil, nricLast4Val, dobVal, hashedPassword, now, now, false)
 
 		if err != nil {
+			log.Printf("[SignIn] Failed to create user: %v", err)
 			http.Error(w, "Failed to create user", http.StatusInternalServerError)
 			return
 		}
+		log.Printf("[SignIn] Created new user: %s", req.Identifier)
 
 		// Set user fields for response
 		fullName = &req.Identifier
@@ -115,9 +125,11 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// User exists - verify password
 		if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password)); err != nil {
+			log.Printf("[SignIn] Password verification failed for user: %s", req.Identifier)
 			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
 			return
 		}
+		log.Printf("[SignIn] User authenticated successfully: %s", req.Identifier)
 	}
 
 	// Create new session
@@ -132,9 +144,11 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	`, sessionID, expiresAt, sessionToken, userID, now, now, r.RemoteAddr, r.UserAgent())
 
 	if err != nil {
+		log.Printf("[SignIn] Failed to create session for user %s: %v", userID, err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[SignIn] Session created successfully for user: %s", userID)
 
 	// Set session cookie
 	setSessionCookie(w, sessionToken)
@@ -223,9 +237,15 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			log.Printf("[GetSession] Error querying user table: %v", err)
+		} else {
+			log.Printf("[GetSession] Session not found or expired for token")
+		}
 		http.Error(w, "Invalid or expired session", http.StatusUnauthorized)
 		return
 	}
+	log.Printf("[GetSession] Found user session for user: %s", userID)
 
 	user := models.User{
 		ID:           userID,

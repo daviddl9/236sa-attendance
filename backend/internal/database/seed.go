@@ -23,17 +23,17 @@ func SeedAdminUser(db *DB) error {
 	var existingID string
 	err = db.Pool.QueryRow(ctx, `SELECT id FROM "user" WHERE id = $1`, adminID).Scan(&existingID)
 	if err == nil {
-		// Admin exists, update password hash
-		log.Println("Admin user exists, updating password hash...")
+		// Admin exists, update password hash and profile
+		log.Println("Admin user exists, updating password hash and profile...")
 		_, err = db.Pool.Exec(ctx, `
 			UPDATE "user" 
-			SET password = $1, "is_superadmin" = true, "updatedAt" = NOW()
+			SET password = $1, "is_superadmin" = true, rank = 'CPT', battery = 'HQ', "updatedAt" = NOW()
 			WHERE id = $2
 		`, string(hashedPassword), adminID)
 		if err != nil {
 			return fmt.Errorf("failed to update admin password: %w", err)
 		}
-		log.Println("Admin password hash updated successfully")
+		log.Println("Admin password hash and profile updated successfully")
 		return nil
 	}
 
@@ -41,9 +41,9 @@ func SeedAdminUser(db *DB) error {
 	log.Println("Creating admin user...")
 	_, err = db.Pool.Exec(ctx, `
 		INSERT INTO "user" (
-			id, "full_name", "is_superadmin", password, "createdAt", "updatedAt"
+			id, "full_name", "is_superadmin", password, rank, battery, "createdAt", "updatedAt"
 		)
-		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		VALUES ($1, $2, $3, $4, 'CPT', 'HQ', NOW(), NOW())
 	`, adminID, adminFullName, true, string(hashedPassword))
 	if err != nil {
 		return fmt.Errorf("failed to create admin user: %w", err)

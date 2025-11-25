@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { apiClient } from './api-client';
 import type { User } from './api-client';
@@ -10,14 +10,12 @@ interface AuthContextType {
   isAuthenticated: boolean;
   signOut: () => Promise<void>;
   refetch: () => void;
-  setUser: (user: User | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [manualUser, setManualUser] = useState<User | null>(null);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['session'],
@@ -33,14 +31,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     throwOnError: false,
   });
 
-  // Use manual user if set, otherwise use query data
-  const user = manualUser || data || null;
+  const user = data || null;
 
   const signOut = async () => {
     try {
       await apiClient.signOut();
-      // Clear manual user state
-      setManualUser(null);
       // Invalidate and remove session query data
       queryClient.setQueryData(['session'], null);
       queryClient.invalidateQueries({ queryKey: ['session'] });
@@ -49,7 +44,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Sign out error:', error);
       // Even if API call fails, clear local state
-      setManualUser(null);
       queryClient.setQueryData(['session'], null);
       queryClient.clear();
     }
@@ -65,7 +59,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refetch: () => {
           refetch();
         },
-        setUser: setManualUser,
       }}
     >
       {children}

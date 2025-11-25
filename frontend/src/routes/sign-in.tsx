@@ -25,6 +25,7 @@ export const Route = createFileRoute('/sign-in')({
   validateSearch: (search: Record<string, unknown>) => {
     return {
       redirect: (search.redirect as string) || undefined,
+      qrToken: (search.qrToken as string) || undefined,
     };
   },
 });
@@ -34,8 +35,8 @@ function SignInContent() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const { setUser } = useAuth();
-  const search = useSearch({ from: '/sign-in' }) as { redirect?: string };
+  const { refetch } = useAuth();
+  const search = useSearch({ from: '/sign-in' }) as { redirect?: string; qrToken?: string };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,11 +45,80 @@ function SignInContent() {
       return;
     }
 
+    if (identifier.toLowerCase() !== 'admin' && password.length !== 10) {
+      toast.error('Password must be 10 characters (NRIC last 4 + DOB in DDMMYY format)');
+      return;
+    }
+
     try {
       setLoading(true);
       const data = await apiClient.signIn({ identifier, password });
-      setUser(data.user);
+
+      // Check if profile is complete (has rank and battery)
+      const profileComplete = data.user.rank && data.user.battery;
+
+      // IMPORTANT: Store qrToken BEFORE refetch() to avoid race condition
+      // refetch() updates isAuthenticated which triggers Navigate before this code completes
+      console.log('[SignIn] search.qrToken:', search.qrToken, 'profileComplete:', profileComplete);
+      if (search.qrToken && !profileComplete) {
+        console.log('[SignIn] Storing pendingQrToken in sessionStorage');
+        sessionStorage.setItem('pendingQrToken', search.qrToken);
+      }
+
+      await refetch(); // Refresh auth context to get updated user data
       toast.success('Signed in successfully');
+
+      // If there's a QR token, mark attendance (after profile completion if needed)
+      if (search.qrToken) {
+        // If profile is not complete, redirect to dashboard where modal will show
+        if (!profileComplete) {
+          window.location.href = '/dashboard';
+          return;
+        }
+        
+        // Profile is complete, mark attendance immediately
+        try {
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+          const response = await fetch(`${apiUrl}/api/qr/${search.qrToken}`, {
+            method: 'GET',
+            credentials: 'include',
+            redirect: 'manual',
+          });
+
+          // Handle opaque redirects (CORS) - backend returned a redirect
+          if (response.type === 'opaqueredirect') {
+            const sessionId = search.qrToken.split(':')[0];
+            window.location.href = `/attendance/marked?session=${sessionId}`;
+            return;
+          }
+
+          // Handle transparent redirects (same-origin)
+          if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get('Location');
+            if (location) {
+              try {
+                const url = new URL(location);
+                const path = url.pathname + url.search;
+                window.location.href = path;
+                return;
+              } catch {
+                window.location.href = location;
+                return;
+              }
+            }
+          }
+
+          // If successful, redirect to marked page
+          if (response.ok) {
+            const sessionId = search.qrToken.split(':')[0];
+            window.location.href = `/attendance/marked?session=${sessionId}`;
+            return;
+          }
+        } catch (qrError) {
+          console.error('Failed to mark attendance:', qrError);
+          toast.error('Signed in but failed to mark attendance. Please scan the QR code again.');
+        }
+      }
       
       // Redirect to the redirect URL if present, otherwise go to dashboard
       if (search.redirect) {

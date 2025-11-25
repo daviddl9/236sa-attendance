@@ -85,8 +85,8 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 				SELECT id, "full_name", rank, battery, "nric_last4", dob, is_superadmin, "createdAt", "updatedAt"
 				FROM "user" WHERE id = $1
 			`, userID).Scan(
-				&user.ID, user.FullName, user.Rank, user.Battery,
-				user.NRICLast4, user.DOB, &user.IsSuperadmin,
+				&user.ID, &user.FullName, &user.Rank, &user.Battery,
+				&user.NRICLast4, &user.DOB, &user.IsSuperadmin,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 			if err != nil {
@@ -96,10 +96,8 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 	}
 
 	if user == nil {
-		// Not authenticated - redirect to registration page
-		// Use frontend route instead of API route for redirect
-		frontendQRPath := fmt.Sprintf("/qr/%s", token)
-		redirectURL := fmt.Sprintf("%s/attendance/register?redirect=%s&session=%s", frontendURL, frontendQRPath, sessionID)
+		// Not authenticated - redirect to sign-in page with QR token for auto-marking after login
+		redirectURL := fmt.Sprintf("%s/sign-in?redirect=/qr/%s&qrToken=%s", frontendURL, token, token)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 		return
 	}
@@ -170,7 +168,10 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 
 	// Validate timestamp (should be within 5 minutes)
 	var timestamp int64
-	fmt.Sscanf(timestampStr, "%d", &timestamp)
+	if _, err := fmt.Sscanf(timestampStr, "%d", &timestamp); err != nil {
+		http.Error(w, "Invalid timestamp in QR code", http.StatusBadRequest)
+		return
+	}
 	qrTime := time.Unix(timestamp, 0)
 	if time.Since(qrTime) > 5*time.Minute {
 		http.Error(w, "QR code expired", http.StatusBadRequest)
@@ -227,10 +228,12 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"message":  "Attendance marked successfully",
 		"recordId": recordID,
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 type ManualMarkRequest struct {
@@ -344,11 +347,13 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":      fmt.Sprintf("Marked attendance for %d user(s)", successCount),
 		"successCount": successCount,
 		"errors":       errors,
-	})
+	}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // RemoveAttendance removes an attendance record (commander/superadmin)
@@ -396,5 +401,7 @@ func (h *AttendanceHandler) RemoveAttendance(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "Attendance removed successfully"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Attendance removed successfully"}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }

@@ -18,10 +18,12 @@ import {
   X,
   FileDown,
   FileSpreadsheet,
+  Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 import { useAuth } from '../../../lib/auth-context';
+import { UserTable } from '../../../components/users/user-table';
 
 export const Route = createFileRoute('/dashboard/sessions/$sessionId')({
   component: SessionDetailPage,
@@ -93,6 +95,16 @@ function SessionDetailPage() {
       URL.revokeObjectURL(url);
     } catch {
       toast.error('Failed to download QR code');
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (!qrCodeUrl) return;
+    try {
+      await navigator.clipboard.writeText(qrCodeUrl);
+      toast.success('Link copied to clipboard');
+    } catch {
+      toast.error('Failed to copy link');
     }
   };
 
@@ -187,10 +199,16 @@ function SessionDetailPage() {
                   <div className="text-muted-foreground">Loading QR Code...</div>
                 </div>
               )}
-              <Button onClick={handleDownloadQR} variant="outline" disabled={!session || !qrCodeUrl}>
-                <Download className="mr-2 h-4 w-4" />
-                Download QR Code
-              </Button>
+              <div className="flex flex-col gap-2 w-full max-w-[200px]">
+                <Button onClick={handleDownloadQR} variant="outline" className="w-full" disabled={!session || !qrCodeUrl}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Download QR Code
+                </Button>
+                <Button onClick={handleCopyLink} variant="outline" className="w-full" disabled={!qrCodeUrl}>
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copy Link
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -254,21 +272,7 @@ function SessionDetailPage() {
               <CardDescription>Users who have not marked attendance</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                {analytics.missingUsers.map((user) => (
-                  <div
-                    key={user.id}
-                    className="flex items-center justify-between p-2 border rounded"
-                  >
-                    <div>
-                      <p className="font-medium">{user.fullName || 'Unknown'}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {user.rank || 'N/A'} • {user.battery || 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <UserTable users={analytics.missingUsers} showActions={false} emptyMessage="No missing users" />
             </CardContent>
           </Card>
         )}

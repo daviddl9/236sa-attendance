@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -23,22 +23,27 @@ import {
 import { useState, useRef, useEffect } from 'react';
 import { ScanLine, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '../../../lib/auth-context';
+import { canAccessCommanderFeatures } from '../../../lib/user-utils';
 
 export const Route = createFileRoute('/dashboard/attendance/scan')({
   component: ScanAttendancePage,
 });
 
 function ScanAttendancePage() {
+  const { user } = useAuth();
   const [scanning, setScanning] = useState(false);
   const [scannedData, setScannedData] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<'success' | 'error' | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
+  const canViewSessions = canAccessCommanderFeatures(user);
+
   const { data: activeSessions } = useQuery({
     queryKey: ['sessions', 'active'],
     queryFn: () => apiClient.getActiveSessions(),
+    enabled: canViewSessions,
   });
 
   const markMutation = useMutation({
@@ -71,7 +76,7 @@ function ScanAttendancePage() {
         videoRef.current.srcObject = stream;
         setScanning(true);
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to access camera. Please grant camera permissions.');
     }
   };
@@ -113,7 +118,7 @@ function ScanAttendancePage() {
           <p className="text-muted-foreground">Scan a QR code to mark your attendance</p>
         </div>
 
-        {activeSessions && activeSessions.length === 0 && (
+        {canViewSessions && activeSessions && activeSessions.length === 0 && (
           <Card>
             <CardContent className="pt-6">
               <p className="text-center text-muted-foreground">
@@ -231,7 +236,7 @@ function ScanAttendancePage() {
           </CardContent>
         </Card>
 
-        {activeSessions && activeSessions.length > 0 && (
+        {canViewSessions && activeSessions && activeSessions.length > 0 && (
           <Card>
             <CardHeader>
               <CardTitle>Active Sessions</CardTitle>

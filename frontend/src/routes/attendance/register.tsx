@@ -43,7 +43,7 @@ const BATTERIES = ['HQ', 'Alpha', 'Bravo'];
 
 function RegisterPage() {
   const navigate = useNavigate();
-  const { setUser } = useAuth();
+  const { refetch } = useAuth();
   const search = useSearch({ from: '/attendance/register' }) as {
     redirect?: string;
     session?: string;
@@ -86,7 +86,7 @@ function RegisterPage() {
     try {
       setLoading(true);
       const response = await apiClient.registerUser(formData);
-      setUser(response.user);
+      await refetch(); // Refresh auth context to get updated user data
       toast.success('Account created successfully!');
 
       // Navigate to redirect URL if present, otherwise go to dashboard

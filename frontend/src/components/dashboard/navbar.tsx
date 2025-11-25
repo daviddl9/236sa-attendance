@@ -8,11 +8,58 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import UserProfile from "./user-profile";
-import { HomeIcon, Menu, Settings, Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
+import { Menu, Settings, Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useAuth } from "@/lib/auth-context";
+import { canAccessCommanderFeatures, isSuperadmin } from "@/lib/user-utils";
+
+interface NavItem {
+  label: string;
+  href: string;
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
+  requiresCommander?: boolean;
+  requiresSuperadmin?: boolean;
+}
+
+const navItems: NavItem[] = [
+  {
+    label: "Users",
+    href: "/dashboard/users",
+    icon: Users,
+    requiresSuperadmin: true,
+  },
+  {
+    label: "Sessions",
+    href: "/dashboard/sessions",
+    icon: Calendar,
+    requiresCommander: true,
+  },
+  {
+    label: "Scan QR",
+    href: "/dashboard/attendance/scan",
+    icon: ScanLine,
+  },
+  {
+    label: "Reports",
+    href: "/dashboard/reports",
+    icon: BarChart3,
+    requiresSuperadmin: true,
+  },
+];
 
 export default function DashboardTopNav({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  const canAccessCommander = canAccessCommanderFeatures(user);
+  const isSuperadminUser = isSuperadmin(user);
+
+  const filteredNavItems = navItems.filter((item) => {
+    if (item.requiresSuperadmin && !isSuperadminUser) return false;
+    if (item.requiresCommander && !canAccessCommander) return false;
+    return true;
+  });
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <header className="sticky top-0 z-10 flex h-14 lg:h-[52px] items-center gap-4 border-b bg-background px-3 flex-shrink-0">
@@ -29,61 +76,24 @@ export default function DashboardTopNav({ children }: { children: React.ReactNod
                 <SheetTitle>236SA Attendance</SheetTitle>
               </Link>
             </SheetHeader>
-            <div className="flex flex-col space-y-3 mt-[1rem]">
-              <DialogClose asChild>
-                <Link to="/dashboard">
-                  <Button variant="outline" className="w-full">
-                    <HomeIcon className="mr-2 h-4 w-4" />
-                    Overview
+            <div className="flex flex-col space-y-3 mt-[1rem] px-2">
+              {filteredNavItems.map((item) => (
+                <DialogClose key={item.href} asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start px-4"
+                    onClick={() => navigate({ to: item.href })}
+                  >
+                    <item.icon className="mr-3 h-4 w-4" />
+                    {item.label}
                   </Button>
-                </Link>
-              </DialogClose>
-              <Separator className="my-3" />
-              <DialogClose asChild>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => navigate({ to: '/dashboard/users' as any })}
-                >
-                  <Users className="mr-2 h-4 w-4" />
-                  Users
-                </Button>
-              </DialogClose>
-              <DialogClose asChild>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => navigate({ to: '/dashboard/sessions' as any })}
-                >
-                  <Calendar className="mr-2 h-4 w-4" />
-                  Sessions
-                </Button>
-              </DialogClose>
-              <DialogClose asChild>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => navigate({ to: '/dashboard/attendance/scan' as any })}
-                >
-                  <ScanLine className="mr-2 h-4 w-4" />
-                  Scan QR
-                </Button>
-              </DialogClose>
-              <DialogClose asChild>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => navigate({ to: '/dashboard/reports' as any })}
-                >
-                  <BarChart3 className="mr-2 h-4 w-4" />
-                  Reports
-                </Button>
-              </DialogClose>
+                </DialogClose>
+              ))}
               <Separator className="my-3" />
               <DialogClose asChild>
                 <Link to="/dashboard/settings">
-                  <Button variant="outline" className="w-full">
-                    <Settings className="mr-2 h-4 w-4" />
+                  <Button variant="outline" className="w-full justify-start px-4">
+                    <Settings className="mr-3 h-4 w-4" />
                     Settings
                   </Button>
                 </Link>

@@ -12,6 +12,7 @@ import {
 import { ArrowLeft, Users, TrendingUp, AlertCircle } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { Button } from '../../../../components/ui/button';
+import { UserTable } from '../../../../components/users/user-table';
 
 export const Route = createFileRoute('/dashboard/reports/sessions/$sessionId')({
   component: SessionReportPage,
@@ -148,21 +149,7 @@ function SessionReportPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                {analytics.missingUsers.map((user) => (
-                  <div
-                    key={user.id}
-                    className="flex items-center justify-between p-3 border rounded"
-                  >
-                    <div>
-                      <p className="font-medium">{user.fullName || 'Unknown'}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {user.rank || 'N/A'} • {user.battery || 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <UserTable users={analytics.missingUsers} showActions={false} emptyMessage="No missing users" />
             </CardContent>
           </Card>
         )}

@@ -4,7 +4,7 @@ import "time"
 
 // Session scopes
 const (
-	SessionScopeUnitWide      = "unit_wide"
+	SessionScopeUnitWide        = "unit_wide"
 	SessionScopeBatterySpecific = "battery_specific"
 )
 
@@ -21,19 +21,19 @@ const (
 )
 
 type AttendanceSession struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	QRCode        string    `json:"qrCode"`
-	QRCodeSecret  string    `json:"-"` // Never serialize secret
-	Scope         string    `json:"scope"`
-	Batteries     []string  `json:"batteries"`
-	Status        string    `json:"status"`
-	CreatedBy     string    `json:"createdBy"`
-	StartTime     time.Time `json:"startTime"`
-	EndTime       *time.Time `json:"endTime,omitempty"`
-	ClosedAt      *time.Time `json:"closedAt,omitempty"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	QRCode       string     `json:"qrCode"`
+	QRCodeSecret string     `json:"-"` // Never serialize secret
+	Scope        string     `json:"scope"`
+	Batteries    []string   `json:"batteries"`
+	Status       string     `json:"status"`
+	CreatedBy    string     `json:"createdBy"`
+	StartTime    time.Time  `json:"startTime"`
+	EndTime      *time.Time `json:"endTime,omitempty"`
+	ClosedAt     *time.Time `json:"closedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 type AttendanceRecord struct {
@@ -46,4 +46,3 @@ type AttendanceRecord struct {
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
 }
-

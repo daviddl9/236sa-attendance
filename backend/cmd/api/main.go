@@ -51,15 +51,27 @@ func main() {
 	// Middleware
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
-	r.Use(chimiddleware.Logger)
-	r.Use(chimiddleware.Recoverer)
+	// Custom request/response logger
+	r.Use(middleware.RequestResponseLogger)
+	// Custom recoverer with logging
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Printf("[PANIC] Recovered from panic: %v, Request: %s %s", err, r.Method, r.URL.Path)
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// CORS configuration for frontend (must be before timeout middleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{getEnv("FRONTEND_URL", "http://localhost:5173")},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
+		ExposedHeaders:   []string{"Link", "Location"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -100,9 +112,9 @@ func main() {
 			r.Get("/user/profile", userHandler.GetProfile)
 			r.Put("/user/profile", userHandler.UpdateProfile)
 
-			// User management routes (commander+)
+			// User management routes (commander+ or superadmin)
 			r.Route("/users", func(r chi.Router) {
-				r.Use(middleware.RequireCommander(db))
+				r.Use(middleware.RequireCommander(db)) // Allows commanders (3SG+) and superadmins
 				r.Get("/", userHandler.ListUsers)
 				r.Get("/{id}", userHandler.GetUser)
 				r.Put("/{id}", userHandler.UpdateUser)

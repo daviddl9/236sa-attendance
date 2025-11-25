@@ -52,7 +52,11 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			http.Error(w, "Failed to close file", http.StatusInternalServerError)
+		}
+	}()
 
 	// Validate file type
 	if !strings.HasSuffix(header.Filename, ".xlsx") && !strings.HasSuffix(header.Filename, ".xls") {
@@ -73,7 +77,9 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to open Excel file", http.StatusBadRequest)
 		return
 	}
-	defer xlFile.Close()
+	defer func() {
+		_ = xlFile.Close() // Ignore close error during cleanup
+	}()
 
 	// Get first sheet
 	sheetName := xlFile.GetSheetName(0)
@@ -184,7 +190,7 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			uploadRow.Battery, uploadRow.NRICLast4, uploadRow.DOB, string(hashedPassword), now, now)
 
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx) // Rollback on error, ignore rollback error
 			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
 				errors = append(errors, fmt.Sprintf("Row %d: User '%s' already exists", rowNum, uploadRow.FullName))
 			} else {
@@ -230,5 +236,8 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }

@@ -29,7 +29,7 @@ function SignInContent() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const { setUser } = useAuth();
+  const { refetch } = useAuth();
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +41,7 @@ function SignInContent() {
     try {
       setLoading(true);
       const data = await apiClient.signIn({ identifier, password });
-      setUser(data.user);
+      await refetch(); // Refresh auth context to get updated user data
       toast.success('Signed in successfully');
       window.location.href = '/dashboard/attendance/scan';
     } catch (error) {

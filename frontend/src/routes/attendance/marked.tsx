@@ -25,10 +25,12 @@ export const Route = createFileRoute('/attendance/marked')({
 function AttendanceMarkedPage() {
   const search = useSearch({ from: '/attendance/marked' }) as { session?: string };
 
+  // Try to fetch session details, but silently fail if user doesn't have permission
   const { data: session } = useQuery({
     queryKey: ['session', search.session],
     queryFn: () => apiClient.getSessionById(search.session!),
     enabled: !!search.session,
+    retry: false,
   });
 
   return (

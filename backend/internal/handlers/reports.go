@@ -61,13 +61,14 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Build user query based on session scope
+	// Exclude superadmin users from attendance tracking
 	var userQuery string
 	var userArgs []any
 	if sessionScope == "unit_wide" {
-		userQuery = `SELECT id, "full_name", rank, battery FROM "user"`
-		userArgs = []any{}
+		userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false`
+		userArgs = nil
 	} else {
-		userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE battery = ANY($1)`
+		userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = ANY($1)`
 		userArgs = []any{sessionBatteries}
 	}
 
@@ -108,7 +109,9 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	presentUserIDs := make(map[string]bool)
 	for rows.Next() {
 		var userID string
-		rows.Scan(&userID)
+		if err := rows.Scan(&userID); err != nil {
+			continue // Skip invalid rows
+		}
 		presentUserIDs[userID] = true
 	}
 
@@ -168,7 +171,9 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(analytics)
+	if err := json.NewEncoder(w).Encode(analytics); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // GetMissingUsers returns list of users who haven't marked attendance
@@ -189,13 +194,15 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Build query for eligible users
+	// Exclude superadmin users from attendance tracking
 	var userQuery string
 	var userArgs []any
 	if sessionScope == "unit_wide" {
 		userQuery = `
 			SELECT u.id, u."full_name", u.rank, u.battery
 			FROM "user" u
-			WHERE NOT EXISTS (
+			WHERE u."is_superadmin" = false
+			AND NOT EXISTS (
 				SELECT 1 FROM attendance_record ar
 				WHERE ar.session_id = $1 AND ar.user_id = u.id
 			)
@@ -205,7 +212,8 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 		userQuery = `
 			SELECT u.id, u."full_name", u.rank, u.battery
 			FROM "user" u
-			WHERE u.battery = ANY($1)
+			WHERE u."is_superadmin" = false
+			AND u.battery = ANY($1)
 			AND NOT EXISTS (
 				SELECT 1 FROM attendance_record ar
 				WHERE ar.session_id = $2 AND ar.user_id = u.id
@@ -236,7 +244,9 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(missingUsers)
+	if err := json.NewEncoder(w).Encode(missingUsers); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 type UserReport struct {
@@ -276,11 +286,14 @@ func (h *ReportsHandler) GetUserReport(w http.ResponseWriter, r *http.Request) {
 
 	// Get total sessions user is eligible for (based on battery)
 	var totalSessions int
-	err = h.db.Pool.QueryRow(ctx, `
+	if err := h.db.Pool.QueryRow(ctx, `
 		SELECT COUNT(*)
 		FROM attendance_session
 		WHERE scope = 'unit_wide' OR $1 = ANY(batteries)
-	`, battery).Scan(&totalSessions)
+	`, battery).Scan(&totalSessions); err != nil {
+		http.Error(w, "Failed to get total sessions", http.StatusInternalServerError)
+		return
+	}
 
 	// Get attended sessions
 	rows, err := h.db.Pool.Query(ctx, `
@@ -326,7 +339,9 @@ func (h *ReportsHandler) GetUserReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(report)
+	if err := json.NewEncoder(w).Encode(report); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // GetBatteryReport returns attendance statistics for a battery
@@ -375,18 +390,22 @@ func (h *ReportsHandler) GetBatteryReport(w http.ResponseWriter, r *http.Request
 			continue
 		}
 
-		// Count total users in battery
+		// Count total users in battery (excluding superadmins)
 		var totalUsers int
-		h.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM "user" WHERE battery = $1`, battery).Scan(&totalUsers)
+		if err := h.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM "user" WHERE battery = $1 AND "is_superadmin" = false`, battery).Scan(&totalUsers); err != nil {
+			continue // Skip session if count fails
+		}
 
-		// Count present users
+		// Count present users (excluding superadmins)
 		var presentCount int
-		h.db.Pool.QueryRow(ctx, `
+		if err := h.db.Pool.QueryRow(ctx, `
 			SELECT COUNT(DISTINCT ar.user_id)
 			FROM attendance_record ar
 			JOIN "user" u ON u.id = ar.user_id
-			WHERE ar.session_id = $1 AND u.battery = $2
-		`, sessionID, battery).Scan(&presentCount)
+			WHERE ar.session_id = $1 AND u.battery = $2 AND u."is_superadmin" = false
+		`, sessionID, battery).Scan(&presentCount); err != nil {
+			continue // Skip session if count fails
+		}
 
 		var attendancePercentage float64
 		if totalUsers > 0 {
@@ -409,5 +428,7 @@ func (h *ReportsHandler) GetBatteryReport(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }

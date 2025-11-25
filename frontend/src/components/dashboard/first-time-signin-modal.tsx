@@ -3,11 +3,9 @@ import { useAuth } from '@/lib/auth-context';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogOverlay,
   DialogPortal,
 } from '@/components/ui/dialog';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
@@ -42,8 +40,9 @@ export default function FirstTimeSignInModal() {
   const [loading, setLoading] = useState(false);
 
   // Check if user needs to complete profile (missing rank or battery)
+  // Superadmins don't need to complete their profile
   useEffect(() => {
-    if (user && (!user.rank || !user.battery)) {
+    if (user && !user.isSuperadmin && (!user.rank || !user.battery)) {
       setOpen(true);
       setRank(user.rank || '');
       setBattery(user.battery || '');
@@ -66,6 +65,57 @@ export default function FirstTimeSignInModal() {
       await refetch();
       toast.success('Profile updated successfully');
       setOpen(false);
+      
+      // Check if there's a pending QR token to mark attendance
+      const pendingQrToken = sessionStorage.getItem('pendingQrToken');
+      console.log('[Modal] pendingQrToken from sessionStorage:', pendingQrToken);
+      if (pendingQrToken) {
+        sessionStorage.removeItem('pendingQrToken');
+        try {
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+          const response = await fetch(`${apiUrl}/api/qr/${pendingQrToken}`, {
+            method: 'GET',
+            credentials: 'include',
+            redirect: 'manual',
+          });
+
+          console.log('[Modal] Response type:', response.type, 'status:', response.status);
+
+          // Handle opaque redirects (CORS) - backend returned a redirect
+          if (response.type === 'opaqueredirect') {
+            const sessionId = pendingQrToken.split(':')[0];
+            console.log('[Modal] Redirecting to marked page for session:', sessionId);
+            window.location.href = `/attendance/marked?session=${sessionId}`;
+            return;
+          }
+
+          // Handle transparent redirects (same-origin)
+          if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get('Location');
+            if (location) {
+              try {
+                const url = new URL(location);
+                const path = url.pathname + url.search;
+                window.location.href = path;
+                return;
+              } catch {
+                window.location.href = location;
+                return;
+              }
+            }
+          }
+
+          // If successful, redirect to marked page
+          if (response.ok) {
+            const sessionId = pendingQrToken.split(':')[0];
+            window.location.href = `/attendance/marked?session=${sessionId}`;
+            return;
+          }
+        } catch (qrError) {
+          console.error('Failed to mark attendance:', qrError);
+          toast.error('Profile updated but failed to mark attendance. Please scan the QR code again.');
+        }
+      }
     } catch (error) {
       console.error('Profile update error:', error);
       toast.error('Failed to update profile');
@@ -74,8 +124,8 @@ export default function FirstTimeSignInModal() {
     }
   };
 
-  // Don't render if user is not loaded or already has rank and battery
-  if (!user || (user.rank && user.battery)) {
+  // Don't render if user is not loaded, is superadmin, or already has rank and battery
+  if (!user || user.isSuperadmin || (user.rank && user.battery)) {
     return null;
   }
 
@@ -92,7 +142,6 @@ export default function FirstTimeSignInModal() {
         <DialogPrimitive.Overlay
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
           onPointerDown={(e) => e.preventDefault()}
-          onEscapeKeyDown={(e) => e.preventDefault()}
         />
         <DialogPrimitive.Content
           className={cn(

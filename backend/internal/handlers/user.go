@@ -57,6 +57,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 	var profile UserProfile
 	var fullName, rank, battery, nricLast4, dob *string
+	var createdAt, updatedAt time.Time
 
 	err := h.db.Pool.QueryRow(
 		context.Background(),
@@ -73,8 +74,8 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&nricLast4,
 		&dob,
 		&profile.IsSuperadmin,
-		&profile.CreatedAt,
-		&profile.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 	)
 
 	if err != nil {
@@ -87,6 +88,8 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	profile.Battery = battery
 	profile.NRICLast4 = nricLast4
 	profile.DOB = dob
+	profile.CreatedAt = createdAt.Format(time.RFC3339)
+	profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(profile); err != nil {
@@ -115,9 +118,11 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	rank := r.URL.Query().Get("rank")
 
 	// Build WHERE clause and args
-	whereClause := "WHERE 1=1"
-	args := []interface{}{}
-	argIndex := 1
+	// Exclude admin user by ID
+	adminID := "00000000000000000000000000000000"
+	whereClause := fmt.Sprintf(`WHERE id != $%d`, 1)
+	args := []interface{}{adminID}
+	argIndex := 2
 
 	if search != "" {
 		whereClause += fmt.Sprintf(" AND \"full_name\" ILIKE $%d", argIndex)
@@ -159,10 +164,11 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var users []UserProfile
+	users := make([]UserProfile, 0) // Initialize as empty slice, not nil
 	for rows.Next() {
 		var profile UserProfile
 		var fullName, rank, battery, nricLast4, dob *string
+		var createdAt, updatedAt time.Time
 
 		err := rows.Scan(
 			&profile.ID,
@@ -172,8 +178,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			&nricLast4,
 			&dob,
 			&profile.IsSuperadmin,
-			&profile.CreatedAt,
-			&profile.UpdatedAt,
+			&createdAt,
+			&updatedAt,
 		)
 		if err != nil {
 			continue
@@ -184,6 +190,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		profile.Battery = battery
 		profile.NRICLast4 = nricLast4
 		profile.DOB = dob
+		profile.CreatedAt = createdAt.Format(time.RFC3339)
+		profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
 		users = append(users, profile)
 	}
@@ -196,16 +204,26 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
-// GetUser retrieves a single user by ID
+// GetUser retrieves a single user by ID (excludes admin users - they should not be accessible via this endpoint)
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	userID := chi.URLParam(r, "id")
 
 	var profile UserProfile
 	var fullName, rank, battery, nricLast4, dob *string
+	var createdAt, updatedAt time.Time
+
+	// Exclude admin user by ID
+	adminID := "00000000000000000000000000000000"
+	if userID == adminID {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
 
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT 
@@ -221,8 +239,8 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		&nricLast4,
 		&dob,
 		&profile.IsSuperadmin,
-		&profile.CreatedAt,
-		&profile.UpdatedAt,
+		&createdAt,
+		&updatedAt,
 	)
 
 	if err != nil {
@@ -235,9 +253,13 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	profile.Battery = battery
 	profile.NRICLast4 = nricLast4
 	profile.DOB = dob
+	profile.CreatedAt = createdAt.Format(time.RFC3339)
+	profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(profile)
+	if err := json.NewEncoder(w).Encode(profile); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // UpdateUser updates a user's profile
@@ -338,7 +360,9 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "User updated successfully"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "User updated successfully"}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // DeleteUser soft deletes a user (superadmin only)
@@ -354,7 +378,9 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "User deleted successfully"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "User deleted successfully"}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // UpdateProfile updates the user's profile
@@ -579,5 +605,7 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
