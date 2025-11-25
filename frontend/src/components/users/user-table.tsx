@@ -8,7 +8,7 @@ import {
 } from '../ui/table';
 import { Button } from '../ui/button';
 import { Link } from '@tanstack/react-router';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Trash2, UserCheck } from 'lucide-react';
 import type { UserInfo, UserProfile } from '../../lib/api-client';
 
 interface UserTableProps {
@@ -16,9 +16,21 @@ interface UserTableProps {
   showActions?: boolean;
   emptyMessage?: string;
   onDelete?: (userId: string) => void;
+  onMark?: (userId: string) => void;
+  markingUserId?: string;
 }
 
-export function UserTable({ users, showActions = true, emptyMessage = 'No users found', onDelete }: UserTableProps) {
+export function UserTable({
+  users,
+  showActions = true,
+  emptyMessage = 'No users found',
+  onDelete,
+  onMark,
+  markingUserId,
+}: UserTableProps) {
+  const showMarkButton = !!onMark;
+  const colCount = 3 + (showActions ? 1 : 0) + (showMarkButton ? 1 : 0);
+
   if (!users || users.length === 0) {
     return (
       <div className="rounded-md border">
@@ -29,11 +41,12 @@ export function UserTable({ users, showActions = true, emptyMessage = 'No users 
               <TableHead>Rank</TableHead>
               <TableHead>Battery</TableHead>
               {showActions && <TableHead>Actions</TableHead>}
+              {showMarkButton && <TableHead>Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow>
-              <TableCell colSpan={showActions ? 4 : 3} className="text-center text-muted-foreground">
+              <TableCell colSpan={colCount} className="text-center text-muted-foreground">
                 {emptyMessage}
               </TableCell>
             </TableRow>
@@ -52,6 +65,7 @@ export function UserTable({ users, showActions = true, emptyMessage = 'No users 
             <TableHead>Rank</TableHead>
             <TableHead>Battery</TableHead>
             {showActions && <TableHead>Actions</TableHead>}
+            {showMarkButton && <TableHead>Actions</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -83,6 +97,18 @@ export function UserTable({ users, showActions = true, emptyMessage = 'No users 
                       </Button>
                     )}
                   </div>
+                </TableCell>
+              )}
+              {showMarkButton && (
+                <TableCell>
+                  <Button
+                    size="sm"
+                    onClick={() => onMark(user.id)}
+                    disabled={markingUserId === user.id}
+                  >
+                    <UserCheck className="mr-1 h-3 w-3" />
+                    {markingUserId === user.id ? 'Marking...' : 'Mark'}
+                  </Button>
                 </TableCell>
               )}
             </TableRow>

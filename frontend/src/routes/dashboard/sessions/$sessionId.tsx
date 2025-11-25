@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -10,6 +11,13 @@ import {
   CardHeader,
   CardTitle,
 } from '../../../components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../../components/ui/select';
 import { Badge } from '../../../components/ui/badge';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -23,6 +31,7 @@ import {
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 import { useAuth } from '../../../lib/auth-context';
+import { canAccessCommanderFeatures } from '../../../lib/user-utils';
 import { UserTable } from '../../../components/users/user-table';
 
 export const Route = createFileRoute('/dashboard/sessions/$sessionId')({
@@ -34,6 +43,11 @@ function SessionDetailPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
+  const [batteryFilter, setBatteryFilter] = useState('');
+  const [markingUserId, setMarkingUserId] = useState<string | null>(null);
+
+  const canMarkAttendance = canAccessCommanderFeatures(user);
+
   const { data: session, isLoading } = useQuery({
     queryKey: ['session', sessionId],
     queryFn: () => apiClient.getSessionById(sessionId),
@@ -43,6 +57,27 @@ function SessionDetailPage() {
     queryKey: ['session-analytics', sessionId],
     queryFn: () => apiClient.getSessionAnalytics(sessionId),
     enabled: !!session,
+  });
+
+  const missingUsers = analytics?.missingUsers ?? [];
+  const filteredMissingUsers = batteryFilter
+    ? missingUsers.filter(u => u.battery === batteryFilter)
+    : missingUsers;
+
+  const manualMarkMutation = useMutation({
+    mutationFn: (userId: string) => {
+      setMarkingUserId(userId);
+      return apiClient.manualMarkAttendance(sessionId, { userIds: [userId] });
+    },
+    onSuccess: () => {
+      toast.success('User marked as present');
+      setMarkingUserId(null);
+      queryClient.invalidateQueries({ queryKey: ['session-analytics', sessionId] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to mark attendance');
+      setMarkingUserId(null);
+    },
   });
 
   const closeMutation = useMutation({
@@ -268,11 +303,35 @@ function SessionDetailPage() {
         {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Missing Users</CardTitle>
-              <CardDescription>Users who have not marked attendance</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Missing Users</CardTitle>
+                  <CardDescription>Users who have not marked attendance</CardDescription>
+                </div>
+                <Select
+                  value={batteryFilter || 'all'}
+                  onValueChange={(value) => setBatteryFilter(value === 'all' ? '' : value)}
+                >
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="All Batteries" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Batteries</SelectItem>
+                    <SelectItem value="HQ">HQ</SelectItem>
+                    <SelectItem value="Alpha">Alpha</SelectItem>
+                    <SelectItem value="Bravo">Bravo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardHeader>
             <CardContent>
-              <UserTable users={analytics.missingUsers} showActions={false} emptyMessage="No missing users" />
+              <UserTable
+                users={filteredMissingUsers}
+                showActions={false}
+                emptyMessage="No missing users"
+                onMark={canMarkAttendance ? (userId) => manualMarkMutation.mutate(userId) : undefined}
+                markingUserId={markingUserId ?? undefined}
+              />
             </CardContent>
           </Card>
         )}
