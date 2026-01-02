@@ -174,9 +174,9 @@ function SignInContent() {
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
                     <p className="text-xs">
-                      Last 4 characters of NRIC + Date of Birth (DDMMYY).
+                      Last 5 characters of NRIC.
                       <br />
-                      Example: <strong>123A010196</strong>
+                      Example: <strong>4567A</strong>
                     </p>
                   </TooltipContent>
                 </Tooltip>

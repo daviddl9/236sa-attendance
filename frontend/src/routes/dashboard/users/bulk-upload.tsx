@@ -10,10 +10,24 @@ import {
   CardHeader,
   CardTitle,
 } from '../../../components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '../../../components/ui/dialog';
 import { useState } from 'react';
-import { ArrowLeft, Upload, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
+
+const sampleData = [
+  { fullName: 'John Doe', rank: 'PTE', battery: 'HQ', nricLast5: '1234A' },
+  { fullName: 'Jane Smith', rank: 'CPL', battery: 'Alpha', nricLast5: '5678B' },
+  { fullName: 'Bob Wilson', rank: 'LCP', battery: 'Bravo', nricLast5: '9012C' },
+];
 
 export const Route = createFileRoute('/dashboard/users/bulk-upload')({
   component: BulkUploadPage,
@@ -102,9 +116,54 @@ function BulkUploadPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Upload Excel File</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>Upload Excel File</CardTitle>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <HelpCircle className="h-4 w-4 mr-1" />
+                    View Sample Format
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-xl">
+                  <DialogHeader>
+                    <DialogTitle>Sample Excel Format</DialogTitle>
+                    <DialogDescription>
+                      Your Excel file should have the following columns in order:
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="p-2 text-left font-medium">Full Name</th>
+                          <th className="p-2 text-left font-medium">Rank</th>
+                          <th className="p-2 text-left font-medium">Battery</th>
+                          <th className="p-2 text-left font-medium">NRIC Last 5</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sampleData.map((row, index) => (
+                          <tr key={index} className="border-b">
+                            <td className="p-2">{row.fullName}</td>
+                            <td className="p-2">{row.rank}</td>
+                            <td className="p-2">{row.battery}</td>
+                            <td className="p-2 font-mono">{row.nricLast5}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="text-xs text-muted-foreground space-y-1">
+                    <p><strong>Valid Ranks:</strong> REC, PTE, LCP, CPL, CFC, 3SG, 2SG, 1SG, SSG, MSG, 3WO, 2WO, 1WO, MWO, SWO, CWO, 2LT, LTA, CPT, MAJ, LTC, SLTC, COL, BG, MG, LG</p>
+                    <p><strong>Valid Batteries:</strong> HQ, Alpha, Bravo</p>
+                    <p><strong>NRIC Last 5:</strong> Last 5 characters of NRIC (e.g., 4567A). This will be the user's password.</p>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
             <CardDescription>
-              Upload a file with columns: Full Name, Rank, Battery, NRIC Last 4, DOB (DDMMYY)
+              Upload a file with columns: Full Name, Rank, Battery, NRIC Last 5
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
