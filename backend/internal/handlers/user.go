@@ -383,6 +383,106 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// BulkDeleteCount returns the count of users that would be deleted with the given filters
+func (h *UserHandler) BulkDeleteCount(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+	search := r.URL.Query().Get("search")
+	battery := r.URL.Query().Get("battery")
+	rank := r.URL.Query().Get("rank")
+
+	// Build WHERE clause - always exclude admin user
+	adminID := "00000000000000000000000000000000"
+	whereClause := "WHERE id != $1"
+	args := []interface{}{adminID}
+	argIndex := 2
+
+	if search != "" {
+		whereClause += fmt.Sprintf(" AND \"full_name\" ILIKE $%d", argIndex)
+		args = append(args, "%"+search+"%")
+		argIndex++
+	}
+	if battery != "" {
+		whereClause += fmt.Sprintf(" AND battery = $%d", argIndex)
+		args = append(args, battery)
+		argIndex++
+	}
+	if rank != "" {
+		whereClause += fmt.Sprintf(" AND rank = $%d", argIndex)
+		args = append(args, rank)
+	}
+
+	var count int
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "user" %s`, whereClause)
+	err := h.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&count)
+	if err != nil {
+		http.Error(w, "Failed to count users", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]int{"count": count}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// BulkDeleteRequest represents the request body for bulk delete
+type BulkDeleteRequest struct {
+	Search  string `json:"search,omitempty"`
+	Battery string `json:"battery,omitempty"`
+	Rank    string `json:"rank,omitempty"`
+}
+
+// BulkDelete deletes all users matching the given filters
+func (h *UserHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+	var req BulkDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Build WHERE clause - always exclude admin user
+	adminID := "00000000000000000000000000000000"
+	whereClause := "WHERE id != $1"
+	args := []interface{}{adminID}
+	argIndex := 2
+
+	if req.Search != "" {
+		whereClause += fmt.Sprintf(" AND \"full_name\" ILIKE $%d", argIndex)
+		args = append(args, "%"+req.Search+"%")
+		argIndex++
+	}
+	if req.Battery != "" {
+		whereClause += fmt.Sprintf(" AND battery = $%d", argIndex)
+		args = append(args, req.Battery)
+		argIndex++
+	}
+	if req.Rank != "" {
+		whereClause += fmt.Sprintf(" AND rank = $%d", argIndex)
+		args = append(args, req.Rank)
+	}
+
+	deleteQuery := fmt.Sprintf(`DELETE FROM "user" %s`, whereClause)
+	result, err := h.db.Pool.Exec(ctx, deleteQuery, args...)
+	if err != nil {
+		http.Error(w, "Failed to delete users", http.StatusInternalServerError)
+		return
+	}
+
+	deletedCount := result.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"message":      fmt.Sprintf("Deleted %d users successfully", deletedCount),
+		"deletedCount": deletedCount,
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
 // UpdateProfile updates the user's profile
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)

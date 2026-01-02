@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -35,6 +35,7 @@ export const Route = createFileRoute('/dashboard/users/bulk-upload')({
 
 function BulkUploadPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
@@ -47,6 +48,7 @@ function BulkUploadPage() {
       if (data.errors && data.errors.length > 0) {
         console.error('Upload errors:', data.errors);
       }
+      queryClient.invalidateQueries({ queryKey: ['users'] });
       navigate({ to: '/dashboard/users' });
     },
     onError: (error: Error) => {

@@ -284,6 +284,35 @@ export class APIClient {
     });
   }
 
+  async getBulkDeleteCount(params: {
+    search?: string;
+    battery?: string;
+    rank?: string;
+  }): Promise<{ count: number }> {
+    const queryParams = new URLSearchParams();
+    if (params.search) queryParams.set('search', params.search);
+    if (params.battery) queryParams.set('battery', params.battery);
+    if (params.rank) queryParams.set('rank', params.rank);
+    const query = queryParams.toString();
+    return this.request<{ count: number }>(
+      `/api/users/bulk/count${query ? `?${query}` : ''}`
+    );
+  }
+
+  async bulkDeleteUsers(params: {
+    search?: string;
+    battery?: string;
+    rank?: string;
+  }): Promise<{ message: string; deletedCount: number }> {
+    return this.request<{ message: string; deletedCount: number }>(
+      '/api/users/bulk',
+      {
+        method: 'DELETE',
+        body: JSON.stringify(params),
+      }
+    );
+  }
+
   // Admin endpoints (superadmin only)
   async bulkUploadUsers(file: File): Promise<BulkUploadResponse> {
     const formData = new FormData();

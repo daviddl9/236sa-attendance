@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { useState } from 'react';
-import { Search, Upload } from 'lucide-react';
+import { AlertTriangle, Search, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
 import { UserTable } from '../../../components/users/user-table';
@@ -39,6 +39,7 @@ function UsersPage() {
   const [rankFilter, setRankFilter] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const isSuperadmin = user?.isSuperadmin || false;
 
@@ -75,6 +76,24 @@ function UsersPage() {
     },
   });
 
+  const bulkDeleteMutation = useMutation({
+    mutationFn: () =>
+      apiClient.bulkDeleteUsers({
+        search: search || undefined,
+        battery: batteryFilter || undefined,
+        rank: rankFilter || undefined,
+      }),
+    onSuccess: (result) => {
+      toast.success(`${result.deletedCount} users deleted successfully`);
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setBulkDeleteDialogOpen(false);
+      setPage(1);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete users');
+    },
+  });
+
   const handleDeleteClick = (userId: string) => {
     const targetUser = data?.users.find((u) => u.id === userId);
     setUserToDelete({
@@ -106,6 +125,13 @@ function UsersPage() {
           </div>
           {isSuperadmin && (
             <div className="flex gap-2">
+              <Button
+                onClick={() => setBulkDeleteDialogOpen(true)}
+                variant="destructive"
+                disabled={!data || data.total === 0}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+              </Button>
               <Button onClick={handleBulkUpload} variant="outline">
                 <Upload className="mr-2 h-4 w-4" />
                 Bulk Upload
@@ -255,6 +281,57 @@ function UsersPage() {
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Multiple Users
+            </DialogTitle>
+            <DialogDescription className="space-y-4">
+              <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3 text-destructive text-sm">
+                <strong>Warning:</strong> This action is permanent and cannot be
+                undone. All associated data (attendance records, sessions) will
+                also be deleted.
+              </div>
+
+              <div className="text-foreground">
+                You are about to delete{' '}
+                <strong className="text-destructive">{data?.total} users</strong>
+                {(search || batteryFilter || rankFilter) && (
+                  <span> matching the current filters:</span>
+                )}
+              </div>
+
+              {(search || batteryFilter || rankFilter) && (
+                <ul className="text-sm text-muted-foreground list-disc list-inside">
+                  {search && <li>Name contains: &quot;{search}&quot;</li>}
+                  {batteryFilter && <li>Battery: {batteryFilter}</li>}
+                  {rankFilter && <li>Rank: {rankFilter}</li>}
+                </ul>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBulkDeleteDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => bulkDeleteMutation.mutate()}
+              disabled={bulkDeleteMutation.isPending || (data?.total ?? 0) === 0}
+            >
+              {bulkDeleteMutation.isPending
+                ? 'Deleting...'
+                : `Delete ${data?.total} Users`}
             </Button>
           </DialogFooter>
         </DialogContent>

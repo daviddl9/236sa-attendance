@@ -120,6 +120,8 @@ func main() {
 			r.Route("/users", func(r chi.Router) {
 				r.Use(middleware.RequireCommander(db)) // Allows commanders (3SG+) and superadmins
 				r.Get("/", userHandler.ListUsers)
+				r.Get("/bulk/count", userHandler.BulkDeleteCount)
+				r.Delete("/bulk", userHandler.BulkDelete)
 				r.Get("/{id}", userHandler.GetUser)
 				r.Put("/{id}", userHandler.UpdateUser)
 				r.Delete("/{id}", userHandler.DeleteUser)
