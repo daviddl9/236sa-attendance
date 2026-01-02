@@ -20,6 +20,7 @@ import {
 } from '../../../components/ui/select';
 import { Badge } from '../../../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { Input } from '../../../components/ui/input';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ArrowLeft,
@@ -28,6 +29,7 @@ import {
   FileDown,
   FileSpreadsheet,
   Copy,
+  Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
@@ -48,6 +50,8 @@ function SessionDetailPage() {
   const [batteryFilter, setBatteryFilter] = useState('');
   const [markingUserId, setMarkingUserId] = useState<string | null>(null);
   const [statsTab, setStatsTab] = useState<'All' | 'HQ' | 'Alpha' | 'Bravo'>('All');
+  const [exportTab, setExportTab] = useState<'All' | 'HQ' | 'Alpha' | 'Bravo'>('All');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const canMarkAttendance = canAccessCommanderFeatures(user);
 
@@ -69,9 +73,14 @@ function SessionDetailPage() {
   });
 
   const missingUsers = analytics?.missingUsers ?? [];
-  const filteredMissingUsers = batteryFilter
-    ? missingUsers.filter(u => u.battery === batteryFilter)
-    : missingUsers;
+  const filteredMissingUsers = missingUsers.filter((u) => {
+    const matchesBattery = !batteryFilter || u.battery === batteryFilter;
+    const matchesSearch =
+      !searchQuery ||
+      u.fullName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.rank?.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesBattery && matchesSearch;
+  });
 
   const manualMarkMutation = useMutation({
     mutationFn: (userId: string) => {
@@ -154,22 +163,103 @@ function SessionDetailPage() {
 
   const handleExport = async (format: 'csv' | 'excel') => {
     try {
+      const battery = exportTab === 'All' ? undefined : exportTab;
       const blob =
         format === 'csv'
-          ? await apiClient.exportSessionCSV(sessionId)
-          : await apiClient.exportSessionExcel(sessionId);
+          ? await apiClient.exportSessionCSV(sessionId, battery)
+          : await apiClient.exportSessionExcel(sessionId, battery);
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${session?.name || 'session'}_attendance.${format === 'csv' ? 'csv' : 'xlsx'}`;
+      const suffix = battery ? `_${battery}` : '';
+      a.download = `${session?.name || 'session'}${suffix}_attendance.${format === 'csv' ? 'csv' : 'xlsx'}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success(`Exported to ${format.toUpperCase()}`);
+      toast.success(`Exported ${exportTab} to ${format.toUpperCase()}`);
     } catch {
       toast.error(`Failed to export to ${format.toUpperCase()}`);
+    }
+  };
+
+  const handleCopyText = async () => {
+    if (!analytics || !session) return;
+
+    const battery = exportTab === 'All' ? undefined : exportTab;
+    const stats = battery
+      ? analytics.byBattery?.[battery]
+      : { total: analytics.totalUsers, present: analytics.presentCount };
+
+    const dateStr = new Date().toLocaleString('en-SG', {
+      timeZone: 'Asia/Singapore',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+
+    const absentList = battery
+      ? analytics.missingUsers?.filter((u) => u.battery === battery)
+      : analytics.missingUsers;
+
+    const presentList = battery
+      ? analytics.presentUsers?.filter((u) => u.battery === battery)
+      : analytics.presentUsers;
+
+    const batteries = ['HQ', 'Alpha', 'Bravo'];
+
+    const formatUserList = (
+      users: typeof absentList,
+      groupByBattery: boolean
+    ) => {
+      if (!users || users.length === 0) return 'None\n';
+
+      if (groupByBattery) {
+        let result = '';
+        for (const batt of batteries) {
+          const batteryUsers = users.filter((u) => u.battery === batt);
+          if (batteryUsers.length > 0) {
+            result += `_${batt}_\n`;
+            batteryUsers.forEach((user, i) => {
+              const name = user.fullName || 'Unknown';
+              const rank = user.rank || '';
+              result += `${i + 1}. ${rank} ${name}\n`;
+            });
+            result += '\n';
+          }
+        }
+        return result || 'None\n';
+      } else {
+        let result = '';
+        users.forEach((user, i) => {
+          const name = user.fullName || 'Unknown';
+          const rank = user.rank || '';
+          result += `${i + 1}. ${rank} ${name}\n`;
+        });
+        result += '\n';
+        return result;
+      }
+    };
+
+    let text = `*236 SA Attendance (${dateStr} SGT)*\n`;
+    if (battery) text += `*Battery:* ${battery}\n`;
+    text += `*Present:* ${stats?.present || 0} / ${stats?.total || 0}\n\n`;
+
+    text += `*Absent List*\n`;
+    text += formatUserList(absentList, !battery);
+
+    text += `*Present List*\n`;
+    text += formatUserList(presentList, !battery);
+
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success('Copied to clipboard');
+    } catch {
+      toast.error('Failed to copy to clipboard');
     }
   };
 
@@ -317,23 +407,33 @@ function SessionDetailPage() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Export Attendance</CardTitle>
-                <CardDescription>Download attendance records</CardDescription>
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => handleExport('csv')} variant="outline">
-                  <FileDown className="mr-2 h-4 w-4" />
-                  CSV
-                </Button>
-                <Button onClick={() => handleExport('excel')} variant="outline">
-                  <FileSpreadsheet className="mr-2 h-4 w-4" />
-                  Excel
-                </Button>
-              </div>
-            </div>
+            <CardTitle>Export Attendance</CardTitle>
+            <CardDescription>Download attendance records</CardDescription>
           </CardHeader>
+          <CardContent className="space-y-4">
+            <Tabs value={exportTab} onValueChange={(v) => setExportTab(v as typeof exportTab)}>
+              <TabsList>
+                <TabsTrigger value="All">All</TabsTrigger>
+                <TabsTrigger value="HQ">HQ</TabsTrigger>
+                <TabsTrigger value="Alpha">Alpha</TabsTrigger>
+                <TabsTrigger value="Bravo">Bravo</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => handleExport('csv')} variant="outline">
+                <FileDown className="mr-2 h-4 w-4" />
+                CSV
+              </Button>
+              <Button onClick={() => handleExport('excel')} variant="outline">
+                <FileSpreadsheet className="mr-2 h-4 w-4" />
+                Excel
+              </Button>
+              <Button onClick={handleCopyText} variant="outline">
+                <Copy className="mr-2 h-4 w-4" />
+                Copy Text
+              </Button>
+            </div>
+          </CardContent>
         </Card>
 
         {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
@@ -360,11 +460,20 @@ function SessionDetailPage() {
                 </Select>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name or rank..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
               <UserTable
                 users={filteredMissingUsers}
                 showActions={false}
-                emptyMessage="No missing users"
+                emptyMessage={searchQuery ? 'No matching users' : 'No missing users'}
                 onMark={canMarkAttendance ? (userId) => manualMarkMutation.mutate(userId) : undefined}
                 markingUserId={markingUserId ?? undefined}
               />

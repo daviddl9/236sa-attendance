@@ -108,6 +108,7 @@ export interface SessionAnalytics {
   presentCount: number;
   attendancePercentage: number;
   missingUsers: UserInfo[];
+  presentUsers: UserInfo[];
   byBattery: Record<string, BatteryStats>;
   byRank: Record<string, RankStats>;
 }
@@ -385,8 +386,11 @@ export class APIClient {
   }
 
   // Export endpoints
-  async exportSessionCSV(sessionId: string): Promise<Blob> {
-    const url = `${this.baseURL}/api/sessions/${sessionId}/export/csv`;
+  async exportSessionCSV(sessionId: string, battery?: string): Promise<Blob> {
+    let url = `${this.baseURL}/api/sessions/${sessionId}/export/csv`;
+    if (battery) {
+      url += `?battery=${encodeURIComponent(battery)}`;
+    }
     const response = await fetch(url, {
       credentials: 'include',
     });
@@ -399,8 +403,11 @@ export class APIClient {
     return response.blob();
   }
 
-  async exportSessionExcel(sessionId: string): Promise<Blob> {
-    const url = `${this.baseURL}/api/sessions/${sessionId}/export/excel`;
+  async exportSessionExcel(sessionId: string, battery?: string): Promise<Blob> {
+    let url = `${this.baseURL}/api/sessions/${sessionId}/export/excel`;
+    if (battery) {
+      url += `?battery=${encodeURIComponent(battery)}`;
+    }
     const response = await fetch(url, {
       credentials: 'include',
     });

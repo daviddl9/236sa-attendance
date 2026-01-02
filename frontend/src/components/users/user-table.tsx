@@ -29,7 +29,6 @@ export function UserTable({
   markingUserId,
 }: UserTableProps) {
   const showMarkButton = !!onMark;
-  const colCount = 3 + (showActions ? 1 : 0) + (showMarkButton ? 1 : 0);
 
   if (!users || users.length === 0) {
     return (
@@ -37,16 +36,16 @@ export function UserTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Full Name</TableHead>
-              <TableHead>Rank</TableHead>
-              <TableHead>Battery</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead className="hidden sm:table-cell">Rank</TableHead>
+              <TableHead className="hidden sm:table-cell">Battery</TableHead>
               {showActions && <TableHead>Actions</TableHead>}
-              {showMarkButton && <TableHead>Actions</TableHead>}
+              {showMarkButton && <TableHead className="w-[70px]"></TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow>
-              <TableCell colSpan={colCount} className="text-center text-muted-foreground">
+              <TableCell colSpan={5} className="text-center text-muted-foreground">
                 {emptyMessage}
               </TableCell>
             </TableRow>
@@ -61,23 +60,26 @@ export function UserTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Full Name</TableHead>
-            <TableHead>Rank</TableHead>
-            <TableHead>Battery</TableHead>
+            <TableHead>Name</TableHead>
+            <TableHead className="hidden sm:table-cell">Rank</TableHead>
+            <TableHead className="hidden sm:table-cell">Battery</TableHead>
             {showActions && <TableHead>Actions</TableHead>}
-            {showMarkButton && <TableHead>Actions</TableHead>}
+            {showMarkButton && <TableHead className="w-[70px]"></TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {users.map((user) => (
-            <TableRow key={user.id}>
-              <TableCell className="font-medium">
-                {user.fullName || 'N/A'}
+            <TableRow key={user.id} className="h-12">
+              <TableCell className="py-2">
+                <div className="font-medium text-sm">{user.fullName || 'N/A'}</div>
+                <div className="text-xs text-muted-foreground sm:hidden">
+                  {user.rank || ''} · {user.battery || ''}
+                </div>
               </TableCell>
-              <TableCell>{user.rank || 'N/A'}</TableCell>
-              <TableCell>{user.battery || 'N/A'}</TableCell>
+              <TableCell className="hidden sm:table-cell">{user.rank || 'N/A'}</TableCell>
+              <TableCell className="hidden sm:table-cell">{user.battery || 'N/A'}</TableCell>
               {showActions && (
-                <TableCell>
+                <TableCell className="py-2">
                   <div className="flex items-center gap-1">
                     <Link to="/dashboard/users/$userId" params={{ userId: user.id }}>
                       <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -100,14 +102,17 @@ export function UserTable({
                 </TableCell>
               )}
               {showMarkButton && (
-                <TableCell>
+                <TableCell className="py-2">
                   <Button
                     size="sm"
+                    className="h-8 px-2"
                     onClick={() => onMark(user.id)}
                     disabled={markingUserId === user.id}
                   >
-                    <UserCheck className="mr-1 h-3 w-3" />
-                    {markingUserId === user.id ? 'Marking...' : 'Mark'}
+                    <UserCheck className="h-4 w-4 sm:mr-1" />
+                    <span className="hidden sm:inline">
+                      {markingUserId === user.id ? '...' : 'Mark'}
+                    </span>
                   </Button>
                 </TableCell>
               )}

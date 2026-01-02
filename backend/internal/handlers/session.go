@@ -367,6 +367,7 @@ func (h *SessionHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
+	batteryFilter := r.URL.Query().Get("battery")
 
 	// Get session name
 	var sessionName string
@@ -376,16 +377,24 @@ func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get attendance records with user info
-	rows, err := h.db.Pool.Query(ctx, `
-		SELECT 
+	// Build query with optional battery filter
+	query := `
+		SELECT
 			u."full_name", u.rank, u.battery,
 			ar.marked_at, ar.marking_method
 		FROM attendance_record ar
 		JOIN "user" u ON u.id = ar.user_id
-		WHERE ar.session_id = $1
-		ORDER BY ar.marked_at
-	`, sessionID)
+		WHERE ar.session_id = $1`
+	args := []interface{}{sessionID}
+
+	if batteryFilter != "" {
+		query += ` AND u.battery = $2`
+		args = append(args, batteryFilter)
+	}
+	query += ` ORDER BY ar.marked_at`
+
+	// Get attendance records with user info
+	rows, err := h.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		http.Error(w, "Failed to fetch attendance", http.StatusInternalServerError)
 		return
@@ -444,6 +453,7 @@ func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request
 func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
+	batteryFilter := r.URL.Query().Get("battery")
 
 	// Get session name
 	var sessionName string
@@ -479,16 +489,24 @@ func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Get attendance records
-	rows, err := h.db.Pool.Query(ctx, `
-		SELECT 
+	// Build query with optional battery filter
+	query := `
+		SELECT
 			u."full_name", u.rank, u.battery,
 			ar.marked_at, ar.marking_method
 		FROM attendance_record ar
 		JOIN "user" u ON u.id = ar.user_id
-		WHERE ar.session_id = $1
-		ORDER BY ar.marked_at
-	`, sessionID)
+		WHERE ar.session_id = $1`
+	args := []interface{}{sessionID}
+
+	if batteryFilter != "" {
+		query += ` AND u.battery = $2`
+		args = append(args, batteryFilter)
+	}
+	query += ` ORDER BY ar.marked_at`
+
+	// Get attendance records
+	rows, err := h.db.Pool.Query(ctx, query, args...)
 	if err != nil {
 		http.Error(w, "Failed to fetch attendance", http.StatusInternalServerError)
 		return

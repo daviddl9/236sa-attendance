@@ -22,6 +22,7 @@ type SessionAnalytics struct {
 	PresentCount         int                     `json:"presentCount"`
 	AttendancePercentage float64                 `json:"attendancePercentage"`
 	MissingUsers         []UserInfo              `json:"missingUsers"`
+	PresentUsers         []UserInfo              `json:"presentUsers"`
 	ByBattery            map[string]BatteryStats `json:"byBattery"`
 	ByRank               map[string]RankStats    `json:"byRank"`
 }
@@ -123,10 +124,13 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		attendancePercentage = float64(presentCount) / float64(totalUsers) * 100
 	}
 
-	// Find missing users
+	// Find missing and present users
 	var missingUsers []UserInfo
+	var presentUsers []UserInfo
 	for _, user := range allUsers {
-		if !presentUserIDs[user.ID] {
+		if presentUserIDs[user.ID] {
+			presentUsers = append(presentUsers, user)
+		} else {
 			missingUsers = append(missingUsers, user)
 		}
 	}
@@ -166,6 +170,7 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		PresentCount:         presentCount,
 		AttendancePercentage: attendancePercentage,
 		MissingUsers:         missingUsers,
+		PresentUsers:         presentUsers,
 		ByBattery:            byBattery,
 		ByRank:               byRank,
 	}
