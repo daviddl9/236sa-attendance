@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { Badge } from '../../../components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ArrowLeft,
@@ -46,6 +47,7 @@ function SessionDetailPage() {
 
   const [batteryFilter, setBatteryFilter] = useState('');
   const [markingUserId, setMarkingUserId] = useState<string | null>(null);
+  const [statsTab, setStatsTab] = useState<'All' | 'HQ' | 'Alpha' | 'Bravo'>('All');
 
   const canMarkAttendance = canAccessCommanderFeatures(user);
 
@@ -254,36 +256,63 @@ function SessionDetailPage() {
             </CardContent>
           </Card>
 
-          {analytics && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Statistics</CardTitle>
-                <CardDescription>Session attendance overview</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Total Users</p>
-                    <p className="text-2xl font-bold">{analytics.totalUsers}</p>
+          {analytics && (() => {
+            const getStats = () => {
+              if (statsTab === 'All') {
+                return {
+                  total: analytics.totalUsers,
+                  present: analytics.presentCount,
+                  percentage: analytics.attendancePercentage,
+                  missing: analytics.missingUsers?.length || 0,
+                };
+              }
+              const batteryStats = analytics.byBattery?.[statsTab];
+              const total = batteryStats?.total || 0;
+              const present = batteryStats?.present || 0;
+              const percentage = total > 0 ? (present / total) * 100 : 0;
+              const missing = total - present;
+              return { total, present, percentage, missing };
+            };
+            const stats = getStats();
+            return (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Statistics</CardTitle>
+                  <CardDescription>Session attendance overview</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Tabs value={statsTab} onValueChange={(v) => setStatsTab(v as typeof statsTab)}>
+                    <TabsList>
+                      <TabsTrigger value="All">All</TabsTrigger>
+                      <TabsTrigger value="HQ">HQ</TabsTrigger>
+                      <TabsTrigger value="Alpha">Alpha</TabsTrigger>
+                      <TabsTrigger value="Bravo">Bravo</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Total Users</p>
+                      <p className="text-2xl font-bold">{stats.total}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Present</p>
+                      <p className="text-2xl font-bold">{stats.present}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-sm text-muted-foreground">Attendance Rate</p>
+                      <p className="text-2xl font-bold">
+                        {stats.percentage.toFixed(1)}%
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Present</p>
-                    <p className="text-2xl font-bold">{analytics.presentCount}</p>
+                  <div className="pt-4 border-t">
+                    <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
+                    <p className="text-lg font-semibold">{stats.missing}</p>
                   </div>
-                  <div className="col-span-2">
-                    <p className="text-sm text-muted-foreground">Attendance Rate</p>
-                    <p className="text-2xl font-bold">
-                      {analytics.attendancePercentage.toFixed(1)}%
-                    </p>
-                  </div>
-                </div>
-                <div className="pt-4 border-t">
-                  <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
-                  <p className="text-lg font-semibold">{analytics.missingUsers?.length || 0}</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                </CardContent>
+              </Card>
+            );
+          })()}
         </div>
 
         <Card>
