@@ -70,18 +70,18 @@ func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 			// Load full user object
 			var user models.User
 			var fullName, rank, battery *string
-			var nricLast4, dob *string
+			var nricLast5, dob *string
 
 			err := db.Pool.QueryRow(ctx, `
-				SELECT 
-					id, "full_name", 
-					rank, battery, "nric_last4", dob, "is_superadmin",
+				SELECT
+					id, "full_name",
+					rank, battery, "nric_last5", dob, "is_superadmin",
 					"createdAt", "updatedAt"
 				FROM "user"
 				WHERE id = $1
 			`, userID).Scan(
 				&user.ID, &fullName,
-				&rank, &battery, &nricLast4, &dob, &user.IsSuperadmin,
+				&rank, &battery, &nricLast5, &dob, &user.IsSuperadmin,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 
@@ -93,7 +93,7 @@ func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 			user.FullName = fullName
 			user.Rank = rank
 			user.Battery = battery
-			user.NRICLast4 = nricLast4
+			user.NRICLast5 = nricLast5
 			user.DOB = dob
 
 			// Add user to context

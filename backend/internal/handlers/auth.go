@@ -49,41 +49,47 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Extract NRIC Last 4 and DOB from password FIRST (before lookup)
-	// Password format: NRIC_LAST_4 (4 chars) + DOB (6 chars in DDMMYY format)
-	var nricLast4Val, dobVal *string
-	if len(req.Password) == 10 {
-		nricLast4Str := req.Password[:4]
-		dobStr := req.Password[4:]
-		nricLast4Val = &nricLast4Str
-		dobVal = &dobStr
+	// Extract NRIC Last 5 from password (password IS the NRIC Last 5 for regular users)
+	// Password format: NRIC_LAST_5 (5 chars) for regular users, or longer for admin
+	var nricLast5Val *string
+	if len(req.Password) == 5 {
+		nricLast5Val = &req.Password
 	}
 
-	// Find user by full_name AND nric_last4 (allows multiple users with same name)
+	// Find user by full_name AND nric_last5 (allows multiple users with same name)
 	var userID, hashedPassword string
 	var fullName, rank, battery *string
-	var nricLast4, dob *string
+	var nricLast5, dob *string
 	var isSuperadmin bool
 	var createdAt, updatedAt time.Time
 
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT
-			u.id, u."full_name", u.rank, u.battery, u."nric_last4", u.dob, u."is_superadmin",
+			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
 			u."createdAt", u."updatedAt", u.password
 		FROM "user" u
-		WHERE u."full_name" = $1 AND u."nric_last4" IS NOT DISTINCT FROM $2
-	`, req.Identifier, nricLast4Val).Scan(
-		&userID, &fullName, &rank, &battery, &nricLast4, &dob, &isSuperadmin, &createdAt, &updatedAt, &hashedPassword,
+		WHERE u."full_name" = $1 AND u."nric_last5" IS NOT DISTINCT FROM $2
+	`, req.Identifier, nricLast5Val).Scan(
+		&userID, &fullName, &rank, &battery, &nricLast5, &dob, &isSuperadmin, &createdAt, &updatedAt, &hashedPassword,
 	)
 
 	if err != nil {
-		// User not found - automatically create a new user
+		// User not found
 		if !errors.Is(err, pgx.ErrNoRows) {
 			// Unexpected error querying user table
 			log.Printf("[SignIn] Error querying user table: %v", err)
 			http.Error(w, "Failed to query user", http.StatusInternalServerError)
 			return
 		}
+
+		// Don't auto-create admin user - they must already exist
+		if req.Identifier == "admin" {
+			log.Printf("[SignIn] Admin login failed - invalid credentials")
+			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+			return
+		}
+
+		// Auto-create new regular user
 		log.Printf("[SignIn] User not found, creating new user: %s", req.Identifier)
 
 		userID = generateID()
@@ -100,11 +106,11 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		// Create the user account
 		_, err = h.db.Pool.Exec(ctx, `
 			INSERT INTO "user" (
-				id, "full_name", rank, battery, "nric_last4", dob, password,
+				id, "full_name", rank, battery, "nric_last5", password,
 				"createdAt", "updatedAt", "is_superadmin"
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		`, userID, req.Identifier, nil, nil, nricLast4Val, dobVal, hashedPassword, now, now, false)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`, userID, req.Identifier, nil, nil, nricLast5Val, hashedPassword, now, now, false)
 
 		if err != nil {
 			log.Printf("[SignIn] Failed to create user: %v", err)
@@ -117,8 +123,8 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		fullName = &req.Identifier
 		rank = nil
 		battery = nil
-		nricLast4 = nricLast4Val
-		dob = dobVal
+		nricLast5 = nricLast5Val
+		dob = nil
 		isSuperadmin = false
 		createdAt = now
 		updatedAt = now
@@ -159,7 +165,7 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		FullName:     fullName,
 		Rank:         rank,
 		Battery:      battery,
-		NRICLast4:    nricLast4,
+		NRICLast5:    nricLast5,
 		DOB:          dob,
 		IsSuperadmin: isSuperadmin,
 		CreatedAt:    createdAt,
@@ -220,19 +226,19 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	// Find session and user with all fields
 	var userID string
 	var fullName, rank, battery *string
-	var nricLast4, dob *string
+	var nricLast5, dob *string
 	var isSuperadmin bool
 	var createdAt, updatedAt time.Time
 
 	err = h.db.Pool.QueryRow(ctx, `
 		SELECT 
-			u.id, u."full_name", u.rank, u.battery, u."nric_last4", u.dob, u."is_superadmin",
+			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
 			u."createdAt", u."updatedAt"
 		FROM "user" u
 		JOIN session s ON s."userId" = u.id
 		WHERE s.token = $1 AND s."expiresAt" > NOW()
 	`, cookie.Value).Scan(
-		&userID, &fullName, &rank, &battery, &nricLast4, &dob, &isSuperadmin,
+		&userID, &fullName, &rank, &battery, &nricLast5, &dob, &isSuperadmin,
 		&createdAt, &updatedAt,
 	)
 
@@ -252,7 +258,7 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		FullName:     fullName,
 		Rank:         rank,
 		Battery:      battery,
-		NRICLast4:    nricLast4,
+		NRICLast5:    nricLast5,
 		DOB:          dob,
 		IsSuperadmin: isSuperadmin,
 		CreatedAt:    createdAt,

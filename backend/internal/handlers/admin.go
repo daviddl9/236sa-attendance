@@ -34,8 +34,7 @@ type BulkUploadRow struct {
 	FullName  string `json:"fullName"`
 	Rank      string `json:"rank"`
 	Battery   string `json:"battery"`
-	NRICLast4 string `json:"nricLast4"`
-	DOB       string `json:"dob"` // DDMMYY format
+	NRICLast5 string `json:"nricLast5"`
 }
 
 // BulkUploadUsers handles Excel file upload for bulk user creation
@@ -107,9 +106,9 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 	for i, row := range rows {
 		rowNum := i + 2 // +2 because we skipped header and Excel is 1-indexed
 
-		// Validate row has enough columns (Full Name, Rank, Battery, NRIC Last 4, DOB)
-		if len(row) < 5 {
-			errors = append(errors, fmt.Sprintf("Row %d: Insufficient columns (expected 5)", rowNum))
+		// Validate row has enough columns (Full Name, Rank, Battery, NRIC Last 5)
+		if len(row) < 4 {
+			errors = append(errors, fmt.Sprintf("Row %d: Insufficient columns (expected 4)", rowNum))
 			failedCount++
 			continue
 		}
@@ -118,13 +117,12 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			FullName:  strings.TrimSpace(row[0]),
 			Rank:      strings.TrimSpace(row[1]),
 			Battery:   strings.TrimSpace(row[2]),
-			NRICLast4: strings.TrimSpace(row[3]),
-			DOB:       strings.TrimSpace(row[4]),
+			NRICLast5: strings.TrimSpace(row[3]),
 		}
 
 		// Validate required fields
 		if uploadRow.FullName == "" || uploadRow.Rank == "" ||
-			uploadRow.Battery == "" || uploadRow.NRICLast4 == "" || uploadRow.DOB == "" {
+			uploadRow.Battery == "" || uploadRow.NRICLast5 == "" {
 			errors = append(errors, fmt.Sprintf("Row %d: Missing required fields", rowNum))
 			failedCount++
 			continue
@@ -151,15 +149,15 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Validate DOB format (DDMMYY, 6 characters)
-		if len(uploadRow.DOB) != 6 {
-			errors = append(errors, fmt.Sprintf("Row %d: Invalid DOB format '%s' (must be DDMMYY)", rowNum, uploadRow.DOB))
+		// Validate NRIC Last 5 format (5 characters)
+		if len(uploadRow.NRICLast5) != 5 {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid NRIC Last 5 '%s' (must be exactly 5 characters)", rowNum, uploadRow.NRICLast5))
 			failedCount++
 			continue
 		}
 
-		// Generate password: NRIC last 4 + DOB
-		password := uploadRow.NRICLast4 + uploadRow.DOB
+		// Generate password: NRIC Last 5
+		password := uploadRow.NRICLast5
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Row %d: Failed to hash password", rowNum))
@@ -182,12 +180,12 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		// Create user with password
 		_, err = tx.Exec(ctx, `
 			INSERT INTO "user" (
-				id, "full_name", rank, battery, "nric_last4", dob, password,
+				id, "full_name", rank, battery, "nric_last5", password,
 				"createdAt", "updatedAt"
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		`, userID, uploadRow.FullName, uploadRow.Rank,
-			uploadRow.Battery, uploadRow.NRICLast4, uploadRow.DOB, string(hashedPassword), now, now)
+			uploadRow.Battery, uploadRow.NRICLast5, string(hashedPassword), now, now)
 
 		if err != nil {
 			_ = tx.Rollback(ctx) // Rollback on error, ignore rollback error
@@ -211,16 +209,14 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		fullName := uploadRow.FullName
 		rank := uploadRow.Rank
 		battery := uploadRow.Battery
-		nricLast4 := uploadRow.NRICLast4
-		dob := uploadRow.DOB
+		nricLast5 := uploadRow.NRICLast5
 
 		createdUsers = append(createdUsers, models.User{
 			ID:        userID,
 			FullName:  &fullName,
 			Rank:      &rank,
 			Battery:   &battery,
-			NRICLast4: &nricLast4,
-			DOB:       &dob,
+			NRICLast5: &nricLast5,
 			CreatedAt: now,
 			UpdatedAt: now,
 		})

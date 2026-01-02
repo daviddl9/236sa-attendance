@@ -57,7 +57,7 @@ type User struct {
 	FullName     *string   `json:"fullName,omitempty"`
 	Rank         *string   `json:"rank,omitempty"`
 	Battery      *string   `json:"battery,omitempty"`
-	NRICLast4    *string   `json:"nricLast4,omitempty"`
+	NRICLast5    *string   `json:"nricLast5,omitempty"`
 	DOB          *string   `json:"dob,omitempty"` // DDMMYY format
 	IsSuperadmin bool      `json:"isSuperadmin"`
 	CreatedAt    time.Time `json:"createdAt"`
