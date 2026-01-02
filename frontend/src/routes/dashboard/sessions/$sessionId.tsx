@@ -33,6 +33,7 @@ import { Link } from '@tanstack/react-router';
 import { useAuth } from '../../../lib/auth-context';
 import { canAccessCommanderFeatures } from '../../../lib/user-utils';
 import { UserTable } from '../../../components/users/user-table';
+import { useSessionSSE } from '../../../hooks/use-session-sse';
 
 export const Route = createFileRoute('/dashboard/sessions/$sessionId')({
   component: SessionDetailPage,
@@ -47,6 +48,12 @@ function SessionDetailPage() {
   const [markingUserId, setMarkingUserId] = useState<string | null>(null);
 
   const canMarkAttendance = canAccessCommanderFeatures(user);
+
+  // SSE connection for live attendance updates
+  useSessionSSE({
+    sessionId,
+    enabled: true, // Will only connect when session is active (backend validates)
+  });
 
   const { data: session, isLoading } = useQuery({
     queryKey: ['session', sessionId],

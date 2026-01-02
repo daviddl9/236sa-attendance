@@ -13,6 +13,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/handlers"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -44,6 +45,9 @@ func main() {
 	if err := database.SeedAdminUser(db); err != nil {
 		log.Printf("Warning: Failed to seed admin user: %v", err)
 	}
+
+	// Initialize SSE hub for real-time updates
+	sseHub := sse.NewHub()
 
 	// Initialize router
 	r := chi.NewRouter()
@@ -87,7 +91,7 @@ func main() {
 	// API routes
 	r.Route("/api", func(r chi.Router) {
 		// Public QR scan route (must be before protected routes)
-		attendanceHandler := handlers.NewAttendanceHandler(db)
+		attendanceHandler := handlers.NewAttendanceHandler(db, sseHub)
 		r.Get("/qr/{token}", attendanceHandler.HandleQRScan)
 
 		// Auth routes (public)
@@ -126,7 +130,8 @@ func main() {
 
 			// Session routes (commander+)
 			r.Route("/sessions", func(r chi.Router) {
-				sessionHandler := handlers.NewSessionHandler(db)
+				sessionHandler := handlers.NewSessionHandler(db, sseHub)
+				sseHandler := handlers.NewSSEHandler(db, sseHub)
 				r.Use(middleware.RequireCommander(db))
 				r.Post("/", sessionHandler.CreateSession)
 				r.Get("/", sessionHandler.ListSessions)
@@ -136,6 +141,9 @@ func main() {
 				r.Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
 				r.Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
 				r.Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
+
+				// SSE stream for live attendance updates (no timeout for long-lived connections)
+				r.Get("/{id}/stream", sseHandler.StreamSession)
 
 				// Attendance marking for sessions (commander+)
 				r.Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)

@@ -11,16 +11,18 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	"github.com/xuri/excelize/v2"
 )
 
 type SessionHandler struct {
-	db *database.DB
+	db  *database.DB
+	hub *sse.Hub
 }
 
-func NewSessionHandler(db *database.DB) *SessionHandler {
-	return &SessionHandler{db: db}
+func NewSessionHandler(db *database.DB, hub *sse.Hub) *SessionHandler {
+	return &SessionHandler{db: db, hub: hub}
 }
 
 type CreateSessionRequest struct {
@@ -343,6 +345,16 @@ func (h *SessionHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "Failed to close session", http.StatusInternalServerError)
 		return
+	}
+
+	// Broadcast SSE event for live updates
+	if h.hub != nil {
+		h.hub.Broadcast(sessionID, sse.Event{
+			Type: sse.EventTypeSessionClosed,
+			Payload: sse.SessionClosedPayload{
+				SessionID: sessionID,
+			},
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

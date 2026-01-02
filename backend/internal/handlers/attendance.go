@@ -12,15 +12,17 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 )
 
 type AttendanceHandler struct {
-	db *database.DB
+	db  *database.DB
+	hub *sse.Hub
 }
 
-func NewAttendanceHandler(db *database.DB) *AttendanceHandler {
-	return &AttendanceHandler{db: db}
+func NewAttendanceHandler(db *database.DB, hub *sse.Hub) *AttendanceHandler {
+	return &AttendanceHandler{db: db, hub: hub}
 }
 
 type MarkAttendanceRequest struct {
@@ -129,6 +131,9 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Broadcast SSE event for live updates
+	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, now)
+
 	// Redirect to success page
 	http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
 }
@@ -227,6 +232,9 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Broadcast SSE event for live updates
+	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, now)
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{
 		"message":  "Attendance marked successfully",
@@ -320,10 +328,12 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 			continue
 		}
 
-		// Verify target user exists
-		var targetUserExists bool
-		err = h.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM "user" WHERE id = $1)`, targetUserID).Scan(&targetUserExists)
-		if err != nil || !targetUserExists {
+		// Get target user details for broadcast
+		var targetUser models.User
+		err = h.db.Pool.QueryRow(ctx, `
+			SELECT id, "full_name", rank, battery FROM "user" WHERE id = $1
+		`, targetUserID).Scan(&targetUser.ID, &targetUser.FullName, &targetUser.Rank, &targetUser.Battery)
+		if err != nil {
 			errors = append(errors, fmt.Sprintf("User %s not found", targetUserID))
 			continue
 		}
@@ -342,6 +352,9 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 			errors = append(errors, fmt.Sprintf("Failed to mark user %s: %v", targetUserID, err))
 			continue
 		}
+
+		// Broadcast SSE event for this user
+		h.broadcastAttendanceMarked(ctx, sessionID, &targetUser, models.MarkingMethodManual, now)
 
 		successCount++
 	}
@@ -400,8 +413,102 @@ func (h *AttendanceHandler) RemoveAttendance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Broadcast SSE event for live updates
+	h.broadcastAttendanceRemoved(ctx, sessionID, targetUserID)
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Attendance removed successfully"}); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
+}
+
+// broadcastAttendanceMarked broadcasts an attendance marked event via SSE
+func (h *AttendanceHandler) broadcastAttendanceMarked(ctx context.Context, sessionID string, user *models.User, method string, markedAt time.Time) {
+	if h.hub == nil {
+		return
+	}
+
+	// Get updated counts for the session
+	presentCount, totalUsers := h.getSessionCounts(ctx, sessionID)
+
+	userName := ""
+	if user.FullName != nil {
+		userName = *user.FullName
+	}
+	userRank := ""
+	if user.Rank != nil {
+		userRank = *user.Rank
+	}
+	userBattery := ""
+	if user.Battery != nil {
+		userBattery = *user.Battery
+	}
+
+	h.hub.Broadcast(sessionID, sse.Event{
+		Type: sse.EventTypeAttendanceMarked,
+		Payload: sse.AttendanceMarkedPayload{
+			UserID:        user.ID,
+			UserName:      userName,
+			UserRank:      userRank,
+			UserBattery:   userBattery,
+			MarkingMethod: method,
+			MarkedAt:      markedAt,
+			PresentCount:  presentCount,
+			TotalUsers:    totalUsers,
+		},
+	})
+}
+
+// broadcastAttendanceRemoved broadcasts an attendance removed event via SSE
+func (h *AttendanceHandler) broadcastAttendanceRemoved(ctx context.Context, sessionID, userID string) {
+	if h.hub == nil {
+		return
+	}
+
+	// Get updated counts for the session
+	presentCount, totalUsers := h.getSessionCounts(ctx, sessionID)
+
+	h.hub.Broadcast(sessionID, sse.Event{
+		Type: sse.EventTypeAttendanceRemoved,
+		Payload: sse.AttendanceRemovedPayload{
+			UserID:       userID,
+			PresentCount: presentCount,
+			TotalUsers:   totalUsers,
+		},
+	})
+}
+
+// getSessionCounts returns present count and total users for a session
+func (h *AttendanceHandler) getSessionCounts(ctx context.Context, sessionID string) (presentCount, totalUsers int) {
+	// Get session scope and batteries to determine total users
+	var scope string
+	var batteries []string
+	err := h.db.Pool.QueryRow(ctx, `
+		SELECT scope, batteries FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&scope, &batteries)
+	if err != nil {
+		return 0, 0
+	}
+
+	// Count present users
+	err = h.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM attendance_record WHERE session_id = $1
+	`, sessionID).Scan(&presentCount)
+	if err != nil {
+		presentCount = 0
+	}
+
+	// Count total eligible users based on session scope
+	if scope == models.SessionScopeUnitWide {
+		err = h.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM "user"`).Scan(&totalUsers)
+	} else {
+		err = h.db.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM "user" WHERE battery = ANY($1)
+		`, batteries).Scan(&totalUsers)
+	}
+	if err != nil {
+		totalUsers = 0
+	}
+
+	return presentCount, totalUsers
 }
