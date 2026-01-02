@@ -11,11 +11,11 @@ export INSTANCE_NAME="attendance-server"
 export INSTANCE_TYPE="t3.small"  # 2 vCPU, 2GB RAM - ~$0.021/hour
 export KEY_NAME="attendance-key"
 export SECURITY_GROUP_NAME="attendance-sg"
-export VOLUME_SIZE="20"  # GB
+export VOLUME_SIZE="8"  # GB (minimum: Ubuntu ~3GB + swap 4GB + apps ~1GB)
 
 # Ubuntu 24.04 LTS AMI for ap-southeast-1 (update if needed)
 # Find latest: aws ec2 describe-images --owners 099720109477 --filters "Name=name,Values=ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*" --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' --output text
-export AMI_ID="ami-0c1907b6d738188e5"
+export AMI_ID="ami-08d59269edddde222"
 
 # Elastic IP Configuration
 export EIP_NAME="attendance-eip"
@@ -26,7 +26,7 @@ export DOMAIN="236sa.one"
 export HOSTED_ZONE_ID=""  # e.g., "Z1234567890ABC"
 
 # Application Configuration
-export GIT_REPO=""  # e.g., "https://github.com/yourusername/attendance.git"
+export GIT_REPO="https://github.com/daviddl9/236sa-attendance.git"
 export GIT_BRANCH="main"
 
 # Database Configuration
