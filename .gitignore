@@ -55,3 +55,14 @@ postgres_data/
 # Logs
 *.log
 logs/
+
+# Data files
+*.xlsx
+
+# Infrastructure secrets
+infrastructure/scripts/*.pem
+infrastructure/terraform/*.pem
+infrastructure/terraform/terraform.tfstate*
+infrastructure/terraform/.terraform/
+
+.venv/
