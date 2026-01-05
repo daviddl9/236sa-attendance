@@ -30,12 +30,15 @@ func NewSSEHandler(db *database.DB, hub *sse.Hub) *SSEHandler {
 // Clients connect to this endpoint to receive real-time attendance updates
 func (h *SSEHandler) StreamSession(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "id")
+	log.Printf("[SSE] StreamSession called for sessionID: %s, URL: %s", sessionID, r.URL.Path)
 
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
+		log.Printf("[SSE] ERROR: User not found in context for session %s", sessionID)
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
+	log.Printf("[SSE] User authenticated: %s for session %s", user.ID, sessionID)
 
 	// Verify session exists and is active
 	ctx := context.Background()
@@ -45,11 +48,14 @@ func (h *SSEHandler) StreamSession(w http.ResponseWriter, r *http.Request) {
 	`, sessionID).Scan(&status)
 
 	if err != nil {
+		log.Printf("[SSE] ERROR: Session not found: %s, error: %v", sessionID, err)
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
+	log.Printf("[SSE] Session %s found with status: %s", sessionID, status)
 
 	if status != models.SessionStatusActive {
+		log.Printf("[SSE] ERROR: Session %s is not active (status: %s)", sessionID, status)
 		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
@@ -57,15 +63,23 @@ func (h *SSEHandler) StreamSession(w http.ResponseWriter, r *http.Request) {
 	// Check if response writer supports flushing
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		log.Printf("[SSE] ERROR: ResponseWriter does not support flushing. Type: %T", w)
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[SSE] Flusher supported for session %s", sessionID)
 
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
+
+	// Disable write timeout for SSE connections (they are long-lived)
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		log.Printf("[SSE] WARNING: Could not disable write deadline: %v", err)
+	}
 
 	// Create client and subscribe to session
 	clientID := generateID()

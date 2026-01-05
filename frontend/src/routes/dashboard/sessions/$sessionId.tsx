@@ -218,6 +218,13 @@ function SessionDetailPage() {
     ) => {
       if (!users || users.length === 0) return 'None\n';
 
+      const formatUser = (user: (typeof users)[0], index: number) => {
+        const name = user.fullName || 'Unknown';
+        const rank = user.rank || '';
+        const status = user.activeStatus ? ` (${user.activeStatus.displayName})` : '';
+        return `${index + 1}. ${rank} ${name}${status}\n`;
+      };
+
       if (groupByBattery) {
         let result = '';
         for (const batt of batteries) {
@@ -225,9 +232,7 @@ function SessionDetailPage() {
           if (batteryUsers.length > 0) {
             result += `_${batt}_\n`;
             batteryUsers.forEach((user, i) => {
-              const name = user.fullName || 'Unknown';
-              const rank = user.rank || '';
-              result += `${i + 1}. ${rank} ${name}\n`;
+              result += formatUser(user, i);
             });
             result += '\n';
           }
@@ -236,9 +241,7 @@ function SessionDetailPage() {
       } else {
         let result = '';
         users.forEach((user, i) => {
-          const name = user.fullName || 'Unknown';
-          const rank = user.rank || '';
-          result += `${i + 1}. ${rank} ${name}\n`;
+          result += formatUser(user, i);
         });
         result += '\n';
         return result;

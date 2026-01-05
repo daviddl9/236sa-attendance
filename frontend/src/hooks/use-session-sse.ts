@@ -8,6 +8,7 @@ interface SSEEvent {
     | "attendance_marked"
     | "attendance_removed"
     | "session_closed"
+    | "status_changed"
     | "heartbeat";
   payload: unknown;
 }
@@ -72,6 +73,7 @@ export function useSessionSSE(
               break;
             case "attendance_marked":
             case "attendance_removed":
+            case "status_changed":
               // Invalidate queries to refresh data silently
               queryClient.invalidateQueries({
                 queryKey: ["session-analytics", sessionId],

@@ -7,6 +7,7 @@ const (
 	EventTypeAttendanceMarked  = "attendance_marked"
 	EventTypeAttendanceRemoved = "attendance_removed"
 	EventTypeSessionClosed     = "session_closed"
+	EventTypeStatusChanged     = "status_changed"
 	EventTypeHeartbeat         = "heartbeat"
 )
 
@@ -38,4 +39,11 @@ type AttendanceRemovedPayload struct {
 // SessionClosedPayload is sent when a session is closed
 type SessionClosedPayload struct {
 	SessionID string `json:"sessionId"`
+}
+
+// StatusChangedPayload is sent when a user's status is created, updated, or deleted
+type StatusChangedPayload struct {
+	UserID     string `json:"userId"`
+	StatusType string `json:"statusType"`
+	Action     string `json:"action"` // "created", "updated", "deleted"
 }

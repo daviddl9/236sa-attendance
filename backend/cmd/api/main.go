@@ -80,99 +80,119 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	r.Use(chimiddleware.Timeout(60 * time.Second))
-
-	// Health check endpoint
+	// Health check endpoint (no timeout needed)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	// API routes
-	r.Route("/api", func(r chi.Router) {
-		// Public QR scan route (must be before protected routes)
-		attendanceHandler := handlers.NewAttendanceHandler(db, sseHub)
-		r.Get("/qr/{token}", attendanceHandler.HandleQRScan)
+	// SSE stream endpoint - must be outside timeout middleware
+	// because timeout middleware wraps ResponseWriter which breaks http.Flusher
+	sseHandler := handlers.NewSSEHandler(db, sseHub)
+	r.Route("/api/sessions/{id}/stream", func(r chi.Router) {
+		r.Use(middleware.Auth(db))
+		r.Use(middleware.LoadUser(db))
+		r.Use(middleware.RequireCommander(db))
+		r.Get("/", sseHandler.StreamSession)
+	})
 
-		// Auth routes (public)
-		r.Route("/auth", func(r chi.Router) {
-			authHandler := handlers.NewAuthHandler(db)
-			r.Post("/sign-in", authHandler.SignIn)
-			r.Post("/sign-out", authHandler.SignOut)
-			r.Get("/session", authHandler.GetSession)
-		})
+	// All other API routes with timeout middleware
+	r.Group(func(r chi.Router) {
+		r.Use(chimiddleware.Timeout(60 * time.Second))
 
-		// User registration route (public)
-		userHandler := handlers.NewUserHandler(db)
-		r.Post("/users/register", userHandler.RegisterUser)
+		// API routes
+		r.Route("/api", func(r chi.Router) {
+			// Public QR scan route (must be before protected routes)
+			attendanceHandler := handlers.NewAttendanceHandler(db, sseHub)
+			r.Get("/qr/{token}", attendanceHandler.HandleQRScan)
 
-		// Protected routes
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.Auth(db))
-			r.Use(middleware.LoadUser(db))
+			// Auth routes (public)
+			r.Route("/auth", func(r chi.Router) {
+				authHandler := handlers.NewAuthHandler(db)
+				r.Post("/sign-in", authHandler.SignIn)
+				r.Post("/sign-out", authHandler.SignOut)
+				r.Get("/session", authHandler.GetSession)
+			})
 
-			// User profile routes
+			// User registration route (public)
 			userHandler := handlers.NewUserHandler(db)
-			r.Get("/user/profile", userHandler.GetProfile)
-			r.Put("/user/profile", userHandler.UpdateProfile)
+			r.Post("/users/register", userHandler.RegisterUser)
 
-			// User management routes (commander+ or superadmin)
-			r.Route("/users", func(r chi.Router) {
-				r.Use(middleware.RequireCommander(db)) // Allows commanders (3SG+) and superadmins
-				r.Get("/", userHandler.ListUsers)
-				r.Get("/bulk/count", userHandler.BulkDeleteCount)
-				r.Delete("/bulk", userHandler.BulkDelete)
-				r.Get("/{id}", userHandler.GetUser)
-				r.Put("/{id}", userHandler.UpdateUser)
-				r.Delete("/{id}", userHandler.DeleteUser)
+			// Protected routes
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.Auth(db))
+				r.Use(middleware.LoadUser(db))
+
+				// User profile routes
+				userHandler := handlers.NewUserHandler(db)
+				r.Get("/user/profile", userHandler.GetProfile)
+				r.Put("/user/profile", userHandler.UpdateProfile)
+
+				// User management routes (commander+ or superadmin)
+				r.Route("/users", func(r chi.Router) {
+					r.Use(middleware.RequireCommander(db)) // Allows commanders (3SG+) and superadmins
+					r.Get("/", userHandler.ListUsers)
+					r.Get("/bulk/count", userHandler.BulkDeleteCount)
+					r.Delete("/bulk", userHandler.BulkDelete)
+					r.Get("/{id}", userHandler.GetUser)
+					r.Put("/{id}", userHandler.UpdateUser)
+					r.Delete("/{id}", userHandler.DeleteUser)
+				})
+
+				// Attendance routes
+				r.Post("/attendance/mark", attendanceHandler.MarkAttendance)
+
+				// Session routes (commander+)
+				r.Route("/sessions", func(r chi.Router) {
+					sessionHandler := handlers.NewSessionHandler(db, sseHub)
+					r.Use(middleware.RequireCommander(db))
+					r.Post("/", sessionHandler.CreateSession)
+					r.Get("/", sessionHandler.ListSessions)
+					r.Get("/active", sessionHandler.GetActiveSessions)
+					r.Get("/{id}", sessionHandler.GetSession)
+					r.Put("/{id}/close", sessionHandler.CloseSession)
+					r.Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
+					r.Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
+					r.Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
+
+					// Attendance marking for sessions (commander+)
+					r.Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
+					r.Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
+				})
+
+				// Reports routes (commander+)
+				r.Route("/reports", func(r chi.Router) {
+					r.Use(middleware.RequireCommander(db))
+					reportsHandler := handlers.NewReportsHandler(db)
+					r.Get("/sessions/{id}/analytics", reportsHandler.GetSessionAnalytics)
+					r.Get("/sessions/{id}/missing", reportsHandler.GetMissingUsers)
+					r.Get("/user/{userId}", reportsHandler.GetUserReport)
+					r.Get("/battery/{battery}", reportsHandler.GetBatteryReport)
+				})
+
+				// Admin routes (superadmin only)
+				r.Route("/admin", func(r chi.Router) {
+					r.Use(middleware.RequireSuperadmin(db))
+					adminHandler := handlers.NewAdminHandler(db)
+					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
+				})
+
+				// Status routes (superadmin only)
+				r.Route("/statuses", func(r chi.Router) {
+					r.Use(middleware.RequireSuperadmin(db))
+					statusHandler := handlers.NewStatusHandler(db, sseHub)
+					r.Get("/", statusHandler.ListStatuses)
+					r.Post("/", statusHandler.CreateStatus)
+					r.Get("/{id}", statusHandler.GetStatus)
+					r.Put("/{id}", statusHandler.UpdateStatus)
+					r.Delete("/{id}", statusHandler.DeleteStatus)
+				})
 			})
 
-			// Attendance routes
-			r.Post("/attendance/mark", attendanceHandler.MarkAttendance)
-
-			// Session routes (commander+)
-			r.Route("/sessions", func(r chi.Router) {
-				sessionHandler := handlers.NewSessionHandler(db, sseHub)
-				sseHandler := handlers.NewSSEHandler(db, sseHub)
-				r.Use(middleware.RequireCommander(db))
-				r.Post("/", sessionHandler.CreateSession)
-				r.Get("/", sessionHandler.ListSessions)
-				r.Get("/active", sessionHandler.GetActiveSessions)
-				r.Get("/{id}", sessionHandler.GetSession)
-				r.Put("/{id}/close", sessionHandler.CloseSession)
-				r.Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
-				r.Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
-				r.Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
-
-				// SSE stream for live attendance updates (no timeout for long-lived connections)
-				r.Get("/{id}/stream", sseHandler.StreamSession)
-
-				// Attendance marking for sessions (commander+)
-				r.Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
-				r.Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
-			})
-
-			// Reports routes (commander+)
-			r.Route("/reports", func(r chi.Router) {
-				r.Use(middleware.RequireCommander(db))
-				reportsHandler := handlers.NewReportsHandler(db)
-				r.Get("/sessions/{id}/analytics", reportsHandler.GetSessionAnalytics)
-				r.Get("/sessions/{id}/missing", reportsHandler.GetMissingUsers)
-				r.Get("/user/{userId}", reportsHandler.GetUserReport)
-				r.Get("/battery/{battery}", reportsHandler.GetBatteryReport)
-			})
-
-			// Admin routes (superadmin only)
-			r.Route("/admin", func(r chi.Router) {
-				r.Use(middleware.RequireSuperadmin(db))
-				adminHandler := handlers.NewAdminHandler(db)
-				r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
-			})
+			// Webhook routes (verified via signature)
+			webhookHandler := handlers.NewWebhookHandler(db)
+			r.Post("/webhooks/polar", webhookHandler.PolarWebhook)
 		})
-
-		// Webhook routes (verified via signature)
-		webhookHandler := handlers.NewWebhookHandler(db)
-		r.Post("/webhooks/polar", webhookHandler.PolarWebhook)
 	})
 
 	// Server configuration

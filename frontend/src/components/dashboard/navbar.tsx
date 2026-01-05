@@ -8,7 +8,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import UserProfile from "./user-profile";
-import { Menu, Settings, Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
+import { Menu, Settings, Users, Calendar, ScanLine, BarChart3, Clock } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessCommanderFeatures, isSuperadmin } from "@/lib/user-utils";
@@ -38,6 +38,12 @@ const navItems: NavItem[] = [
     label: "Scan QR",
     href: "/dashboard/attendance/scan",
     icon: ScanLine,
+  },
+  {
+    label: "Statuses",
+    href: "/dashboard/statuses",
+    icon: Clock,
+    requiresSuperadmin: true,
   },
   {
     label: "Reports",

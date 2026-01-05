@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { Users, Calendar, ScanLine, BarChart3 } from "lucide-react";
+import { Users, Calendar, ScanLine, BarChart3, Clock } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { canAccessCommanderFeatures, isSuperadmin } from "../lib/user-utils";
 
@@ -30,6 +30,12 @@ const navItems: NavItem[] = [
     label: "Scan QR",
     href: "/dashboard/attendance/scan",
     icon: ScanLine,
+  },
+  {
+    label: "Statuses",
+    href: "/dashboard/statuses",
+    icon: Clock,
+    requiresSuperadmin: true, // Only superadmins can manage statuses
   },
   {
     label: "Reports",

@@ -90,3 +90,20 @@ func (h *Hub) ClientCount(sessionID string) int {
 	}
 	return 0
 }
+
+// BroadcastToAll sends an event to all clients across all sessions
+func (h *Hub) BroadcastToAll(event Event) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, clients := range h.sessions {
+		for client := range clients {
+			select {
+			case client.Send <- event:
+				// Event sent successfully
+			default:
+				// Client buffer full, skip this event
+			}
+		}
+	}
+}

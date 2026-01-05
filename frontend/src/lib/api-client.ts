@@ -113,11 +113,17 @@ export interface SessionAnalytics {
   byRank: Record<string, RankStats>;
 }
 
+export interface StatusInfo {
+  statusType: StatusType;
+  displayName: string;
+}
+
 export interface UserInfo {
   id: string;
   fullName?: string | null;
   rank?: string | null;
   battery?: string | null;
+  activeStatus?: StatusInfo | null;
 }
 
 export interface BatteryStats {
@@ -165,6 +171,75 @@ export interface BulkUploadResponse {
   errors?: string[];
   users?: User[];
 }
+
+// Status types
+export type StatusType = 'stay_out' | 'off_pass' | 'mc' | 'course' | 'other';
+
+export interface UserStatusDate {
+  id?: string;
+  statusId?: string;
+  startDate: string;
+  startTime: string;
+  endDate: string;
+  endTime: string;
+}
+
+export interface UserStatus {
+  id: string;
+  userId: string;
+  statusType: StatusType;
+  dailyAfterTime?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  notes?: string | null;
+  dates?: UserStatusDate[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserStatusWithUser extends UserStatus {
+  userFullName?: string | null;
+  userRank?: string | null;
+  userBattery?: string | null;
+}
+
+export interface StatusListResponse {
+  statuses: UserStatusWithUser[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface CreateStatusRequest {
+  userId: string;
+  statusType: StatusType;
+  dailyAfterTime?: string;
+  startDate?: string;
+  endDate?: string;
+  notes?: string;
+  dates?: Omit<UserStatusDate, 'id' | 'statusId'>[];
+}
+
+export interface UpdateStatusRequest {
+  statusType?: StatusType;
+  dailyAfterTime?: string;
+  startDate?: string;
+  endDate?: string;
+  notes?: string;
+  dates?: Omit<UserStatusDate, 'id' | 'statusId'>[];
+}
+
+export const STATUS_DISPLAY_CONFIG: Record<
+  StatusType,
+  { label: string; color: string }
+> = {
+  stay_out: { label: 'Stay Out', color: 'bg-orange-500' },
+  off_pass: { label: 'Off Pass', color: 'bg-blue-500' },
+  mc: { label: 'MC', color: 'bg-red-500' },
+  course: { label: 'Course', color: 'bg-purple-500' },
+  other: { label: 'Other', color: 'bg-gray-500' },
+};
 
 // Error type with status code
 export class APIError extends Error {
@@ -447,6 +522,55 @@ export class APIClient {
     }
 
     return response.blob();
+  }
+
+  // Status endpoints (superadmin only)
+  async listStatuses(params?: {
+    page?: number;
+    limit?: number;
+    statusType?: StatusType;
+    active?: boolean;
+    userId?: string;
+  }): Promise<StatusListResponse> {
+    const queryParams = new URLSearchParams();
+    if (params?.page) queryParams.set('page', params.page.toString());
+    if (params?.limit) queryParams.set('limit', params.limit.toString());
+    if (params?.statusType) queryParams.set('statusType', params.statusType);
+    if (params?.active !== undefined)
+      queryParams.set('active', params.active.toString());
+    if (params?.userId) queryParams.set('userId', params.userId);
+
+    const query = queryParams.toString();
+    return this.request<StatusListResponse>(
+      `/api/statuses${query ? `?${query}` : ''}`
+    );
+  }
+
+  async createStatus(data: CreateStatusRequest): Promise<UserStatus> {
+    return this.request<UserStatus>('/api/statuses', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getStatus(id: string): Promise<UserStatusWithUser> {
+    return this.request<UserStatusWithUser>(`/api/statuses/${id}`);
+  }
+
+  async updateStatus(
+    id: string,
+    data: UpdateStatusRequest
+  ): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/statuses/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteStatus(id: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/statuses/${id}`, {
+      method: 'DELETE',
+    });
   }
 }
 

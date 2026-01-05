@@ -10,6 +10,7 @@ import { Button } from '../ui/button';
 import { Link } from '@tanstack/react-router';
 import { Pencil, Trash2, UserCheck } from 'lucide-react';
 import type { UserInfo, UserProfile } from '../../lib/api-client';
+import { StatusBadge } from '../status-badge';
 
 interface UserTableProps {
   users: (UserInfo | UserProfile)[];
@@ -71,7 +72,12 @@ export function UserTable({
           {users.map((user) => (
             <TableRow key={user.id} className="h-12">
               <TableCell className="py-2">
-                <div className="font-medium text-sm">{user.fullName || 'N/A'}</div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-sm">{user.fullName || 'N/A'}</span>
+                  {'activeStatus' in user && user.activeStatus && (
+                    <StatusBadge statusType={user.activeStatus.statusType} className="text-xs" />
+                  )}
+                </div>
                 <div className="text-xs text-muted-foreground sm:hidden">
                   {user.rank || ''} · {user.battery || ''}
                 </div>

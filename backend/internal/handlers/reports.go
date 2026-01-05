@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -28,10 +29,11 @@ type SessionAnalytics struct {
 }
 
 type UserInfo struct {
-	ID       string  `json:"id"`
-	FullName *string `json:"fullName,omitempty"`
-	Rank     *string `json:"rank,omitempty"`
-	Battery  *string `json:"battery,omitempty"`
+	ID           string             `json:"id"`
+	FullName     *string            `json:"fullName,omitempty"`
+	Rank         *string            `json:"rank,omitempty"`
+	Battery      *string            `json:"battery,omitempty"`
+	ActiveStatus *models.StatusInfo `json:"activeStatus,omitempty"`
 }
 
 type BatteryStats struct {
@@ -127,11 +129,21 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	// Find missing and present users
 	var missingUsers []UserInfo
 	var presentUsers []UserInfo
+	var missingUserIDs []string
 	for _, user := range allUsers {
 		if presentUserIDs[user.ID] {
 			presentUsers = append(presentUsers, user)
 		} else {
 			missingUsers = append(missingUsers, user)
+			missingUserIDs = append(missingUserIDs, user.ID)
+		}
+	}
+
+	// Fetch active statuses for missing users
+	activeStatuses := GetActiveStatusesForUsers(ctx, h.db, missingUserIDs)
+	for i := range missingUsers {
+		if status, ok := activeStatuses[missingUsers[i].ID]; ok {
+			missingUsers[i].ActiveStatus = &status
 		}
 	}
 
