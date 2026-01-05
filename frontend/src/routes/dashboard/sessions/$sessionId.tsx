@@ -21,6 +21,8 @@ import {
 import { Badge } from '../../../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Input } from '../../../components/ui/input';
+import { Checkbox } from '../../../components/ui/checkbox';
+import { Label } from '../../../components/ui/label';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ArrowLeft,
@@ -52,6 +54,8 @@ function SessionDetailPage() {
   const [statsTab, setStatsTab] = useState<'All' | 'HQ' | 'Alpha' | 'Bravo'>('All');
   const [exportTab, setExportTab] = useState<'All' | 'HQ' | 'Alpha' | 'Bravo'>('All');
   const [searchQuery, setSearchQuery] = useState('');
+  const [includeAbsentList, setIncludeAbsentList] = useState(true);
+  const [includePresentList, setIncludePresentList] = useState(true);
 
   const canMarkAttendance = canAccessCommanderFeatures(user);
 
@@ -248,15 +252,24 @@ function SessionDetailPage() {
       }
     };
 
+    if (!includeAbsentList && !includePresentList) {
+      toast.error('Please select at least one list to include');
+      return;
+    }
+
     let text = `*236 SA Attendance (${dateStr} SGT)*\n`;
     if (battery) text += `*Battery:* ${battery}\n`;
     text += `*Present:* ${stats?.present || 0} / ${stats?.total || 0}\n\n`;
 
-    text += `*Absent List*\n`;
-    text += formatUserList(absentList, !battery);
+    if (includeAbsentList) {
+      text += `*Absent List*\n`;
+      text += formatUserList(absentList, !battery);
+    }
 
-    text += `*Present List*\n`;
-    text += formatUserList(presentList, !battery);
+    if (includePresentList) {
+      text += `*Present List*\n`;
+      text += formatUserList(presentList, !battery);
+    }
 
     try {
       await navigator.clipboard.writeText(text);
@@ -422,6 +435,24 @@ function SessionDetailPage() {
                 <TabsTrigger value="Bravo">Bravo</TabsTrigger>
               </TabsList>
             </Tabs>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="include-absent"
+                  checked={includeAbsentList}
+                  onCheckedChange={(checked) => setIncludeAbsentList(checked === true)}
+                />
+                <Label htmlFor="include-absent">Include absent list</Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="include-present"
+                  checked={includePresentList}
+                  onCheckedChange={(checked) => setIncludePresentList(checked === true)}
+                />
+                <Label htmlFor="include-present">Include present list</Label>
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => handleExport('csv')} variant="outline">
                 <FileDown className="mr-2 h-4 w-4" />
