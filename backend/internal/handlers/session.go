@@ -363,6 +363,34 @@ func (h *SessionHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DeleteSession permanently deletes a session and its attendance records (superadmin only)
+func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	sessionID := chi.URLParam(r, "id")
+
+	// Check if session exists
+	var exists bool
+	err := h.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM attendance_session WHERE id = $1)`,
+		sessionID).Scan(&exists)
+	if err != nil || !exists {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete session (attendance_records cascade delete via FK constraint)
+	_, err = h.db.Pool.Exec(ctx, `DELETE FROM attendance_session WHERE id = $1`, sessionID)
+	if err != nil {
+		http.Error(w, "Failed to delete session", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Session deleted successfully"}); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
 // ExportSessionCSV exports session attendance to CSV
 func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()

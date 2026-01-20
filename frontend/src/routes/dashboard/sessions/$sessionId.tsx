@@ -20,6 +20,14 @@ import {
 } from '../../../components/ui/select';
 import { Badge } from '../../../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../../../components/ui/dialog';
 import { Input } from '../../../components/ui/input';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { Label } from '../../../components/ui/label';
@@ -32,11 +40,12 @@ import {
   FileSpreadsheet,
   Copy,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { useAuth } from '../../../lib/auth-context';
-import { canAccessCommanderFeatures } from '../../../lib/user-utils';
+import { canAccessCommanderFeatures, isSuperadmin } from '../../../lib/user-utils';
 import { UserTable } from '../../../components/users/user-table';
 import { useSessionSSE } from '../../../hooks/use-session-sse';
 
@@ -48,6 +57,7 @@ function SessionDetailPage() {
   const { sessionId } = Route.useParams();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const [batteryFilter, setBatteryFilter] = useState('');
   const [markingUserId, setMarkingUserId] = useState<string | null>(null);
@@ -56,6 +66,7 @@ function SessionDetailPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [includeAbsentList, setIncludeAbsentList] = useState(true);
   const [includePresentList, setIncludePresentList] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const canMarkAttendance = canAccessCommanderFeatures(user);
 
@@ -114,7 +125,21 @@ function SessionDetailPage() {
     },
   });
 
+  const deleteMutation = useMutation({
+    mutationFn: () => apiClient.deleteSession(sessionId),
+    onSuccess: () => {
+      toast.success('Session deleted successfully');
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      navigate({ to: '/dashboard/sessions' });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to delete session');
+      setDeleteDialogOpen(false);
+    },
+  });
+
   const canClose = user?.isSuperadmin || session?.createdBy === user?.id;
+  const canDelete = isSuperadmin(user);
 
   // Generate QR code URL from session data
   // session.qrCode may contain "sessionID:secret" or "sessionID:secret:timestamp" format
@@ -330,6 +355,15 @@ function SessionDetailPage() {
                 Close Session
               </Button>
             )}
+            {canDelete && (
+              <Button
+                variant="destructive"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete Session
+              </Button>
+            )}
           </div>
         </div>
 
@@ -514,6 +548,30 @@ function SessionDetailPage() {
             </CardContent>
           </Card>
         )}
+
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Session</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to permanently delete "{session.name}"? This will also delete{' '}
+                {analytics?.presentCount ?? 0} attendance records. This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => deleteMutation.mutate()}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

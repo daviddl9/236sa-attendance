@@ -447,6 +447,12 @@ export class APIClient {
     });
   }
 
+  async deleteSession(id: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/sessions/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Attendance endpoints
   async markAttendance(data: MarkAttendanceRequest): Promise<{ message: string; recordId: string }> {
     return this.request<{ message: string; recordId: string }>('/api/attendance/mark', {

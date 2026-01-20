@@ -158,6 +158,12 @@ func main() {
 					// Attendance marking for sessions (commander+)
 					r.Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
 					r.Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
+
+					// Superadmin-only session routes
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireSuperadmin(db))
+						r.Delete("/{id}", sessionHandler.DeleteSession)
+					})
 				})
 
 				// Reports routes (commander+)
