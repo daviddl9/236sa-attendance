@@ -38,6 +38,7 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-          rsync -avz backend/main backend/migrations/ $USER@$HOST:/opt/apps/attendance/backend/
+          rsync -avz backend/main $USER@$HOST:/opt/apps/attendance/backend/
+          rsync -avz backend/migrations $USER@$HOST:/opt/apps/attendance/backend/
           rsync -avz --delete frontend/dist/ $USER@$HOST:/opt/apps/attendance/frontend/dist/
           ssh $USER@$HOST "cd /opt/apps && docker compose restart attendance-api"
