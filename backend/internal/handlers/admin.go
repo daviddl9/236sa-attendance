@@ -26,7 +26,9 @@ func NewAdminHandler(db *database.DB) *AdminHandler {
 type BulkUploadResponse struct {
 	Success int           `json:"success"`
 	Failed  int           `json:"failed"`
+	Skipped int           `json:"skipped"`
 	Errors  []string      `json:"errors,omitempty"`
+	Message string        `json:"message,omitempty"`
 	Users   []models.User `json:"users,omitempty"`
 }
 
@@ -35,6 +37,94 @@ type BulkUploadRow struct {
 	Rank      string `json:"rank"`
 	Battery   string `json:"battery"`
 	NRICLast5 string `json:"nricLast5"`
+}
+
+// columnMapping holds detected column indices for each required field.
+type columnMapping struct {
+	FullName  int
+	Rank      int
+	Battery   int
+	NRICLast5 int
+	CallupCol int // -1 if not found
+	HeaderRow int // 0-indexed row where headers were found
+}
+
+// findDataSheet returns the sheet name with the most rows.
+func findDataSheet(xlFile *excelize.File) string {
+	sheets := xlFile.GetSheetList()
+	if len(sheets) == 0 {
+		return ""
+	}
+
+	bestSheet := sheets[0]
+	bestRows := 0
+
+	for _, name := range sheets {
+		rows, err := xlFile.GetRows(name)
+		if err != nil {
+			continue
+		}
+		if len(rows) > bestRows {
+			bestRows = len(rows)
+			bestSheet = name
+		}
+	}
+
+	return bestSheet
+}
+
+// detectColumns scans the first few rows for recognizable column headers.
+// Returns nil if no headers are detected.
+func detectColumns(rows [][]string) *columnMapping {
+	maxScan := 5
+	if len(rows) < maxScan {
+		maxScan = len(rows)
+	}
+
+	for i := 0; i < maxScan; i++ {
+		row := rows[i]
+		mapping := columnMapping{
+			FullName:  -1,
+			Rank:      -1,
+			Battery:   -1,
+			NRICLast5: -1,
+			CallupCol: -1,
+			HeaderRow: i,
+		}
+
+		for j, cell := range row {
+			lower := strings.ToLower(strings.TrimSpace(cell))
+			if lower == "" {
+				continue
+			}
+			switch {
+			case mapping.FullName == -1 && (lower == "full name" || lower == "name" || lower == "fullname"):
+				mapping.FullName = j
+			case mapping.Rank == -1 && lower == "rank":
+				mapping.Rank = j
+			case mapping.Battery == -1 && (lower == "battery" || lower == "bty"):
+				mapping.Battery = j
+			case mapping.NRICLast5 == -1 && strings.Contains(lower, "nric"):
+				mapping.NRICLast5 = j
+			case mapping.CallupCol == -1 && (strings.Contains(lower, "call up") || strings.Contains(lower, "callup")):
+				mapping.CallupCol = j
+			}
+		}
+
+		if mapping.FullName >= 0 && mapping.Rank >= 0 && mapping.Battery >= 0 && mapping.NRICLast5 >= 0 {
+			return &mapping
+		}
+	}
+
+	return nil
+}
+
+// cellValue safely retrieves a trimmed cell value by index.
+func cellValue(row []string, idx int) string {
+	if idx < 0 || idx >= len(row) {
+		return ""
+	}
+	return strings.TrimSpace(row[idx])
 }
 
 // BulkUploadUsers handles Excel file upload for bulk user creation
@@ -80,8 +170,13 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		_ = xlFile.Close() // Ignore close error during cleanup
 	}()
 
-	// Get first sheet
-	sheetName := xlFile.GetSheetName(0)
+	// Find the sheet with the most data (handles multi-sheet callup files)
+	sheetName := findDataSheet(xlFile)
+	if sheetName == "" {
+		http.Error(w, "No valid data sheet found in Excel file", http.StatusBadRequest)
+		return
+	}
+
 	rows, err := xlFile.GetRows(sheetName)
 	if err != nil {
 		http.Error(w, "Failed to read Excel rows", http.StatusInternalServerError)
@@ -93,31 +188,64 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Skip header row
-	rows = rows[1:]
+	// Detect column mapping from headers
+	colMap := detectColumns(rows)
+
+	var nameIdx, rankIdx, batteryIdx, nricIdx, callupIdx, dataStartRow int
+	if colMap != nil {
+		nameIdx = colMap.FullName
+		rankIdx = colMap.Rank
+		batteryIdx = colMap.Battery
+		nricIdx = colMap.NRICLast5
+		callupIdx = colMap.CallupCol
+		dataStartRow = colMap.HeaderRow + 1
+	} else {
+		// Fallback: assume first row is header, columns are [0,1,2,3]
+		nameIdx = 0
+		rankIdx = 1
+		batteryIdx = 2
+		nricIdx = 3
+		callupIdx = -1
+		dataStartRow = 1
+	}
+
+	dataRows := rows[dataStartRow:]
 
 	ctx := context.Background()
 	var successCount int
 	var failedCount int
+	var skippedCount int
 	var errors []string
 	var createdUsers []models.User
 
-	// Process each row
-	for i, row := range rows {
-		rowNum := i + 2 // +2 because we skipped header and Excel is 1-indexed
+	// Process each data row
+	for i, row := range dataRows {
+		rowNum := dataStartRow + i + 1 // Excel is 1-indexed
 
-		// Validate row has enough columns (Full Name, Rank, Battery, NRIC Last 5)
-		if len(row) < 4 {
-			errors = append(errors, fmt.Sprintf("Row %d: Insufficient columns (expected 4)", rowNum))
-			failedCount++
+		fullName := cellValue(row, nameIdx)
+		rank := cellValue(row, rankIdx)
+		battery := cellValue(row, batteryIdx)
+		nricLast5 := cellValue(row, nricIdx)
+
+		// Skip completely empty rows
+		if fullName == "" && rank == "" && battery == "" && nricLast5 == "" {
 			continue
 		}
 
+		// Filter by callup status if column detected
+		if callupIdx >= 0 {
+			callupStatus := strings.ToUpper(cellValue(row, callupIdx))
+			if strings.Contains(callupStatus, "NO CALL UP") || callupStatus == "" {
+				skippedCount++
+				continue
+			}
+		}
+
 		uploadRow := BulkUploadRow{
-			FullName:  strings.TrimSpace(row[0]),
-			Rank:      strings.TrimSpace(row[1]),
-			Battery:   strings.TrimSpace(row[2]),
-			NRICLast5: strings.TrimSpace(row[3]),
+			FullName:  fullName,
+			Rank:      rank,
+			Battery:   battery,
+			NRICLast5: nricLast5,
 		}
 
 		// Validate required fields
@@ -205,18 +333,18 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Success - add to created users
-		fullName := uploadRow.FullName
-		rank := uploadRow.Rank
-		battery := uploadRow.Battery
-		nricLast5 := uploadRow.NRICLast5
+		// Success - add to created users (local copies for stable pointers)
+		fn := uploadRow.FullName
+		rk := uploadRow.Rank
+		bt := uploadRow.Battery
+		nr := uploadRow.NRICLast5
 
 		createdUsers = append(createdUsers, models.User{
 			ID:        userID,
-			FullName:  &fullName,
-			Rank:      &rank,
-			Battery:   &battery,
-			NRICLast5: &nricLast5,
+			FullName:  &fn,
+			Rank:      &rk,
+			Battery:   &bt,
+			NRICLast5: &nr,
 			CreatedAt: now,
 			UpdatedAt: now,
 		})
@@ -224,10 +352,17 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		successCount++
 	}
 
+	var message string
+	if skippedCount > 0 {
+		message = fmt.Sprintf("%d personnel skipped (not called up)", skippedCount)
+	}
+
 	response := BulkUploadResponse{
 		Success: successCount,
 		Failed:  failedCount,
+		Skipped: skippedCount,
 		Errors:  errors,
+		Message: message,
 		Users:   createdUsers,
 	}
 
