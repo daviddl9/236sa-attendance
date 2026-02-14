@@ -90,6 +90,28 @@ func TestDetectColumns_EmptyRows(t *testing.T) {
 	}
 }
 
+func TestParseEndRow(t *testing.T) {
+	tests := []struct {
+		dim  string
+		want int
+	}{
+		{"A1:P433", 433},
+		{"A1:A1", 1},
+		{"A1:Z100", 100},
+		{"", 0},
+		{"A1", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.dim, func(t *testing.T) {
+			got := parseEndRow(tt.dim)
+			if got != tt.want {
+				t.Errorf("parseEndRow(%q) = %d, want %d", tt.dim, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCellValue(t *testing.T) {
 	row := []string{"  hello  ", "world", ""}
 

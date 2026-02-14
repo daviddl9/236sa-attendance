@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
@@ -49,7 +53,8 @@ type columnMapping struct {
 	HeaderRow int // 0-indexed row where headers were found
 }
 
-// findDataSheet returns the sheet name with the most rows.
+// findDataSheet returns the sheet name with the most rows using sheet dimensions
+// (avoids reading all cell data for every sheet).
 func findDataSheet(xlFile *excelize.File) string {
 	sheets := xlFile.GetSheetList()
 	if len(sheets) == 0 {
@@ -60,17 +65,33 @@ func findDataSheet(xlFile *excelize.File) string {
 	bestRows := 0
 
 	for _, name := range sheets {
-		rows, err := xlFile.GetRows(name)
-		if err != nil {
+		dim, err := xlFile.GetSheetDimension(name)
+		if err != nil || dim == "" {
 			continue
 		}
-		if len(rows) > bestRows {
-			bestRows = len(rows)
+		rowCount := parseEndRow(dim)
+		if rowCount > bestRows {
+			bestRows = rowCount
 			bestSheet = name
 		}
 	}
 
 	return bestSheet
+}
+
+// parseEndRow extracts the row number from a sheet dimension string like "A1:P433".
+func parseEndRow(dim string) int {
+	parts := strings.Split(dim, ":")
+	if len(parts) != 2 {
+		return 0
+	}
+	ref := parts[1]
+	i := len(ref) - 1
+	for i >= 0 && ref[i] >= '0' && ref[i] <= '9' {
+		i--
+	}
+	n, _ := strconv.Atoi(ref[i+1:])
+	return n
 }
 
 // detectColumns scans the first few rows for recognizable column headers.
@@ -141,11 +162,7 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No file uploaded", http.StatusBadRequest)
 		return
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			http.Error(w, "Failed to close file", http.StatusInternalServerError)
-		}
-	}()
+	defer file.Close()
 
 	// Validate file type
 	if !strings.HasSuffix(header.Filename, ".xlsx") && !strings.HasSuffix(header.Filename, ".xls") {
@@ -167,7 +184,7 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() {
-		_ = xlFile.Close() // Ignore close error during cleanup
+		_ = xlFile.Close()
 	}()
 
 	// Find the sheet with the most data (handles multi-sheet callup files)
@@ -211,14 +228,17 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 
 	dataRows := rows[dataStartRow:]
 
-	ctx := context.Background()
-	var successCount int
+	// Phase 1: Validate all rows and collect valid ones
+	type validatedRow struct {
+		rowNum int
+		data   BulkUploadRow
+	}
+
+	var validRows []validatedRow
 	var failedCount int
 	var skippedCount int
 	var errors []string
-	var createdUsers []models.User
 
-	// Process each data row
 	for i, row := range dataRows {
 		rowNum := dataStartRow + i + 1 // Excel is 1-indexed
 
@@ -258,8 +278,8 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 
 		// Validate rank
 		validRank := false
-		for _, rank := range models.ValidRanks {
-			if rank == uploadRow.Rank {
+		for _, r := range models.ValidRanks {
+			if r == uploadRow.Rank {
 				validRank = true
 				break
 			}
@@ -284,60 +304,85 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Generate password: NRIC Last 5
-		password := uploadRow.NRICLast5
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		if err != nil {
-			errors = append(errors, fmt.Sprintf("Row %d: Failed to hash password", rowNum))
+		validRows = append(validRows, validatedRow{rowNum: rowNum, data: uploadRow})
+	}
+
+	// Phase 2: Hash passwords in parallel (bcrypt is ~100ms per call)
+	hashedPasswords := make([]string, len(validRows))
+	hashErrors := make([]error, len(validRows))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.NumCPU())
+
+	for i, vr := range validRows {
+		wg.Add(1)
+		go func(idx int, password string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err != nil {
+				hashErrors[idx] = err
+				return
+			}
+			hashedPasswords[idx] = string(hash)
+		}(i, vr.data.NRICLast5)
+	}
+	wg.Wait()
+
+	// Phase 3: Insert into database
+	ctx := context.Background()
+	var successCount int
+	var createdUsers []models.User
+
+	for i, vr := range validRows {
+		if hashErrors[i] != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to hash password", vr.rowNum))
 			failedCount++
 			continue
 		}
 
-		// Generate user ID
 		userID := generateID()
 		now := time.Now()
 
-		// Start transaction
 		tx, err := h.db.Pool.Begin(ctx)
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Row %d: Failed to start transaction", rowNum))
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to start transaction", vr.rowNum))
 			failedCount++
 			continue
 		}
 
-		// Create user with password
 		_, err = tx.Exec(ctx, `
 			INSERT INTO "user" (
 				id, "full_name", rank, battery, "nric_last5", password,
 				"createdAt", "updatedAt"
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, userID, uploadRow.FullName, uploadRow.Rank,
-			uploadRow.Battery, uploadRow.NRICLast5, string(hashedPassword), now, now)
+		`, userID, vr.data.FullName, vr.data.Rank,
+			vr.data.Battery, vr.data.NRICLast5, hashedPasswords[i], now, now)
 
 		if err != nil {
-			_ = tx.Rollback(ctx) // Rollback on error, ignore rollback error
+			_ = tx.Rollback(ctx)
 			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
-				errors = append(errors, fmt.Sprintf("Row %d: User '%s' already exists", rowNum, uploadRow.FullName))
+				errors = append(errors, fmt.Sprintf("Row %d: User '%s' already exists", vr.rowNum, vr.data.FullName))
 			} else {
-				errors = append(errors, fmt.Sprintf("Row %d: Failed to create user: %v", rowNum, err))
+				errors = append(errors, fmt.Sprintf("Row %d: Failed to create user: %v", vr.rowNum, err))
 			}
 			failedCount++
 			continue
 		}
 
-		// Commit transaction
 		if err := tx.Commit(ctx); err != nil {
-			errors = append(errors, fmt.Sprintf("Row %d: Failed to commit transaction", rowNum))
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to commit transaction", vr.rowNum))
 			failedCount++
 			continue
 		}
 
-		// Success - add to created users (local copies for stable pointers)
-		fn := uploadRow.FullName
-		rk := uploadRow.Rank
-		bt := uploadRow.Battery
-		nr := uploadRow.NRICLast5
+		fn := vr.data.FullName
+		rk := vr.data.Rank
+		bt := vr.data.Battery
+		nr := vr.data.NRICLast5
 
 		createdUsers = append(createdUsers, models.User{
 			ID:        userID,
@@ -368,7 +413,6 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+		log.Printf("Failed to encode bulk upload response: %v", err)
 	}
 }
