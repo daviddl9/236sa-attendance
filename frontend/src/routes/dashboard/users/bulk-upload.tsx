@@ -20,8 +20,23 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../../../components/ui/dialog';
-import { useState } from 'react';
-import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle, CheckCircle2, AlertTriangle, Search, Columns3 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '../../../components/ui/dropdown-menu';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '../../../components/ui/select';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 
@@ -30,6 +45,232 @@ const sampleData = [
   { fullName: 'Jane Smith', rank: 'CPL', battery: 'Alpha', nricLast5: '5678B' },
   { fullName: 'Bob Wilson', rank: 'LCP', battery: 'Bravo', nricLast5: '9012C' },
 ];
+
+/** All displayable column keys: 4 required + extras */
+const REQUIRED_COLUMNS = ['Full Name', 'Rank', 'Battery', 'NRIC Last 5'] as const;
+
+function getExtraHeaders(headers: string[]): string[] {
+  return headers.filter((h) => {
+    const hLower = h.toLowerCase();
+    return !(
+      hLower === 'full name' || hLower === 'name' || hLower === 'fullname' ||
+      hLower === 'rank' ||
+      hLower === 'battery' || hLower === 'bty' ||
+      hLower.includes('nric')
+    );
+  });
+}
+
+function getColumnValue(row: ParsedRow, col: string): string {
+  switch (col) {
+    case 'Full Name': return row.fullName;
+    case 'Rank': return row.rank;
+    case 'Battery': return row.battery;
+    case 'NRIC Last 5': return row.nricLast5;
+    default: return row.extras[col] ?? '';
+  }
+}
+
+const MAX_FILTER_UNIQUE = 30;
+
+function PreviewToolbar({
+  parsedRows,
+  headers,
+  search,
+  setSearch,
+  visibleColumns,
+  setVisibleColumns,
+  columnFilters,
+  setColumnFilters,
+}: {
+  parsedRows: ParsedRow[];
+  headers: string[];
+  search: string;
+  setSearch: (v: string) => void;
+  visibleColumns: Set<string>;
+  setVisibleColumns: (v: Set<string>) => void;
+  columnFilters: Record<string, string>;
+  setColumnFilters: (v: Record<string, string>) => void;
+}) {
+  const extraHeaders = useMemo(() => getExtraHeaders(headers), [headers]);
+  const allColumns = useMemo(() => [...REQUIRED_COLUMNS, ...extraHeaders], [extraHeaders]);
+
+  // Compute unique values per column (only for columns with ≤ MAX_FILTER_UNIQUE unique values)
+  const filterableColumns = useMemo(() => {
+    const result: { col: string; values: string[] }[] = [];
+    for (const col of allColumns) {
+      const uniqueSet = new Set<string>();
+      let tooMany = false;
+      for (const row of parsedRows) {
+        const v = getColumnValue(row, col);
+        if (v) uniqueSet.add(v);
+        if (uniqueSet.size > MAX_FILTER_UNIQUE) { tooMany = true; break; }
+      }
+      if (!tooMany && uniqueSet.size > 1) {
+        result.push({ col, values: [...uniqueSet].sort() });
+      }
+    }
+    return result;
+  }, [parsedRows, allColumns]);
+
+  // Filter rows
+  const filtered = useMemo(() => {
+    const term = search.toLowerCase();
+    return parsedRows.filter((row) => {
+      // Text search
+      if (term) {
+        const matchesText =
+          row.fullName.toLowerCase().includes(term) ||
+          row.rank.toLowerCase().includes(term) ||
+          row.battery.toLowerCase().includes(term) ||
+          row.nricLast5.toLowerCase().includes(term) ||
+          Object.values(row.extras).some((v) => v.toLowerCase().includes(term));
+        if (!matchesText) return false;
+      }
+      // Column filters (AND)
+      for (const [col, value] of Object.entries(columnFilters)) {
+        if (!value) continue;
+        if (getColumnValue(row, col) !== value) return false;
+      }
+      return true;
+    });
+  }, [parsedRows, search, columnFilters]);
+
+  const visibleExtraHeaders = extraHeaders.filter((h) => visibleColumns.has(h));
+  const activeFilterCount = Object.values(columnFilters).filter(Boolean).length;
+
+  return (
+    <>
+      {/* Toolbar row: search + columns dropdown */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search across all columns..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Columns3 className="h-4 w-4 mr-1" />
+              Columns
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48 max-h-72 overflow-y-auto">
+            <DropdownMenuLabel>Toggle columns</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {allColumns.map((col) => (
+              <DropdownMenuCheckboxItem
+                key={col}
+                checked={visibleColumns.has(col)}
+                onCheckedChange={(checked) => {
+                  const next = new Set(visibleColumns);
+                  if (checked) next.add(col); else next.delete(col);
+                  setVisibleColumns(next);
+                  // Clear filter for hidden column
+                  if (!checked && columnFilters[col]) {
+                    const nextFilters = { ...columnFilters };
+                    delete nextFilters[col];
+                    setColumnFilters(nextFilters);
+                  }
+                }}
+              >
+                {col}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Per-column value filters */}
+      {filterableColumns.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {filterableColumns
+            .filter(({ col }) => visibleColumns.has(col))
+            .map(({ col, values }) => (
+              <Select
+                key={col}
+                value={columnFilters[col] || '__all__'}
+                onValueChange={(v) =>
+                  setColumnFilters({ ...columnFilters, [col]: v === '__all__' ? '' : v })
+                }
+              >
+                <SelectTrigger size="sm" className="h-7 text-xs gap-1">
+                  <SelectValue placeholder={col} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">{col}: All</SelectItem>
+                  {values.map((v) => (
+                    <SelectItem key={v} value={v}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ))}
+          {activeFilterCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setColumnFilters({})}
+            >
+              Clear filters
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Table */}
+      <div className="max-h-64 overflow-auto rounded-md border">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-muted">
+            <tr>
+              <th className="p-2 text-left font-medium w-8">#</th>
+              {visibleColumns.has('Full Name') && <th className="p-2 text-left font-medium">Full Name</th>}
+              {visibleColumns.has('Rank') && <th className="p-2 text-left font-medium">Rank</th>}
+              {visibleColumns.has('Battery') && <th className="p-2 text-left font-medium">Battery</th>}
+              {visibleColumns.has('NRIC Last 5') && <th className="p-2 text-left font-medium">NRIC Last 5</th>}
+              {visibleExtraHeaders.map((h) => (
+                <th key={h} className="p-2 text-left font-medium whitespace-nowrap">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.slice(0, 50).map((row, i) => (
+              <tr key={i} className="border-t">
+                <td className="p-2 text-muted-foreground">{i + 1}</td>
+                {visibleColumns.has('Full Name') && <td className="p-2">{row.fullName}</td>}
+                {visibleColumns.has('Rank') && <td className="p-2">{row.rank}</td>}
+                {visibleColumns.has('Battery') && <td className="p-2">{row.battery}</td>}
+                {visibleColumns.has('NRIC Last 5') && <td className="p-2 font-mono">{row.nricLast5}</td>}
+                {visibleExtraHeaders.map((h) => (
+                  <td key={h} className="p-2 whitespace-nowrap">{row.extras[h] ?? ''}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtered.length > 50 && (
+          <div className="p-2 text-center text-xs text-muted-foreground border-t">
+            Showing first 50 of {filtered.length} rows
+          </div>
+        )}
+        {filtered.length === 0 && (
+          <div className="p-4 text-center text-sm text-muted-foreground">
+            No rows match your filters
+          </div>
+        )}
+      </div>
+      {(search || activeFilterCount > 0) && (
+        <p className="text-xs text-muted-foreground">
+          {filtered.length} of {parsedRows.length} rows match
+        </p>
+      )}
+    </>
+  );
+}
 
 export const Route = createFileRoute('/dashboard/users/bulk-upload')({
   component: BulkUploadPage,
@@ -46,6 +287,8 @@ function BulkUploadPage() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [search, setSearch] = useState('');
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set());
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
 
   const uploadMutation = useMutation({
     mutationFn: (users: BulkUploadRow[]) => apiClient.bulkCreateUsers(users),
@@ -73,12 +316,23 @@ function BulkUploadPage() {
     setParseError(null);
     setIsParsing(true);
     setSearch('');
+    setColumnFilters({});
 
     try {
       const result = await parseExcelFile(selectedFile);
       setParsedRows(result.rows);
       setHeaders(result.headers);
       setParseInfo({ skipped: result.skipped, sheetName: result.sheetName });
+      // All columns visible by default
+      setVisibleColumns(new Set(['Full Name', 'Rank', 'Battery', 'NRIC Last 5', ...result.headers.filter((h) => {
+        const hLower = h.toLowerCase();
+        return !(
+          hLower === 'full name' || hLower === 'name' || hLower === 'fullname' ||
+          hLower === 'rank' ||
+          hLower === 'battery' || hLower === 'bty' ||
+          hLower.includes('nric')
+        );
+      })]));
 
       if (result.rows.length === 0) {
         setParseError('No valid rows found in the file. Check the column headers.');
@@ -270,91 +524,16 @@ function BulkUploadPage() {
                   </div>
                 </div>
 
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search across all columns..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-8"
-                  />
-                </div>
-
-                {(() => {
-                  const term = search.toLowerCase();
-                  const filtered = term
-                    ? parsedRows.filter((row) => {
-                        if (
-                          row.fullName.toLowerCase().includes(term) ||
-                          row.rank.toLowerCase().includes(term) ||
-                          row.battery.toLowerCase().includes(term) ||
-                          row.nricLast5.toLowerCase().includes(term)
-                        ) return true;
-                        return Object.values(row.extras).some((v) => v.toLowerCase().includes(term));
-                      })
-                    : parsedRows;
-
-                  // Determine extra columns that have at least one value
-                  const extraHeaders = headers.filter((h) => {
-                    const hLower = h.toLowerCase();
-                    return !(
-                      hLower === 'full name' || hLower === 'name' || hLower === 'fullname' ||
-                      hLower === 'rank' ||
-                      hLower === 'battery' || hLower === 'bty' ||
-                      hLower.includes('nric')
-                    );
-                  });
-
-                  return (
-                    <>
-                      <div className="max-h-64 overflow-auto rounded-md border">
-                        <table className="w-full text-sm">
-                          <thead className="sticky top-0 bg-muted">
-                            <tr>
-                              <th className="p-2 text-left font-medium w-8">#</th>
-                              <th className="p-2 text-left font-medium">Full Name</th>
-                              <th className="p-2 text-left font-medium">Rank</th>
-                              <th className="p-2 text-left font-medium">Battery</th>
-                              <th className="p-2 text-left font-medium">NRIC Last 5</th>
-                              {extraHeaders.map((h) => (
-                                <th key={h} className="p-2 text-left font-medium whitespace-nowrap">{h}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filtered.slice(0, 50).map((row, i) => (
-                              <tr key={i} className="border-t">
-                                <td className="p-2 text-muted-foreground">{i + 1}</td>
-                                <td className="p-2">{row.fullName}</td>
-                                <td className="p-2">{row.rank}</td>
-                                <td className="p-2">{row.battery}</td>
-                                <td className="p-2 font-mono">{row.nricLast5}</td>
-                                {extraHeaders.map((h) => (
-                                  <td key={h} className="p-2 whitespace-nowrap">{row.extras[h] ?? ''}</td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                        {filtered.length > 50 && (
-                          <div className="p-2 text-center text-xs text-muted-foreground border-t">
-                            Showing first 50 of {filtered.length} rows
-                          </div>
-                        )}
-                        {filtered.length === 0 && (
-                          <div className="p-4 text-center text-sm text-muted-foreground">
-                            No rows match "{search}"
-                          </div>
-                        )}
-                      </div>
-                      {term && (
-                        <p className="text-xs text-muted-foreground">
-                          {filtered.length} of {parsedRows.length} rows match
-                        </p>
-                      )}
-                    </>
-                  );
-                })()}
+                <PreviewToolbar
+                  parsedRows={parsedRows}
+                  headers={headers}
+                  search={search}
+                  setSearch={setSearch}
+                  visibleColumns={visibleColumns}
+                  setVisibleColumns={setVisibleColumns}
+                  columnFilters={columnFilters}
+                  setColumnFilters={setColumnFilters}
+                />
               </div>
             )}
 
