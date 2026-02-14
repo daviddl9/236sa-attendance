@@ -321,7 +321,7 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), 4)
 			if err != nil {
 				hashErrors[idx] = err
 				return
@@ -498,7 +498,7 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), 4)
 			if err != nil {
 				hashErrors[idx] = err
 				return
