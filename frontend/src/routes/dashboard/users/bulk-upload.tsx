@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../../../lib/api-client';
+import { apiClient, type BulkUploadRow } from '../../../lib/api-client';
 import { parseExcelFile, type ParsedRow } from '../../../lib/parse-excel';
+import { Input } from '../../../components/ui/input';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
 import {
@@ -20,7 +21,7 @@ import {
   DialogTrigger,
 } from '../../../components/ui/dialog';
 import { useState } from 'react';
-import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 
@@ -40,12 +41,14 @@ function BulkUploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [parsedRows, setParsedRows] = useState<ParsedRow[] | null>(null);
+  const [headers, setHeaders] = useState<string[]>([]);
   const [parseInfo, setParseInfo] = useState<{ skipped: number; sheetName: string } | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [search, setSearch] = useState('');
 
   const uploadMutation = useMutation({
-    mutationFn: (users: ParsedRow[]) => apiClient.bulkCreateUsers(users),
+    mutationFn: (users: BulkUploadRow[]) => apiClient.bulkCreateUsers(users),
     onSuccess: (data) => {
       const parts = [`Successfully created ${data.success} users.`];
       if (data.failed > 0) parts.push(`${data.failed} failed.`);
@@ -65,13 +68,16 @@ function BulkUploadPage() {
   const handleFile = async (selectedFile: File) => {
     setFile(selectedFile);
     setParsedRows(null);
+    setHeaders([]);
     setParseInfo(null);
     setParseError(null);
     setIsParsing(true);
+    setSearch('');
 
     try {
       const result = await parseExcelFile(selectedFile);
       setParsedRows(result.rows);
+      setHeaders(result.headers);
       setParseInfo({ skipped: result.skipped, sheetName: result.sheetName });
 
       if (result.rows.length === 0) {
@@ -125,7 +131,11 @@ function BulkUploadPage() {
       toast.error('No valid rows to upload');
       return;
     }
-    uploadMutation.mutate(parsedRows);
+    // Only send the 4 required fields to the backend
+    const payload = parsedRows.map(({ fullName, rank, battery, nricLast5 }) => ({
+      fullName, rank, battery, nricLast5,
+    }));
+    uploadMutation.mutate(payload);
   };
 
   return (
@@ -260,35 +270,91 @@ function BulkUploadPage() {
                   </div>
                 </div>
 
-                <div className="max-h-64 overflow-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="sticky top-0 bg-muted">
-                      <tr>
-                        <th className="p-2 text-left font-medium w-8">#</th>
-                        <th className="p-2 text-left font-medium">Full Name</th>
-                        <th className="p-2 text-left font-medium">Rank</th>
-                        <th className="p-2 text-left font-medium">Battery</th>
-                        <th className="p-2 text-left font-medium">NRIC Last 5</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {parsedRows.slice(0, 50).map((row, i) => (
-                        <tr key={i} className="border-t">
-                          <td className="p-2 text-muted-foreground">{i + 1}</td>
-                          <td className="p-2">{row.fullName}</td>
-                          <td className="p-2">{row.rank}</td>
-                          <td className="p-2">{row.battery}</td>
-                          <td className="p-2 font-mono">{row.nricLast5}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {parsedRows.length > 50 && (
-                    <div className="p-2 text-center text-xs text-muted-foreground border-t">
-                      Showing first 50 of {parsedRows.length} rows
-                    </div>
-                  )}
+                <div className="relative">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search across all columns..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-8"
+                  />
                 </div>
+
+                {(() => {
+                  const term = search.toLowerCase();
+                  const filtered = term
+                    ? parsedRows.filter((row) => {
+                        if (
+                          row.fullName.toLowerCase().includes(term) ||
+                          row.rank.toLowerCase().includes(term) ||
+                          row.battery.toLowerCase().includes(term) ||
+                          row.nricLast5.toLowerCase().includes(term)
+                        ) return true;
+                        return Object.values(row.extras).some((v) => v.toLowerCase().includes(term));
+                      })
+                    : parsedRows;
+
+                  // Determine extra columns that have at least one value
+                  const extraHeaders = headers.filter((h) => {
+                    const hLower = h.toLowerCase();
+                    return !(
+                      hLower === 'full name' || hLower === 'name' || hLower === 'fullname' ||
+                      hLower === 'rank' ||
+                      hLower === 'battery' || hLower === 'bty' ||
+                      hLower.includes('nric')
+                    );
+                  });
+
+                  return (
+                    <>
+                      <div className="max-h-64 overflow-auto rounded-md border">
+                        <table className="w-full text-sm">
+                          <thead className="sticky top-0 bg-muted">
+                            <tr>
+                              <th className="p-2 text-left font-medium w-8">#</th>
+                              <th className="p-2 text-left font-medium">Full Name</th>
+                              <th className="p-2 text-left font-medium">Rank</th>
+                              <th className="p-2 text-left font-medium">Battery</th>
+                              <th className="p-2 text-left font-medium">NRIC Last 5</th>
+                              {extraHeaders.map((h) => (
+                                <th key={h} className="p-2 text-left font-medium whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filtered.slice(0, 50).map((row, i) => (
+                              <tr key={i} className="border-t">
+                                <td className="p-2 text-muted-foreground">{i + 1}</td>
+                                <td className="p-2">{row.fullName}</td>
+                                <td className="p-2">{row.rank}</td>
+                                <td className="p-2">{row.battery}</td>
+                                <td className="p-2 font-mono">{row.nricLast5}</td>
+                                {extraHeaders.map((h) => (
+                                  <td key={h} className="p-2 whitespace-nowrap">{row.extras[h] ?? ''}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {filtered.length > 50 && (
+                          <div className="p-2 text-center text-xs text-muted-foreground border-t">
+                            Showing first 50 of {filtered.length} rows
+                          </div>
+                        )}
+                        {filtered.length === 0 && (
+                          <div className="p-4 text-center text-sm text-muted-foreground">
+                            No rows match "{search}"
+                          </div>
+                        )}
+                      </div>
+                      {term && (
+                        <p className="text-xs text-muted-foreground">
+                          {filtered.length} of {parsedRows.length} rows match
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
 

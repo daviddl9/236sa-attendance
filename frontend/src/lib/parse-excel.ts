@@ -5,10 +5,12 @@ export interface ParsedRow {
   rank: string;
   battery: string;
   nricLast5: string;
+  extras: Record<string, string>;
 }
 
 export interface ParseResult {
   rows: ParsedRow[];
+  headers: string[];
   skipped: number;
   sheetName: string;
   totalRawRows: number;
@@ -59,6 +61,7 @@ export function parseExcelFile(file: File): Promise<ParseResult> {
 
         let nameIdx: number, rankIdx: number, batteryIdx: number, nricIdx: number;
         let callupIdx: number, dataStartRow: number;
+        let headerRow: number;
 
         if (colMap) {
           nameIdx = colMap.fullName;
@@ -66,6 +69,7 @@ export function parseExcelFile(file: File): Promise<ParseResult> {
           batteryIdx = colMap.battery;
           nricIdx = colMap.nricLast5;
           callupIdx = colMap.callupCol;
+          headerRow = colMap.headerRow;
           dataStartRow = colMap.headerRow + 1;
         } else {
           // Fallback: assume first row is header, columns [0,1,2,3]
@@ -74,7 +78,23 @@ export function parseExcelFile(file: File): Promise<ParseResult> {
           batteryIdx = 2;
           nricIdx = 3;
           callupIdx = -1;
+          headerRow = 0;
           dataStartRow = 1;
+        }
+
+        // Collect all header names from the header row
+        const requiredIndices = new Set([nameIdx, rankIdx, batteryIdx, nricIdx]);
+        const headerCells = rawRows[headerRow] ?? [];
+        const headers: string[] = [];
+        const extraIndices: { idx: number; name: string }[] = [];
+
+        for (let j = 0; j < headerCells.length; j++) {
+          const name = String(headerCells[j] ?? '').trim();
+          if (!name) continue;
+          headers.push(name);
+          if (!requiredIndices.has(j)) {
+            extraIndices.push({ idx: j, name });
+          }
         }
 
         const dataRows = rawRows.slice(dataStartRow);
@@ -101,11 +121,18 @@ export function parseExcelFile(file: File): Promise<ParseResult> {
             }
           }
 
-          rows.push({ fullName, rank, battery, nricLast5 });
+          const extras: Record<string, string> = {};
+          for (const { idx, name } of extraIndices) {
+            const val = cellValue(row, idx);
+            if (val) extras[name] = val;
+          }
+
+          rows.push({ fullName, rank, battery, nricLast5, extras });
         }
 
         resolve({
           rows,
+          headers,
           skipped,
           sheetName,
           totalRawRows: rawRows.length,
