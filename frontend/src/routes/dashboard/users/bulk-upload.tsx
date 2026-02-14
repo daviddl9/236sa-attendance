@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
+import { parseExcelFile, type ParsedRow } from '../../../lib/parse-excel';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
 import {
@@ -19,7 +20,7 @@ import {
   DialogTrigger,
 } from '../../../components/ui/dialog';
 import { useState } from 'react';
-import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle } from 'lucide-react';
+import { ArrowLeft, Upload, FileSpreadsheet, HelpCircle, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 
@@ -38,13 +39,18 @@ function BulkUploadPage() {
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [parsedRows, setParsedRows] = useState<ParsedRow[] | null>(null);
+  const [parseInfo, setParseInfo] = useState<{ skipped: number; sheetName: string } | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [isParsing, setIsParsing] = useState(false);
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => apiClient.bulkUploadUsers(file),
+    mutationFn: (users: ParsedRow[]) => apiClient.bulkCreateUsers(users),
     onSuccess: (data) => {
-      toast.success(
-        `Successfully uploaded ${data.success} users. ${data.failed > 0 ? `${data.failed} failed.` : ''}`
-      );
+      const parts = [`Successfully created ${data.success} users.`];
+      if (data.failed > 0) parts.push(`${data.failed} failed.`);
+      if (data.skipped && data.skipped > 0) parts.push(`${data.skipped} skipped.`);
+      toast.success(parts.join(' '));
       if (data.errors && data.errors.length > 0) {
         console.error('Upload errors:', data.errors);
       }
@@ -55,6 +61,28 @@ function BulkUploadPage() {
       toast.error(error.message || 'Failed to upload users');
     },
   });
+
+  const handleFile = async (selectedFile: File) => {
+    setFile(selectedFile);
+    setParsedRows(null);
+    setParseInfo(null);
+    setParseError(null);
+    setIsParsing(true);
+
+    try {
+      const result = await parseExcelFile(selectedFile);
+      setParsedRows(result.rows);
+      setParseInfo({ skipped: result.skipped, sheetName: result.sheetName });
+
+      if (result.rows.length === 0) {
+        setParseError('No valid rows found in the file. Check the column headers.');
+      }
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Failed to parse file');
+    } finally {
+      setIsParsing(false);
+    }
+  };
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -74,7 +102,7 @@ function BulkUploadPage() {
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const droppedFile = e.dataTransfer.files[0];
       if (droppedFile.name.endsWith('.xlsx') || droppedFile.name.endsWith('.xls')) {
-        setFile(droppedFile);
+        handleFile(droppedFile);
       } else {
         toast.error('Please upload an Excel file (.xlsx or .xls)');
       }
@@ -85,7 +113,7 @@ function BulkUploadPage() {
     if (e.target.files && e.target.files[0]) {
       const selectedFile = e.target.files[0];
       if (selectedFile.name.endsWith('.xlsx') || selectedFile.name.endsWith('.xls')) {
-        setFile(selectedFile);
+        handleFile(selectedFile);
       } else {
         toast.error('Please upload an Excel file (.xlsx or .xls)');
       }
@@ -93,12 +121,11 @@ function BulkUploadPage() {
   };
 
   const handleUpload = () => {
-    if (!file) {
-      toast.error('Please select a file');
+    if (!parsedRows || parsedRows.length === 0) {
+      toast.error('No valid rows to upload');
       return;
     }
-
-    uploadMutation.mutate(file);
+    uploadMutation.mutate(parsedRows);
   };
 
   return (
@@ -131,7 +158,9 @@ function BulkUploadPage() {
                   <DialogHeader>
                     <DialogTitle>Sample Excel Format</DialogTitle>
                     <DialogDescription>
-                      Your Excel file should have the following columns in order:
+                      Your Excel file should have columns for Full Name, Rank, Battery, and NRIC Last 5.
+                      Column order doesn't matter — headers are auto-detected.
+                      SAF callup files are supported directly.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="overflow-x-auto">
@@ -165,7 +194,7 @@ function BulkUploadPage() {
               </Dialog>
             </div>
             <CardDescription>
-              Upload a file with columns: Full Name, Rank, Battery, NRIC Last 5
+              Upload a callup Excel file or a simple spreadsheet with Full Name, Rank, Battery, NRIC Last 5 columns
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -208,13 +237,72 @@ function BulkUploadPage() {
               )}
             </div>
 
+            {isParsing && (
+              <div className="text-sm text-muted-foreground">Parsing file...</div>
+            )}
+
+            {parseError && (
+              <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{parseError}</span>
+              </div>
+            )}
+
+            {parsedRows && parsedRows.length > 0 && parseInfo && (
+              <div className="space-y-3">
+                <div className="flex items-start gap-2 rounded-md border border-green-500/50 bg-green-500/10 p-3 text-sm">
+                  <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-green-600" />
+                  <div>
+                    <span className="font-medium">{parsedRows.length} personnel</span> parsed from sheet "{parseInfo.sheetName}"
+                    {parseInfo.skipped > 0 && (
+                      <span className="text-muted-foreground"> ({parseInfo.skipped} skipped — not called up)</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="max-h-64 overflow-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted">
+                      <tr>
+                        <th className="p-2 text-left font-medium w-8">#</th>
+                        <th className="p-2 text-left font-medium">Full Name</th>
+                        <th className="p-2 text-left font-medium">Rank</th>
+                        <th className="p-2 text-left font-medium">Battery</th>
+                        <th className="p-2 text-left font-medium">NRIC Last 5</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parsedRows.slice(0, 50).map((row, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="p-2 text-muted-foreground">{i + 1}</td>
+                          <td className="p-2">{row.fullName}</td>
+                          <td className="p-2">{row.rank}</td>
+                          <td className="p-2">{row.battery}</td>
+                          <td className="p-2 font-mono">{row.nricLast5}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {parsedRows.length > 50 && (
+                    <div className="p-2 text-center text-xs text-muted-foreground border-t">
+                      Showing first 50 of {parsedRows.length} rows
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <Button
                 onClick={handleUpload}
-                disabled={!file || uploadMutation.isPending}
+                disabled={!parsedRows || parsedRows.length === 0 || uploadMutation.isPending}
               >
                 <Upload className="mr-2 h-4 w-4" />
-                {uploadMutation.isPending ? 'Uploading...' : 'Upload Users'}
+                {uploadMutation.isPending
+                  ? 'Creating Users...'
+                  : parsedRows && parsedRows.length > 0
+                    ? `Upload ${parsedRows.length} Users`
+                    : 'Upload Users'}
               </Button>
             </div>
           </CardContent>
@@ -223,4 +311,3 @@ function BulkUploadPage() {
     </DashboardLayout>
   );
 }
-

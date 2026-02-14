@@ -181,6 +181,7 @@ func main() {
 					r.Use(middleware.RequireSuperadmin(db))
 					adminHandler := handlers.NewAdminHandler(db)
 					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
+				r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
 				})
 
 				// Status routes (superadmin only)

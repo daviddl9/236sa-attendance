@@ -165,10 +165,19 @@ export interface BatterySessionStats {
   attendancePercentage: number;
 }
 
+export interface BulkUploadRow {
+  fullName: string;
+  rank: string;
+  battery: string;
+  nricLast5: string;
+}
+
 export interface BulkUploadResponse {
   success: number;
   failed: number;
+  skipped?: number;
   errors?: string[];
+  message?: string;
   users?: User[];
 }
 
@@ -389,23 +398,11 @@ export class APIClient {
   }
 
   // Admin endpoints (superadmin only)
-  async bulkUploadUsers(file: File): Promise<BulkUploadResponse> {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const url = `${this.baseURL}/api/admin/users/bulk-upload`;
-    const response = await fetch(url, {
+  async bulkCreateUsers(users: BulkUploadRow[]): Promise<BulkUploadResponse> {
+    return this.request<BulkUploadResponse>('/api/admin/users/bulk-create', {
       method: 'POST',
-      credentials: 'include',
-      body: formData,
+      body: JSON.stringify({ users }),
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(error || response.statusText);
-    }
-
-    return response.json();
   }
 
   // Session endpoints (commander+)

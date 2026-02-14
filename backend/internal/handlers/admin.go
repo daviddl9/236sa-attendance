@@ -416,3 +416,173 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Failed to encode bulk upload response: %v", err)
 	}
 }
+
+// BulkCreateUsers handles JSON-based bulk user creation (frontend parses Excel client-side).
+func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Users []BulkUploadRow `json:"users"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Users) == 0 {
+		http.Error(w, "No users provided", http.StatusBadRequest)
+		return
+	}
+
+	// Phase 1: Validate all rows
+	type validatedRow struct {
+		idx  int
+		data BulkUploadRow
+	}
+
+	var validRows []validatedRow
+	var failedCount int
+	var errors []string
+
+	for i, u := range req.Users {
+		rowNum := i + 1
+
+		u.FullName = strings.TrimSpace(u.FullName)
+		u.Rank = strings.TrimSpace(u.Rank)
+		u.Battery = strings.TrimSpace(u.Battery)
+		u.NRICLast5 = strings.TrimSpace(u.NRICLast5)
+
+		if u.FullName == "" || u.Rank == "" || u.Battery == "" || u.NRICLast5 == "" {
+			errors = append(errors, fmt.Sprintf("Row %d: Missing required fields", rowNum))
+			failedCount++
+			continue
+		}
+
+		validRank := false
+		for _, r := range models.ValidRanks {
+			if r == u.Rank {
+				validRank = true
+				break
+			}
+		}
+		if !validRank {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid rank '%s'", rowNum, u.Rank))
+			failedCount++
+			continue
+		}
+
+		if u.Battery != models.BatteryHQ && u.Battery != models.BatteryAlpha && u.Battery != models.BatteryBravo {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid battery '%s' (must be HQ, Alpha, or Bravo)", rowNum, u.Battery))
+			failedCount++
+			continue
+		}
+
+		if len(u.NRICLast5) != 5 {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid NRIC Last 5 '%s' (must be exactly 5 characters)", rowNum, u.NRICLast5))
+			failedCount++
+			continue
+		}
+
+		validRows = append(validRows, validatedRow{idx: i, data: u})
+	}
+
+	// Phase 2: Hash passwords in parallel
+	hashedPasswords := make([]string, len(validRows))
+	hashErrors := make([]error, len(validRows))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, runtime.NumCPU())
+
+	for i, vr := range validRows {
+		wg.Add(1)
+		go func(idx int, password string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err != nil {
+				hashErrors[idx] = err
+				return
+			}
+			hashedPasswords[idx] = string(hash)
+		}(i, vr.data.NRICLast5)
+	}
+	wg.Wait()
+
+	// Phase 3: Insert into database
+	ctx := context.Background()
+	var successCount int
+	var createdUsers []models.User
+
+	for i, vr := range validRows {
+		if hashErrors[i] != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to hash password", vr.idx+1))
+			failedCount++
+			continue
+		}
+
+		userID := generateID()
+		now := time.Now()
+
+		tx, err := h.db.Pool.Begin(ctx)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to start transaction", vr.idx+1))
+			failedCount++
+			continue
+		}
+
+		_, err = tx.Exec(ctx, `
+			INSERT INTO "user" (
+				id, "full_name", rank, battery, "nric_last5", password,
+				"createdAt", "updatedAt"
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`, userID, vr.data.FullName, vr.data.Rank,
+			vr.data.Battery, vr.data.NRICLast5, hashedPasswords[i], now, now)
+
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
+				errors = append(errors, fmt.Sprintf("Row %d: User '%s' already exists", vr.idx+1, vr.data.FullName))
+			} else {
+				errors = append(errors, fmt.Sprintf("Row %d: Failed to create user: %v", vr.idx+1, err))
+			}
+			failedCount++
+			continue
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: Failed to commit transaction", vr.idx+1))
+			failedCount++
+			continue
+		}
+
+		fn := vr.data.FullName
+		rk := vr.data.Rank
+		bt := vr.data.Battery
+		nr := vr.data.NRICLast5
+
+		createdUsers = append(createdUsers, models.User{
+			ID:        userID,
+			FullName:  &fn,
+			Rank:      &rk,
+			Battery:   &bt,
+			NRICLast5: &nr,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+
+		successCount++
+	}
+
+	response := BulkUploadResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Errors:  errors,
+		Users:   createdUsers,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Failed to encode bulk create response: %v", err)
+	}
+}
