@@ -68,7 +68,7 @@ As an administrator, I want personnel creation and upload flows to enforce the s
 
 ### Functional Requirements
 
-- **FR-001**: The system MUST define a valid regular personnel password as exactly five characters: four numeric digits followed by one alphabetic letter.
+- **FR-001**: The system MUST define a valid regular personnel password as exactly five characters: four numbers followed by one alphabetic letter.
 - **FR-002**: The system MUST apply this format check wherever a regular personnel password or NRIC Last 5 value is entered, created, imported, or updated.
 - **FR-003**: The system MUST reject regular personnel sign-in attempts when the password does not match the required format.
 - **FR-004**: The system MUST show a clear user-facing message for invalid personnel password format that states the expected shape and includes an example such as `1234A`.

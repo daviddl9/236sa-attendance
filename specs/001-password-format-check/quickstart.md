@@ -43,7 +43,7 @@ npm run build
 
 Manual UI checks:
 - `/sign-in` and `/` show a clear error before submission for invalid regular-personnel password format.
-- Registration asks for NRIC Last 5 and enforces four digits followed by one letter.
+- Registration asks for NRIC Last 5 and enforces exactly five characters: four numbers followed by one alphabet letter.
 - Bulk-upload copy and examples continue to use values like `1234A`.
 
 ## 5. Regression Checks

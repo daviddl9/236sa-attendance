@@ -221,7 +221,7 @@ function UserDetailPage() {
                     disabled={!canEdit}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Four digits followed by a letter. Updating this also updates the user's password.
+                    Exactly 5 characters: 4 numbers and the final alphabet letter. Updating this also updates the user's password.
                   </p>
                 </div>
               </>

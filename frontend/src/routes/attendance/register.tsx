@@ -221,7 +221,7 @@ function RegisterPage() {
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Last 5 characters of your NRIC, e.g. 1234A
+                Exactly 5 characters: 4 numbers and the final alphabet letter, e.g. 1234A
               </p>
             </div>
 

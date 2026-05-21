@@ -2,7 +2,7 @@ package handlers
 
 import "strings"
 
-const nricLast5FormatMessage = "NRIC Last 5 must be 4 digits followed by a letter (e.g., 1234A)"
+const nricLast5FormatMessage = "NRIC Last 5 must be exactly 5 characters: 4 numbers followed by an alphabet letter (e.g., 1234A)"
 
 func normalizeNRICLast5(value string) (string, bool) {
 	if !isValidNRICLast5(value) {

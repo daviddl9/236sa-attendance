@@ -101,7 +101,7 @@ function SignInContent() {
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
                     <p className="text-xs">
-                      Last 5 characters of NRIC.
+                      Last 5 characters of NRIC: 4 numbers and the final alphabet letter.
                       <br />
                       Example: <strong>4567A</strong>
                     </p>

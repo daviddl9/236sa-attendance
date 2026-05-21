@@ -462,7 +462,7 @@ function BulkUploadPage() {
                   <div className="text-xs text-muted-foreground space-y-1">
                     <p><strong>Valid Ranks:</strong> REC, PTE, LCP, CPL, CFC, 3SG, 2SG, 1SG, SSG, MSG, 3WO, 2WO, 1WO, MWO, SWO, CWO, 2LT, LTA, CPT, MAJ, LTC, SLTC, COL, BG, MG, LG</p>
                     <p><strong>Valid Batteries:</strong> HQ, Alpha, Bravo</p>
-                    <p><strong>NRIC Last 5:</strong> Four digits followed by a letter (e.g., 4567A). This will be the user's password.</p>
+                    <p><strong>NRIC Last 5:</strong> Exactly 5 characters: 4 numbers and the final alphabet letter (e.g., 4567A). This will be the user's password.</p>
                   </div>
                 </DialogContent>
               </Dialog>
