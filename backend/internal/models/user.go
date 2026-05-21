@@ -53,15 +53,16 @@ var RankOrder = map[string]int{
 }
 
 type User struct {
-	ID           string    `json:"id"`
-	FullName     *string   `json:"fullName,omitempty"`
-	Rank         *string   `json:"rank,omitempty"`
-	Battery      *string   `json:"battery,omitempty"`
-	NRICLast5    *string   `json:"nricLast5,omitempty"`
-	DOB          *string   `json:"dob,omitempty"` // DDMMYY format
-	IsSuperadmin bool      `json:"isSuperadmin"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ID           string            `json:"id"`
+	FullName     *string           `json:"fullName,omitempty"`
+	Rank         *string           `json:"rank,omitempty"`
+	Battery      *string           `json:"battery,omitempty"`
+	NRICLast5    *string           `json:"nricLast5,omitempty"`
+	DOB          *string           `json:"dob,omitempty"` // DDMMYY format
+	Extras       map[string]string `json:"extras"`
+	IsSuperadmin bool              `json:"isSuperadmin"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	UpdatedAt    time.Time         `json:"updatedAt"`
 }
 
 // GetRole returns the user's role based on rank and superadmin status

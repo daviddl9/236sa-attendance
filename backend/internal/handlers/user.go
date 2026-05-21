@@ -25,15 +25,16 @@ func NewUserHandler(db *database.DB) *UserHandler {
 }
 
 type UserProfile struct {
-	ID           string  `json:"id"`
-	FullName     *string `json:"fullName,omitempty"`
-	Rank         *string `json:"rank,omitempty"`
-	Battery      *string `json:"battery,omitempty"`
-	NRICLast5    *string `json:"nricLast5,omitempty"`
-	DOB          *string `json:"dob,omitempty"`
-	IsSuperadmin bool    `json:"isSuperadmin"`
-	CreatedAt    string  `json:"createdAt"`
-	UpdatedAt    string  `json:"updatedAt"`
+	ID           string            `json:"id"`
+	FullName     *string           `json:"fullName,omitempty"`
+	Rank         *string           `json:"rank,omitempty"`
+	Battery      *string           `json:"battery,omitempty"`
+	NRICLast5    *string           `json:"nricLast5,omitempty"`
+	DOB          *string           `json:"dob,omitempty"`
+	Extras       map[string]string `json:"extras"`
+	IsSuperadmin bool              `json:"isSuperadmin"`
+	CreatedAt    string            `json:"createdAt"`
+	UpdatedAt    string            `json:"updatedAt"`
 }
 
 type UpdateProfileRequest struct {
@@ -61,8 +62,8 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 
 	err := h.db.Pool.QueryRow(
 		context.Background(),
-		`SELECT 
-			id, "full_name", rank, battery, "nric_last5", dob, "is_superadmin",
+		`SELECT
+			id, "full_name", rank, battery, "nric_last5", dob, extras, "is_superadmin",
 			"createdAt", "updatedAt"
 		 FROM "user" WHERE id = $1`,
 		userID,
@@ -73,6 +74,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		&battery,
 		&nricLast5,
 		&dob,
+		&profile.Extras,
 		&profile.IsSuperadmin,
 		&createdAt,
 		&updatedAt,
@@ -88,6 +90,9 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	profile.Battery = battery
 	profile.NRICLast5 = nricLast5
 	profile.DOB = dob
+	if profile.Extras == nil {
+		profile.Extras = map[string]string{}
+	}
 	profile.CreatedAt = createdAt.Format(time.RFC3339)
 	profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
@@ -150,8 +155,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get users
-	query := fmt.Sprintf(`SELECT 
-		id, "full_name", rank, battery, "nric_last5", dob, "is_superadmin",
+	query := fmt.Sprintf(`SELECT
+		id, "full_name", rank, battery, "nric_last5", dob, extras, "is_superadmin",
 		"createdAt", "updatedAt"
 	FROM "user"
 	%s ORDER BY "createdAt" DESC LIMIT $%d OFFSET $%d`, whereClause, argIndex, argIndex+1)
@@ -177,6 +182,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			&battery,
 			&nricLast5,
 			&dob,
+			&profile.Extras,
 			&profile.IsSuperadmin,
 			&createdAt,
 			&updatedAt,
@@ -190,6 +196,9 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		profile.Battery = battery
 		profile.NRICLast5 = nricLast5
 		profile.DOB = dob
+		if profile.Extras == nil {
+			profile.Extras = map[string]string{}
+		}
 		profile.CreatedAt = createdAt.Format(time.RFC3339)
 		profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
@@ -226,8 +235,8 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT 
-			id, "full_name", rank, battery, "nric_last5", dob, "is_superadmin",
+		SELECT
+			id, "full_name", rank, battery, "nric_last5", dob, extras, "is_superadmin",
 			"createdAt", "updatedAt"
 		FROM "user"
 		WHERE id = $1
@@ -238,6 +247,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		&battery,
 		&nricLast5,
 		&dob,
+		&profile.Extras,
 		&profile.IsSuperadmin,
 		&createdAt,
 		&updatedAt,
@@ -253,6 +263,9 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	profile.Battery = battery
 	profile.NRICLast5 = nricLast5
 	profile.DOB = dob
+	if profile.Extras == nil {
+		profile.Extras = map[string]string{}
+	}
 	profile.CreatedAt = createdAt.Format(time.RFC3339)
 	profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
@@ -327,8 +340,21 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		argIndex++
 	}
 	if req.NRICLast5 != nil && currentUser.IsSuperadmin {
+		normalizedNRICLast5, ok := normalizeNRICLast5(*req.NRICLast5)
+		if !ok {
+			http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
+			return
+		}
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(normalizedNRICLast5), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
 		updates = append(updates, fmt.Sprintf("\"nric_last5\" = $%d", argIndex))
-		args = append(args, *req.NRICLast5)
+		args = append(args, normalizedNRICLast5)
+		argIndex++
+		updates = append(updates, fmt.Sprintf("password = $%d", argIndex))
+		args = append(args, string(hashedPassword))
 		argIndex++
 	}
 	if req.DOB != nil && currentUser.IsSuperadmin {
@@ -611,11 +637,13 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate NRIC Last 4 (4 characters)
-	if len(req.NRICLast5) != 4 {
-		http.Error(w, "Invalid NRIC Last 4 (must be 4 characters)", http.StatusBadRequest)
+	// Validate NRIC Last 5 format.
+	normalizedNRICLast5, ok := normalizeNRICLast5(req.NRICLast5)
+	if !ok {
+		http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
 		return
 	}
+	req.NRICLast5 = normalizedNRICLast5
 
 	// Check if user already exists using composite key: (full_name, nricLast5, dob)
 	var existingID string
@@ -631,8 +659,8 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate password: NRIC Last 4 + DOB
-	password := req.NRICLast5 + req.DOB
+	// Password is the normalized NRIC Last 5 for regular personnel.
+	password := req.NRICLast5
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)

@@ -18,6 +18,7 @@ import {
 } from '../components/ui/tooltip';
 import { toast } from 'sonner';
 import { apiClient } from '../lib/api-client';
+import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FORMAT_MESSAGE } from '../lib/nric-password';
 import { Info, Eye, EyeOff } from 'lucide-react';
 
 export const Route = createFileRoute('/')({
@@ -37,10 +38,18 @@ function SignInContent() {
       toast.error('Please enter your identifier and password');
       return;
     }
+    const isAdmin = identifier.toLowerCase() === 'admin';
+    if (!isAdmin && !isValidNricLast5(password)) {
+      toast.error(NRIC_LAST5_FORMAT_MESSAGE);
+      return;
+    }
 
     try {
       setLoading(true);
-      const data = await apiClient.signIn({ identifier, password });
+      await apiClient.signIn({
+        identifier,
+        password: isAdmin ? password : normalizeNricLast5(password),
+      });
       await refetch(); // Refresh auth context to get updated user data
       toast.success('Signed in successfully');
       window.location.href = '/dashboard/attendance/scan';
@@ -154,4 +163,3 @@ function IndexComponent() {
 
   return <SignInContent />;
 }
-

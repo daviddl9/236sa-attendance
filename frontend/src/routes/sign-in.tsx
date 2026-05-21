@@ -18,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
 import { apiClient } from '../lib/api-client';
+import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FORMAT_MESSAGE } from '../lib/nric-password';
 import { Info, Eye, EyeOff } from 'lucide-react';
 
 export const Route = createFileRoute('/sign-in')({
@@ -45,14 +46,18 @@ function SignInContent() {
       return;
     }
 
-    if (identifier.toLowerCase() !== 'admin' && password.length !== 10) {
-      toast.error('Password must be 10 characters (NRIC last 4 + DOB in DDMMYY format)');
+    const isAdmin = identifier.toLowerCase() === 'admin';
+    if (!isAdmin && !isValidNricLast5(password)) {
+      toast.error(NRIC_LAST5_FORMAT_MESSAGE);
       return;
     }
 
     try {
       setLoading(true);
-      const data = await apiClient.signIn({ identifier, password });
+      const data = await apiClient.signIn({
+        identifier,
+        password: isAdmin ? password : normalizeNricLast5(password),
+      });
 
       // Check if profile is complete (has rank and battery)
       const profileComplete = data.user.rank && data.user.battery;
@@ -236,4 +241,3 @@ function SignInComponent() {
 
   return <SignInContent />;
 }
-

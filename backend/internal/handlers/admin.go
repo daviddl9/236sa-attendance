@@ -37,10 +37,11 @@ type BulkUploadResponse struct {
 }
 
 type BulkUploadRow struct {
-	FullName  string `json:"fullName"`
-	Rank      string `json:"rank"`
-	Battery   string `json:"battery"`
-	NRICLast5 string `json:"nricLast5"`
+	FullName  string            `json:"fullName"`
+	Rank      string            `json:"rank"`
+	Battery   string            `json:"battery"`
+	NRICLast5 string            `json:"nricLast5"`
+	Extras    map[string]string `json:"extras,omitempty"`
 }
 
 // columnMapping holds detected column indices for each required field.
@@ -297,12 +298,13 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Validate NRIC Last 5 format (5 characters)
-		if len(uploadRow.NRICLast5) != 5 {
-			errors = append(errors, fmt.Sprintf("Row %d: Invalid NRIC Last 5 '%s' (must be exactly 5 characters)", rowNum, uploadRow.NRICLast5))
+		normalizedNRICLast5, ok := normalizeNRICLast5(uploadRow.NRICLast5)
+		if !ok {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid NRIC Last 5 '%s' (%s)", rowNum, uploadRow.NRICLast5, nricLast5FormatMessage))
 			failedCount++
 			continue
 		}
+		uploadRow.NRICLast5 = normalizedNRICLast5
 
 		validRows = append(validRows, validatedRow{rowNum: rowNum, data: uploadRow})
 	}
@@ -353,14 +355,19 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		extras := vr.data.Extras
+		if extras == nil {
+			extras = map[string]string{}
+		}
+
 		_, err = tx.Exec(ctx, `
 			INSERT INTO "user" (
-				id, "full_name", rank, battery, "nric_last5", password,
+				id, "full_name", rank, battery, "nric_last5", password, extras,
 				"createdAt", "updatedAt"
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		`, userID, vr.data.FullName, vr.data.Rank,
-			vr.data.Battery, vr.data.NRICLast5, hashedPasswords[i], now, now)
+			vr.data.Battery, vr.data.NRICLast5, hashedPasswords[i], extras, now, now)
 
 		if err != nil {
 			_ = tx.Rollback(ctx)
@@ -390,6 +397,7 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			Rank:      &rk,
 			Battery:   &bt,
 			NRICLast5: &nr,
+			Extras:    extras,
 			CreatedAt: now,
 			UpdatedAt: now,
 		})
@@ -448,6 +456,7 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 		u.FullName = strings.TrimSpace(u.FullName)
 		u.Rank = strings.TrimSpace(u.Rank)
 		u.Battery = strings.TrimSpace(u.Battery)
+		rawNRICLast5 := u.NRICLast5
 		u.NRICLast5 = strings.TrimSpace(u.NRICLast5)
 
 		if u.FullName == "" || u.Rank == "" || u.Battery == "" || u.NRICLast5 == "" {
@@ -475,11 +484,13 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if len(u.NRICLast5) != 5 {
-			errors = append(errors, fmt.Sprintf("Row %d: Invalid NRIC Last 5 '%s' (must be exactly 5 characters)", rowNum, u.NRICLast5))
+		normalizedNRICLast5, ok := normalizeNRICLast5(rawNRICLast5)
+		if !ok {
+			errors = append(errors, fmt.Sprintf("Row %d: Invalid NRIC Last 5 '%s' (%s)", rowNum, rawNRICLast5, nricLast5FormatMessage))
 			failedCount++
 			continue
 		}
+		u.NRICLast5 = normalizedNRICLast5
 
 		validRows = append(validRows, validatedRow{idx: i, data: u})
 	}
@@ -530,14 +541,19 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		extras := vr.data.Extras
+		if extras == nil {
+			extras = map[string]string{}
+		}
+
 		_, err = tx.Exec(ctx, `
 			INSERT INTO "user" (
-				id, "full_name", rank, battery, "nric_last5", password,
+				id, "full_name", rank, battery, "nric_last5", password, extras,
 				"createdAt", "updatedAt"
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		`, userID, vr.data.FullName, vr.data.Rank,
-			vr.data.Battery, vr.data.NRICLast5, hashedPasswords[i], now, now)
+			vr.data.Battery, vr.data.NRICLast5, hashedPasswords[i], extras, now, now)
 
 		if err != nil {
 			_ = tx.Rollback(ctx)
@@ -567,6 +583,7 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 			Rank:      &rk,
 			Battery:   &bt,
 			NRICLast5: &nr,
+			Extras:    extras,
 			CreatedAt: now,
 			UpdatedAt: now,
 		})

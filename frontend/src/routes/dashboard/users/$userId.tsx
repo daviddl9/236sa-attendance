@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
@@ -24,6 +24,7 @@ import { ArrowLeft, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
 import { Link } from '@tanstack/react-router';
+import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FIELD_MESSAGE } from '../../../lib/nric-password';
 
 export const Route = createFileRoute('/dashboard/users/$userId')({
   component: UserDetailPage,
@@ -32,7 +33,6 @@ export const Route = createFileRoute('/dashboard/users/$userId')({
 function UserDetailPage() {
   const { userId } = Route.useParams();
   const { user: currentUser } = useAuth();
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   const { data: user, isLoading } = useQuery({
@@ -43,20 +43,24 @@ function UserDetailPage() {
   const [fullName, setFullName] = useState('');
   const [rank, setRank] = useState('');
   const [battery, setBattery] = useState('');
+  const [nricLast5, setNricLast5] = useState('');
 
   const isSuperadmin = currentUser?.isSuperadmin || false;
   const canEdit = isSuperadmin || currentUser?.id === userId;
 
   useEffect(() => {
     if (user) {
+      /* eslint-disable react-hooks/set-state-in-effect */
       setFullName(user.fullName || '');
       setRank(user.rank || '');
       setBattery(user.battery || '');
+      setNricLast5(user.nricLast5 || '');
+      /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [user]);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { fullName?: string; rank?: string; battery?: string }) =>
+    mutationFn: (data: { fullName?: string; rank?: string; battery?: string; nricLast5?: string }) =>
       apiClient.updateUser(userId, data),
     onSuccess: () => {
       toast.success('User updated successfully');
@@ -74,10 +78,17 @@ function UserDetailPage() {
       return;
     }
 
-    const updates: { fullName?: string; rank?: string; battery?: string } = {};
+    const updates: { fullName?: string; rank?: string; battery?: string; nricLast5?: string } = {};
     if (fullName !== user?.fullName) updates.fullName = fullName;
     if (rank !== user?.rank) updates.rank = rank;
     if (battery !== user?.battery) updates.battery = battery;
+    if (isSuperadmin && nricLast5 !== (user?.nricLast5 || '')) {
+      if (!isValidNricLast5(nricLast5)) {
+        toast.error(NRIC_LAST5_FIELD_MESSAGE);
+        return;
+      }
+      updates.nricLast5 = normalizeNricLast5(nricLast5);
+    }
 
     if (Object.keys(updates).length === 0) {
       toast.info('No changes to save');
@@ -196,6 +207,23 @@ function UserDetailPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="nricLast5">NRIC Last 5</Label>
+                  <Input
+                    id="nricLast5"
+                    value={nricLast5}
+                    onChange={(e) =>
+                      setNricLast5(normalizeNricLast5(e.target.value).slice(0, 5))
+                    }
+                    placeholder="e.g., 1234A"
+                    maxLength={5}
+                    disabled={!canEdit}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Four digits followed by a letter. Updating this also updates the user's password.
+                  </p>
+                </div>
               </>
             )}
 
@@ -213,4 +241,3 @@ function UserDetailPage() {
     </DashboardLayout>
   );
 }
-

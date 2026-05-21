@@ -7,8 +7,9 @@ export interface User {
   fullName?: string | null;
   rank?: string | null;
   battery?: string | null;
-  nricLast4?: string | null;
+  nricLast5?: string | null;
   dob?: string | null;
+  extras?: Record<string, string> | null;
   isSuperadmin: boolean;
   createdAt: string;
   updatedAt: string;
@@ -28,7 +29,7 @@ export interface RegisterUserRequest {
   fullName: string;
   rank: string;
   battery: string;
-  nricLast4: string;
+  nricLast5: string;
   dob: string;
 }
 
@@ -57,7 +58,7 @@ export interface UpdateUserRequest {
   fullName?: string;
   rank?: string;
   battery?: string;
-  nricLast4?: string;
+  nricLast5?: string;
   dob?: string;
 }
 
@@ -170,6 +171,7 @@ export interface BulkUploadRow {
   rank: string;
   battery: string;
   nricLast5: string;
+  extras?: Record<string, string>;
 }
 
 export interface BulkUploadResponse {

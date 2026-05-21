@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   Table,
   TableBody,
@@ -31,6 +32,19 @@ export function UserTable({
 }: UserTableProps) {
   const showMarkButton = !!onMark;
 
+  const extraKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const user of users) {
+      const extras = 'extras' in user ? (user as UserProfile).extras : null;
+      if (extras) {
+        for (const key of Object.keys(extras)) {
+          keys.add(key);
+        }
+      }
+    }
+    return Array.from(keys).sort();
+  }, [users]);
+
   if (!users || users.length === 0) {
     return (
       <div className="rounded-md border">
@@ -46,7 +60,7 @@ export function UserTable({
           </TableHeader>
           <TableBody>
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground">
+              <TableCell colSpan={3 + extraKeys.length + (showActions ? 1 : 0) + (showMarkButton ? 1 : 0)} className="text-center text-muted-foreground">
                 {emptyMessage}
               </TableCell>
             </TableRow>
@@ -64,12 +78,17 @@ export function UserTable({
             <TableHead>Name</TableHead>
             <TableHead className="hidden sm:table-cell">Rank</TableHead>
             <TableHead className="hidden sm:table-cell">Battery</TableHead>
+            {extraKeys.map((key) => (
+              <TableHead key={key} className="hidden sm:table-cell">{key}</TableHead>
+            ))}
             {showActions && <TableHead>Actions</TableHead>}
             {showMarkButton && <TableHead className="w-[70px]"></TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {users.map((user) => (
+          {users.map((user) => {
+            const extras = 'extras' in user ? (user as UserProfile).extras : null;
+            return (
             <TableRow key={user.id} className="h-12">
               <TableCell className="py-2">
                 <div className="flex items-center gap-2">
@@ -84,6 +103,11 @@ export function UserTable({
               </TableCell>
               <TableCell className="hidden sm:table-cell">{user.rank || 'N/A'}</TableCell>
               <TableCell className="hidden sm:table-cell">{user.battery || 'N/A'}</TableCell>
+              {extraKeys.map((key) => (
+                <TableCell key={key} className="hidden sm:table-cell">
+                  {extras?.[key] || ''}
+                </TableCell>
+              ))}
               {showActions && (
                 <TableCell className="py-2">
                   <div className="flex items-center gap-1">
@@ -123,7 +147,8 @@ export function UserTable({
                 </TableCell>
               )}
             </TableRow>
-          ))}
+            );
+          })}
         </TableBody>
       </Table>
     </div>

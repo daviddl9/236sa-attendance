@@ -20,6 +20,7 @@ import {
 import { toast } from 'sonner';
 import { apiClient, type RegisterUserRequest } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
+import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FIELD_MESSAGE } from '../../lib/nric-password';
 
 export const Route = createFileRoute('/attendance/register')({
   component: RegisterPage,
@@ -54,7 +55,7 @@ function RegisterPage() {
     fullName: '',
     rank: '',
     battery: '',
-    nricLast4: '',
+    nricLast5: '',
     dob: '',
   });
 
@@ -74,8 +75,8 @@ function RegisterPage() {
       toast.error('Battery is required');
       return;
     }
-    if (formData.nricLast4.length !== 4) {
-      toast.error('NRIC Last 4 must be exactly 4 characters');
+    if (!isValidNricLast5(formData.nricLast5)) {
+      toast.error(NRIC_LAST5_FIELD_MESSAGE);
       return;
     }
     if (formData.dob.length !== 6) {
@@ -85,7 +86,10 @@ function RegisterPage() {
 
     try {
       setLoading(true);
-      const response = await apiClient.registerUser(formData);
+      await apiClient.registerUser({
+        ...formData,
+        nricLast5: normalizeNricLast5(formData.nricLast5),
+      });
       await refetch(); // Refresh auth context to get updated user data
       toast.success('Account created successfully!');
 
@@ -202,22 +206,22 @@ function RegisterPage() {
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="nricLast4">NRIC Last 4 Characters *</Label>
+              <Label htmlFor="nricLast5">NRIC Last 5 Characters *</Label>
               <Input
-                id="nricLast4"
+                id="nricLast5"
                 type="text"
-                placeholder="e.g., 123A"
-                value={formData.nricLast4}
+                placeholder="e.g., 1234A"
+                value={formData.nricLast5}
                 onChange={(e) => {
-                  const value = e.target.value.toUpperCase().slice(0, 4);
-                  setFormData({ ...formData, nricLast4: value });
+                  const value = normalizeNricLast5(e.target.value).slice(0, 5);
+                  setFormData({ ...formData, nricLast5: value });
                 }}
                 disabled={loading}
-                maxLength={4}
+                maxLength={5}
                 required
               />
               <p className="text-xs text-muted-foreground">
-                Last 4 characters of your NRIC
+                Last 5 characters of your NRIC, e.g. 1234A
               </p>
             </div>
 
@@ -259,4 +263,3 @@ function RegisterPage() {
     </div>
   );
 }
-

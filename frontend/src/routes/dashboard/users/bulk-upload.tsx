@@ -39,6 +39,7 @@ import {
 } from '../../../components/ui/select';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
+import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FIELD_MESSAGE } from '../../../lib/nric-password';
 
 const sampleData = [
   { fullName: 'John Doe', rank: 'PTE', battery: 'HQ', nricLast5: '1234A' },
@@ -385,9 +386,18 @@ function BulkUploadPage() {
       toast.error('No valid rows to upload');
       return;
     }
-    // Only send the 4 required fields to the backend
-    const payload = parsedRows.map(({ fullName, rank, battery, nricLast5 }) => ({
-      fullName, rank, battery, nricLast5,
+    const invalidRows = parsedRows
+      .map((row, index) => ({ row, rowNumber: index + 1 }))
+      .filter(({ row }) => !isValidNricLast5(row.nricLast5));
+
+    if (invalidRows.length > 0) {
+      const rows = invalidRows.map(({ rowNumber }) => rowNumber).join(', ');
+      toast.error(`${NRIC_LAST5_FIELD_MESSAGE}. Check row${invalidRows.length === 1 ? '' : 's'} ${rows}.`);
+      return;
+    }
+
+    const payload = parsedRows.map(({ fullName, rank, battery, nricLast5, extras }) => ({
+      fullName, rank, battery, nricLast5: normalizeNricLast5(nricLast5), extras,
     }));
     uploadMutation.mutate(payload);
   };
@@ -452,7 +462,7 @@ function BulkUploadPage() {
                   <div className="text-xs text-muted-foreground space-y-1">
                     <p><strong>Valid Ranks:</strong> REC, PTE, LCP, CPL, CFC, 3SG, 2SG, 1SG, SSG, MSG, 3WO, 2WO, 1WO, MWO, SWO, CWO, 2LT, LTA, CPT, MAJ, LTC, SLTC, COL, BG, MG, LG</p>
                     <p><strong>Valid Batteries:</strong> HQ, Alpha, Bravo</p>
-                    <p><strong>NRIC Last 5:</strong> Last 5 characters of NRIC (e.g., 4567A). This will be the user's password.</p>
+                    <p><strong>NRIC Last 5:</strong> Four digits followed by a letter (e.g., 4567A). This will be the user's password.</p>
                   </div>
                 </DialogContent>
               </Dialog>

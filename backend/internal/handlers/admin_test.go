@@ -136,3 +136,30 @@ func TestCellValue(t *testing.T) {
 		})
 	}
 }
+
+func TestBulkNRICLast5ValidationRule(t *testing.T) {
+	tests := []struct {
+		value string
+		want  string
+		ok    bool
+	}{
+		{value: "1234A", want: "1234A", ok: true},
+		{value: "1234a", want: "1234A", ok: true},
+		{value: "12345", ok: false},
+		{value: "123A4", ok: false},
+		{value: "1234@", ok: false},
+		{value: "1234AB", ok: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			got, ok := normalizeNRICLast5(tt.value)
+			if ok != tt.ok {
+				t.Fatalf("normalizeNRICLast5(%q) ok = %v, want %v", tt.value, ok, tt.ok)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeNRICLast5(%q) = %q, want %q", tt.value, got, tt.want)
+			}
+		})
+	}
+}

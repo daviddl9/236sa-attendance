@@ -49,11 +49,10 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Extract NRIC Last 5 from password (password IS the NRIC Last 5 for regular users)
-	// Password format: NRIC_LAST_5 (5 chars) for regular users, or longer for admin
-	var nricLast5Val *string
-	if len(req.Password) == 5 {
-		nricLast5Val = &req.Password
+	passwordForAuth, nricLast5Val, ok := prepareSignInCredential(req.Identifier, req.Password)
+	if !ok {
+		http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
+		return
 	}
 
 	// Find user by full_name AND nric_last5 (allows multiple users with same name)
@@ -96,7 +95,7 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 
 		// Hash the password
-		hashedPasswordBytes, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hashedPasswordBytes, err := bcrypt.GenerateFromPassword([]byte(passwordForAuth), bcrypt.DefaultCost)
 		if err != nil {
 			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 			return
@@ -130,7 +129,7 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		updatedAt = now
 	} else {
 		// User exists - verify password
-		if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(req.Password)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(passwordForAuth)); err != nil {
 			log.Printf("[SignIn] Password verification failed for user: %s", req.Identifier)
 			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
 			return

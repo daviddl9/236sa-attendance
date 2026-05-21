@@ -288,12 +288,12 @@ function SessionDetailPage() {
 
     if (includeAbsentList) {
       text += `*Absent List*\n`;
-      text += formatUserList(absentList, !battery);
+      text += formatUserList([...absentList], !battery);
     }
 
     if (includePresentList) {
       text += `*Present List*\n`;
-      text += formatUserList(presentList, !battery);
+      text += formatUserList([...presentList], !battery);
     }
 
     try {
@@ -576,4 +576,3 @@ function SessionDetailPage() {
     </DashboardLayout>
   );
 }
-

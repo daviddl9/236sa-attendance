@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 // SSE Event types matching backend
@@ -32,7 +32,7 @@ export function useSessionSSE(
     null
   );
   const reconnectAttempts = useRef(0);
-  const isConnectedRef = useRef(false);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     if (!enabled || !sessionId) return;
@@ -60,7 +60,7 @@ export function useSessionSSE(
 
       eventSource.onopen = () => {
         reconnectAttempts.current = 0;
-        isConnectedRef.current = true;
+        setIsConnected(true);
       };
 
       eventSource.onmessage = (event) => {
@@ -98,7 +98,7 @@ export function useSessionSSE(
       };
 
       eventSource.onerror = () => {
-        isConnectedRef.current = false;
+        setIsConnected(false);
         eventSource.close();
 
         // Exponential backoff reconnect (max 30 seconds)
@@ -124,11 +124,11 @@ export function useSessionSSE(
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
-      isConnectedRef.current = false;
+      setIsConnected(false);
     };
   }, [sessionId, enabled, queryClient]);
 
   return {
-    isConnected: isConnectedRef.current,
+    isConnected,
   };
 }
