@@ -52,6 +52,16 @@ var RankOrder = map[string]int{
 	Rank2LT: 15, RankLTA: 16, RankCPT: 17, RankMAJ: 18, RankLTC: 19,
 }
 
+// AccessTier represents the user's access level.
+type AccessTier int
+
+const (
+	TierEnlisted      AccessTier = 1 // REC–CFC
+	TierBatteryNCO    AccessTier = 2 // 3SG–1SG (or tier_override=2)
+	TierUnitCommander AccessTier = 3 // SSG+ (or tier_override=3)
+	TierSuperadmin    AccessTier = 4 // is_superadmin=true or CPT+
+)
+
 type User struct {
 	ID           string            `json:"id"`
 	FullName     *string           `json:"fullName,omitempty"`
@@ -60,34 +70,74 @@ type User struct {
 	NRICLast5    *string           `json:"nricLast5,omitempty"`
 	DOB          *string           `json:"dob,omitempty"` // DDMMYY format
 	Extras       map[string]string `json:"extras"`
+	TierOverride *int16            `json:"tierOverride,omitempty"` // 2 or 3; nil = rank-derived
+	Verified     bool              `json:"verified"`
 	IsSuperadmin bool              `json:"isSuperadmin"`
 	CreatedAt    time.Time         `json:"createdAt"`
 	UpdatedAt    time.Time         `json:"updatedAt"`
 }
 
-// GetRole returns the user's role based on rank and superadmin status
-func (u *User) GetRole() string {
+// GetTier returns the effective access tier for the user.
+func (u *User) GetTier() AccessTier {
 	if u.IsSuperadmin {
-		return "superadmin"
+		return TierSuperadmin
 	}
-	if u.IsCommander() {
-		return "commander"
+	derived := u.rankDerivedTier()
+	if u.TierOverride != nil && AccessTier(*u.TierOverride) > derived {
+		return AccessTier(*u.TierOverride)
 	}
-	return "user"
+	return derived
 }
 
-// IsCommander returns true if user rank is 3SG or above
-func (u *User) IsCommander() bool {
+func (u *User) rankDerivedTier() AccessTier {
 	if u.Rank == nil {
-		return false
+		return TierEnlisted
 	}
-	rank := strings.ToUpper(*u.Rank)
-	order, exists := RankOrder[rank]
+	order, exists := RankOrder[strings.ToUpper(*u.Rank)]
 	if !exists {
-		return false
+		return TierEnlisted
 	}
-	// 3SG has order 5, so order >= 5 means commander
-	return order >= 5
+	if order >= RankOrder[RankCPT] { // CPT+ → superadmin
+		return TierSuperadmin
+	}
+	if order >= RankOrder[RankSSG] { // SSG+ → unit commander
+		return TierUnitCommander
+	}
+	if order >= RankOrder[Rank3SG] { // 3SG–1SG → battery NCO
+		return TierBatteryNCO
+	}
+	return TierEnlisted
+}
+
+// IsSuperadminByRank returns true when the rank alone warrants superadmin (CPT+).
+// Used to auto-set is_superadmin on create/update.
+func IsSuperadminByRank(rank string) bool {
+	order, exists := RankOrder[strings.ToUpper(rank)]
+	return exists && order >= RankOrder[RankCPT]
+}
+
+// IsCommander returns true if user can access commander-level features (tier >= 2).
+func (u *User) IsCommander() bool {
+	return u.GetTier() >= TierBatteryNCO
+}
+
+// IsUnitCommander returns true if user can access unit-level features (tier >= 3).
+func (u *User) IsUnitCommander() bool {
+	return u.GetTier() >= TierUnitCommander
+}
+
+// GetRole returns a string role label for the user.
+func (u *User) GetRole() string {
+	switch u.GetTier() {
+	case TierSuperadmin:
+		return "superadmin"
+	case TierUnitCommander:
+		return "unit_commander"
+	case TierBatteryNCO:
+		return "battery_nco"
+	default:
+		return "user"
+	}
 }
 
 // GetDisplayName returns full_name if available

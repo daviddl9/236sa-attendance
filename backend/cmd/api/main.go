@@ -145,47 +145,49 @@ func main() {
 				r.Get("/user/profile", userHandler.GetProfile)
 				r.Put("/user/profile", userHandler.UpdateProfile)
 
-				// User management routes (commander+ or superadmin)
+				// User management routes
 				r.Route("/users", func(r chi.Router) {
-					r.Use(middleware.RequireCommander(db)) // Allows commanders (3SG+) and superadmins
-					r.Get("/", userHandler.ListUsers)
-					r.Get("/bulk/count", userHandler.BulkDeleteCount)
-					r.Delete("/bulk", userHandler.BulkDelete)
-					r.Get("/{id}", userHandler.GetUser)
-					r.Put("/{id}", userHandler.UpdateUser)
-					r.Delete("/{id}", userHandler.DeleteUser)
+					// View routes: Tier 2+ (battery-scoped automatically for Tier 2)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/", userHandler.ListUsers)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/bulk/count", userHandler.BulkDeleteCount)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/{id}", userHandler.GetUser)
+					// Write routes: superadmin only
+					r.With(middleware.RequireSuperadmin(db)).Put("/{id}", userHandler.UpdateUser)
+					r.With(middleware.RequireSuperadmin(db)).Delete("/{id}", userHandler.DeleteUser)
+					r.With(middleware.RequireSuperadmin(db)).Delete("/bulk", userHandler.BulkDelete)
 				})
 
 				// Attendance routes
 				r.Post("/attendance/mark", attendanceHandler.MarkAttendance)
 
-				// Session routes (commander+)
+				// Session routes
+				sessionHandler := handlers.NewSessionHandler(db, sseHub)
 				r.Route("/sessions", func(r chi.Router) {
-					sessionHandler := handlers.NewSessionHandler(db, sseHub)
-					r.Use(middleware.RequireCommander(db))
-					r.Post("/", sessionHandler.CreateSession)
-					r.Get("/", sessionHandler.ListSessions)
-					r.Get("/active", sessionHandler.GetActiveSessions)
-					r.Get("/{id}", sessionHandler.GetSession)
-					r.Put("/{id}/close", sessionHandler.CloseSession)
-					r.Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
-					r.Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
-					r.Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
+					// View routes: Tier 2+
+					r.With(middleware.RequireBatteryNCO(db)).Get("/", sessionHandler.ListSessions)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/active", sessionHandler.GetActiveSessions)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/{id}", sessionHandler.GetSession)
 
-					// Attendance marking for sessions (commander+)
-					r.Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
-					r.Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
+					// Management routes: Tier 3+
+					r.With(middleware.RequireUnitCommander(db)).Post("/", sessionHandler.CreateSession)
+					r.With(middleware.RequireUnitCommander(db)).Put("/{id}/close", sessionHandler.CloseSession)
+					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
+					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
+					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
+					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
+					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
 
-					// Superadmin-only session routes
-					r.Group(func(r chi.Router) {
-						r.Use(middleware.RequireSuperadmin(db))
-						r.Delete("/{id}", sessionHandler.DeleteSession)
-					})
+					// Delete: superadmin only
+					r.With(middleware.RequireSuperadmin(db)).Delete("/{id}", sessionHandler.DeleteSession)
+
+					// Custom participant sessions: Tier 3+
+					r.With(middleware.RequireUnitCommander(db)).Post("/custom/preview", sessionHandler.PreviewCustomSession)
+					r.With(middleware.RequireUnitCommander(db)).Post("/custom/create", sessionHandler.CreateCustomSession)
 				})
 
-				// Reports routes (commander+)
+				// Reports routes: Tier 2+
 				r.Route("/reports", func(r chi.Router) {
-					r.Use(middleware.RequireCommander(db))
+					r.Use(middleware.RequireBatteryNCO(db))
 					reportsHandler := handlers.NewReportsHandler(db)
 					r.Get("/sessions/{id}/analytics", reportsHandler.GetSessionAnalytics)
 					r.Get("/sessions/{id}/missing", reportsHandler.GetMissingUsers)
@@ -193,17 +195,21 @@ func main() {
 					r.Get("/battery/{battery}", reportsHandler.GetBatteryReport)
 				})
 
-				// Admin routes (superadmin only)
+				// Admin routes: superadmin only
 				r.Route("/admin", func(r chi.Router) {
 					r.Use(middleware.RequireSuperadmin(db))
 					adminHandler := handlers.NewAdminHandler(db)
 					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
 					r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
+					// Registration approval
+					r.Get("/registrations", adminHandler.ListPendingRegistrations)
+					r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
+					r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)
 				})
 
-				// Status routes (superadmin only)
+				// Status routes: Tier 3+
 				r.Route("/statuses", func(r chi.Router) {
-					r.Use(middleware.RequireSuperadmin(db))
+					r.Use(middleware.RequireUnitCommander(db))
 					statusHandler := handlers.NewStatusHandler(db, sseHub)
 					r.Get("/", statusHandler.ListStatuses)
 					r.Post("/", statusHandler.CreateStatus)

@@ -44,6 +44,7 @@ function UserDetailPage() {
   const [rank, setRank] = useState('');
   const [battery, setBattery] = useState('');
   const [nricLast5, setNricLast5] = useState('');
+  const [tierOverride, setTierOverride] = useState<'none' | '2' | '3'>('none');
 
   const isSuperadmin = currentUser?.isSuperadmin || false;
   const canEdit = isSuperadmin || currentUser?.id === userId;
@@ -55,12 +56,13 @@ function UserDetailPage() {
       setRank(user.rank || '');
       setBattery(user.battery || '');
       setNricLast5(user.nricLast5 || '');
+      setTierOverride(user.tierOverride ? String(user.tierOverride) as '2' | '3' : 'none');
       /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [user]);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { fullName?: string; rank?: string; battery?: string; nricLast5?: string }) =>
+    mutationFn: (data: { fullName?: string; rank?: string; battery?: string; nricLast5?: string; tierOverride?: 2 | 3 | null }) =>
       apiClient.updateUser(userId, data),
     onSuccess: () => {
       toast.success('User updated successfully');
@@ -78,7 +80,7 @@ function UserDetailPage() {
       return;
     }
 
-    const updates: { fullName?: string; rank?: string; battery?: string; nricLast5?: string } = {};
+    const updates: { fullName?: string; rank?: string; battery?: string; nricLast5?: string; tierOverride?: 2 | 3 | null } = {};
     if (fullName !== user?.fullName) updates.fullName = fullName;
     if (rank !== user?.rank) updates.rank = rank;
     if (battery !== user?.battery) updates.battery = battery;
@@ -88,6 +90,11 @@ function UserDetailPage() {
         return;
       }
       updates.nricLast5 = normalizeNricLast5(nricLast5);
+    }
+    if (isSuperadmin) {
+      const currentOverride = user?.tierOverride ?? null;
+      const newOverride = tierOverride === 'none' ? null : (Number(tierOverride) as 2 | 3);
+      if (newOverride !== currentOverride) updates.tierOverride = newOverride;
     }
 
     if (Object.keys(updates).length === 0) {
@@ -222,6 +229,27 @@ function UserDetailPage() {
                   />
                   <p className="text-xs text-muted-foreground">
                     Exactly 5 characters: 4 numbers and the final alphabet letter. Updating this also updates the user's password.
+                  </p>
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="tierOverride">Access Tier Override</Label>
+                  <Select
+                    value={tierOverride}
+                    onValueChange={(value) => setTierOverride(value as 'none' | '2' | '3')}
+                    disabled={!canEdit}
+                  >
+                    <SelectTrigger id="tierOverride">
+                      <SelectValue placeholder="Rank-derived (default)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Rank-derived (default)</SelectItem>
+                      <SelectItem value="2">Tier 2 — Battery NCO (override)</SelectItem>
+                      <SelectItem value="3">Tier 3 — Unit Commander (override)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Override this user's access tier. Leave as rank-derived unless manually elevating.
                   </p>
                 </div>
               </>

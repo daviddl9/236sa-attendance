@@ -1,6 +1,9 @@
 // API client for Go backend
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
+// Access tiers (must match backend models.AccessTier)
+export type AccessTier = 1 | 2 | 3 | 4;
+
 // Type definitions based on backend models
 export interface User {
   id: string;
@@ -10,12 +13,15 @@ export interface User {
   nricLast5?: string | null;
   dob?: string | null;
   extras?: Record<string, string> | null;
+  tierOverride?: 2 | 3 | null;
+  verified: boolean;
   isSuperadmin: boolean;
+  tier: AccessTier; // computed by server
   createdAt: string;
   updatedAt: string;
 }
 
-export type SignInOutcome = 'authenticated' | 'signup_required';
+export type SignInOutcome = 'authenticated' | 'signup_required' | 'pending_approval';
 
 export interface SignInAuthenticatedResponse {
   outcome: 'authenticated';
@@ -28,7 +34,14 @@ export interface SignInSignupRequiredResponse {
   fullName: string;
 }
 
-export type SignInResponse = SignInAuthenticatedResponse | SignInSignupRequiredResponse;
+export interface SignInPendingApprovalResponse {
+  outcome: 'pending_approval';
+}
+
+export type SignInResponse =
+  | SignInAuthenticatedResponse
+  | SignInSignupRequiredResponse
+  | SignInPendingApprovalResponse;
 
 // Kept for callers that destructure { user, session } from sign-in directly.
 export type AuthResponse = SignInAuthenticatedResponse;
@@ -79,6 +92,48 @@ export interface UpdateUserRequest {
   battery?: string;
   nricLast5?: string;
   dob?: string;
+  tierOverride?: 2 | 3 | null;
+}
+
+// Pending registration (admin approval)
+export interface PendingRegistration {
+  id: string;
+  fullName?: string | null;
+  rank?: string | null;
+  battery?: string | null;
+  nricLast5?: string | null;
+  createdAt: string;
+}
+
+export interface PendingRegistrationsResponse {
+  registrations: PendingRegistration[];
+  total: number;
+}
+
+// Custom participant session (Feature 004)
+export interface ParticipantMatch {
+  userId: string;
+  fullName: string;
+  rank?: string | null;
+  battery?: string | null;
+}
+
+export interface UnmatchedRow {
+  rowNum: number;
+  fullName: string;
+  nricLast5?: string;
+  reason: string;
+}
+
+export interface CustomSessionPreviewResponse {
+  matched: ParticipantMatch[];
+  unmatched: UnmatchedRow[];
+}
+
+export interface CreateCustomSessionRequest {
+  name: string;
+  participantIds: string[];
+  endTime?: string | null;
 }
 
 export interface AttendanceSession {
@@ -374,8 +429,8 @@ export class APIClient {
     });
   }
 
-  async signUp(data: SignUpRequest): Promise<SignInAuthenticatedResponse> {
-    return this.request<SignInAuthenticatedResponse>('/api/auth/sign-up', {
+  async signUp(data: SignUpRequest): Promise<SignInResponse> {
+    return this.request<SignInResponse>('/api/auth/sign-up', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -699,6 +754,49 @@ export class APIClient {
   async deleteStatus(id: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/statuses/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  // Registration approval (superadmin only)
+  async listPendingRegistrations(): Promise<PendingRegistrationsResponse> {
+    return this.request<PendingRegistrationsResponse>('/api/admin/registrations');
+  }
+
+  async approveRegistration(id: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/admin/registrations/${id}/approve`, {
+      method: 'POST',
+    });
+  }
+
+  async rejectRegistration(id: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/admin/registrations/${id}/reject`, {
+      method: 'POST',
+    });
+  }
+
+  // Custom participant sessions (Tier 3+)
+  async previewCustomSession(file: File): Promise<CustomSessionPreviewResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseURL}/api/sessions/custom/preview`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new APIError(text || response.statusText, response.status, response.statusText);
+    }
+
+    return response.json() as Promise<CustomSessionPreviewResponse>;
+  }
+
+  async createCustomSession(data: CreateCustomSessionRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>('/api/sessions/custom/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 }

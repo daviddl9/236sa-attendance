@@ -6,6 +6,7 @@ import "time"
 const (
 	SessionScopeUnitWide        = "unit_wide"
 	SessionScopeBatterySpecific = "battery_specific"
+	SessionScopeCustomList      = "custom_list"
 )
 
 // Session statuses
@@ -21,19 +22,20 @@ const (
 )
 
 type AttendanceSession struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	QRCode       string     `json:"qrCode"`
-	QRCodeSecret string     `json:"-"` // Never serialize secret
-	Scope        string     `json:"scope"`
-	Batteries    []string   `json:"batteries"`
-	Status       string     `json:"status"`
-	CreatedBy    string     `json:"createdBy"`
-	StartTime    time.Time  `json:"startTime"`
-	EndTime      *time.Time `json:"endTime,omitempty"`
-	ClosedAt     *time.Time `json:"closedAt,omitempty"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID               string     `json:"id"`
+	Name             string     `json:"name"`
+	QRCode           string     `json:"qrCode"`
+	QRCodeSecret     string     `json:"-"` // Never serialize secret
+	Scope            string     `json:"scope"`
+	Batteries        []string   `json:"batteries"`
+	Status           string     `json:"status"`
+	CreatedBy        string     `json:"createdBy"`
+	StartTime        time.Time  `json:"startTime"`
+	EndTime          *time.Time `json:"endTime,omitempty"`
+	ClosedAt         *time.Time `json:"closedAt,omitempty"`
+	ParticipantCount *int       `json:"participantCount,omitempty"` // populated for custom_list
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 type AttendanceRecord struct {
@@ -45,4 +47,9 @@ type AttendanceRecord struct {
 	MarkedBy      *string   `json:"markedBy,omitempty"` // User ID of commander if manual
 	CreatedAt     time.Time `json:"createdAt"`
 	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+type SessionParticipant struct {
+	SessionID string `json:"sessionId"`
+	UserID    string `json:"userId"`
 }

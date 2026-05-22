@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router';
+import { createFileRoute, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Button } from '../../components/ui/button';
 import {
@@ -19,8 +19,8 @@ import {
 } from '../../components/ui/select';
 import { toast } from 'sonner';
 import { apiClient, type RegisterUserRequest } from '../../lib/api-client';
-import { useAuth } from '../../lib/auth-context';
 import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FIELD_MESSAGE } from '../../lib/nric-password';
+import { Clock } from 'lucide-react';
 
 export const Route = createFileRoute('/attendance/register')({
   component: RegisterPage,
@@ -43,8 +43,7 @@ const VALID_RANKS = [
 const BATTERIES = ['HQ', 'Alpha', 'Bravo'];
 
 function RegisterPage() {
-  const navigate = useNavigate();
-  const { refetch } = useAuth();
+  const [pendingApproval, setPendingApproval] = useState(false);
   const search = useSearch({ from: '/attendance/register' }) as {
     redirect?: string;
     session?: string;
@@ -90,15 +89,9 @@ function RegisterPage() {
         ...formData,
         nricLast5: normalizeNricLast5(formData.nricLast5),
       });
-      await refetch(); // Refresh auth context to get updated user data
-      toast.success('Account created successfully!');
-
-      // Navigate to redirect URL if present, otherwise go to dashboard
-      if (search.redirect) {
-        window.location.href = search.redirect;
-      } else {
-        navigate({ to: '/dashboard' });
-      }
+      // Registration creates a pending account — show approval notice.
+      setPendingApproval(true);
+      setLoading(false);
     } catch (error) {
       setLoading(false);
       const errorMessage =
@@ -130,6 +123,33 @@ function RegisterPage() {
       }
     }
   };
+
+  if (pendingApproval) {
+    return (
+      <div className="flex flex-col justify-center items-center w-full min-h-screen p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle className="text-lg md:text-xl">Registration Submitted</CardTitle>
+            <CardDescription className="text-xs md:text-sm">Awaiting admin approval</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20 mb-4">
+              <div className="flex items-start gap-3 text-sm text-amber-800 dark:text-amber-300">
+                <Clock className="h-4 w-4 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-medium mb-1">Pending admin approval</p>
+                  <p>Your account has been created and is awaiting approval. You will be able to sign in once an administrator approves your registration.</p>
+                </div>
+              </div>
+            </div>
+            <a href="/sign-in">
+              <Button className="w-full" variant="outline">Go to sign in</Button>
+            </a>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col justify-center items-center w-full min-h-screen p-4">

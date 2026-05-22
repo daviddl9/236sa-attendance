@@ -27,6 +27,7 @@ import { Route as DashboardSessionsCreateRouteImport } from './routes/dashboard/
 import { Route as DashboardSessionsSessionIdRouteImport } from './routes/dashboard/sessions/$sessionId'
 import { Route as DashboardReportsBatteriesRouteImport } from './routes/dashboard/reports/batteries'
 import { Route as DashboardAttendanceScanRouteImport } from './routes/dashboard/attendance/scan'
+import { Route as DashboardAdminRegistrationsIndexRouteImport } from './routes/dashboard/admin/registrations/index'
 import { Route as DashboardReportsSessionsSessionIdRouteImport } from './routes/dashboard/reports/sessions/$sessionId'
 
 const SignInRoute = SignInRouteImport.update({
@@ -123,6 +124,12 @@ const DashboardAttendanceScanRoute = DashboardAttendanceScanRouteImport.update({
   path: '/dashboard/attendance/scan',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardAdminRegistrationsIndexRoute =
+  DashboardAdminRegistrationsIndexRouteImport.update({
+    id: '/dashboard/admin/registrations/',
+    path: '/dashboard/admin/registrations/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DashboardReportsSessionsSessionIdRoute =
   DashboardReportsSessionsSessionIdRouteImport.update({
     id: '/dashboard/reports/sessions/$sessionId',
@@ -150,6 +157,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/statuses': typeof DashboardStatusesIndexRoute
   '/dashboard/users': typeof DashboardUsersIndexRoute
   '/dashboard/reports/sessions/$sessionId': typeof DashboardReportsSessionsSessionIdRoute
+  '/dashboard/admin/registrations': typeof DashboardAdminRegistrationsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -171,6 +179,7 @@ export interface FileRoutesByTo {
   '/dashboard/statuses': typeof DashboardStatusesIndexRoute
   '/dashboard/users': typeof DashboardUsersIndexRoute
   '/dashboard/reports/sessions/$sessionId': typeof DashboardReportsSessionsSessionIdRoute
+  '/dashboard/admin/registrations': typeof DashboardAdminRegistrationsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -193,6 +202,7 @@ export interface FileRoutesById {
   '/dashboard/statuses/': typeof DashboardStatusesIndexRoute
   '/dashboard/users/': typeof DashboardUsersIndexRoute
   '/dashboard/reports/sessions/$sessionId': typeof DashboardReportsSessionsSessionIdRoute
+  '/dashboard/admin/registrations/': typeof DashboardAdminRegistrationsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/dashboard/statuses'
     | '/dashboard/users'
     | '/dashboard/reports/sessions/$sessionId'
+    | '/dashboard/admin/registrations'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -237,6 +248,7 @@ export interface FileRouteTypes {
     | '/dashboard/statuses'
     | '/dashboard/users'
     | '/dashboard/reports/sessions/$sessionId'
+    | '/dashboard/admin/registrations'
   id:
     | '__root__'
     | '/'
@@ -258,6 +270,7 @@ export interface FileRouteTypes {
     | '/dashboard/statuses/'
     | '/dashboard/users/'
     | '/dashboard/reports/sessions/$sessionId'
+    | '/dashboard/admin/registrations/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -280,6 +293,7 @@ export interface RootRouteChildren {
   DashboardStatusesIndexRoute: typeof DashboardStatusesIndexRoute
   DashboardUsersIndexRoute: typeof DashboardUsersIndexRoute
   DashboardReportsSessionsSessionIdRoute: typeof DashboardReportsSessionsSessionIdRoute
+  DashboardAdminRegistrationsIndexRoute: typeof DashboardAdminRegistrationsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -410,6 +424,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardAttendanceScanRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/admin/registrations/': {
+      id: '/dashboard/admin/registrations/'
+      path: '/dashboard/admin/registrations'
+      fullPath: '/dashboard/admin/registrations'
+      preLoaderRoute: typeof DashboardAdminRegistrationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/reports/sessions/$sessionId': {
       id: '/dashboard/reports/sessions/$sessionId'
       path: '/dashboard/reports/sessions/$sessionId'
@@ -441,6 +462,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardUsersIndexRoute: DashboardUsersIndexRoute,
   DashboardReportsSessionsSessionIdRoute:
     DashboardReportsSessionsSessionIdRoute,
+  DashboardAdminRegistrationsIndexRoute: DashboardAdminRegistrationsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

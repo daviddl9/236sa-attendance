@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../../../lib/api-client';
+import { apiClient, type ParticipantMatch, type UnmatchedRow } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -20,8 +20,9 @@ import {
   CardHeader,
   CardTitle,
 } from '../../../components/ui/card';
-import { useState } from 'react';
-import { ArrowLeft, Save } from 'lucide-react';
+import { Badge } from '../../../components/ui/badge';
+import { useState, useRef } from 'react';
+import { ArrowLeft, Save, Upload, Users, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 
@@ -32,35 +33,65 @@ export const Route = createFileRoute('/dashboard/sessions/create')({
 function CreateSessionPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState('');
   const [scope, setScope] = useState('unit_wide');
   const [batteries, setBatteries] = useState<string[]>([]);
 
+  // Custom list state
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [matched, setMatched] = useState<ParticipantMatch[]>([]);
+  const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
+  const [previewDone, setPreviewDone] = useState(false);
+
   const createMutation = useMutation({
-    mutationFn: (data: {
-      name: string;
-      scope: string;
-      batteries?: string[];
-    }) => apiClient.createSession(data),
+    mutationFn: (data: { name: string; scope: string; batteries?: string[] }) =>
+      apiClient.createSession(data),
     onSuccess: (data) => {
-      toast.success('Session created successfully');
+      toast.success('Session created');
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      navigate({
-        to: '/dashboard/sessions/$sessionId',
-        params: { sessionId: data.id },
-      });
+      navigate({ to: '/dashboard/sessions/$sessionId', params: { sessionId: data.id } });
     },
-    onError: (error: Error) => {
-      toast.error(error.message || 'Failed to create session');
+    onError: (error: Error) => toast.error(error.message || 'Failed to create session'),
+  });
+
+  const createCustomMutation = useMutation({
+    mutationFn: () =>
+      apiClient.createCustomSession({
+        name,
+        participantIds: matched.map((m) => m.userId),
+      }),
+    onSuccess: (data) => {
+      toast.success('Session created');
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      navigate({ to: '/dashboard/sessions/$sessionId', params: { sessionId: data.id } });
     },
+    onError: (error: Error) => toast.error(error.message || 'Failed to create session'),
   });
 
   const handleBatteryChange = (battery: string, checked: boolean) => {
-    if (checked) {
-      setBatteries([...batteries, battery]);
-    } else {
-      setBatteries(batteries.filter((b) => b !== battery));
+    setBatteries(checked ? [...batteries, battery] : batteries.filter((b) => b !== battery));
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPreviewLoading(true);
+    setPreviewDone(false);
+    setMatched([]);
+    setUnmatched([]);
+
+    try {
+      const result = await apiClient.previewCustomSession(file);
+      setMatched(result.matched);
+      setUnmatched(result.unmatched);
+      setPreviewDone(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to parse file');
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -68,12 +99,25 @@ function CreateSessionPage() {
     e.preventDefault();
 
     if (!name) {
-      toast.error('Please fill in all required fields');
+      toast.error('Session name is required');
       return;
     }
 
     if (scope === 'battery_specific' && batteries.length === 0) {
       toast.error('Please select at least one battery');
+      return;
+    }
+
+    if (scope === 'custom_list') {
+      if (!previewDone || matched.length === 0) {
+        toast.error('Please upload and preview a participant list first');
+        return;
+      }
+      if (unmatched.length > 0) {
+        toast.error('Resolve all unmatched rows before creating the session');
+        return;
+      }
+      createCustomMutation.mutate();
       return;
     }
 
@@ -83,6 +127,8 @@ function CreateSessionPage() {
       batteries: scope === 'battery_specific' ? batteries : undefined,
     });
   };
+
+  const isPending = createMutation.isPending || createCustomMutation.isPending;
 
   return (
     <DashboardLayout>
@@ -123,11 +169,13 @@ function CreateSessionPage() {
                   value={scope}
                   onValueChange={(value) => {
                     setScope(value);
-                    if (value === 'unit_wide') {
-                      setBatteries([]);
+                    if (value !== 'battery_specific') setBatteries([]);
+                    if (value !== 'custom_list') {
+                      setPreviewDone(false);
+                      setMatched([]);
+                      setUnmatched([]);
                     }
                   }}
-                  required
                 >
                   <SelectTrigger id="scope">
                     <SelectValue placeholder="Select scope" />
@@ -135,6 +183,7 @@ function CreateSessionPage() {
                   <SelectContent>
                     <SelectItem value="unit_wide">Unit Wide</SelectItem>
                     <SelectItem value="battery_specific">Battery Specific</SelectItem>
+                    <SelectItem value="custom_list">Custom List</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -159,10 +208,86 @@ function CreateSessionPage() {
                 </div>
               )}
 
+              {scope === 'custom_list' && (
+                <div className="grid gap-3">
+                  <Label>Participant List *</Label>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Upload an Excel file with a <strong>Full Name</strong> column (and optionally <strong>NRIC Last 5</strong>).
+                  </p>
+
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={previewLoading}
+                      className="gap-2"
+                    >
+                      <Upload className="h-4 w-4" />
+                      {previewLoading ? 'Parsing...' : 'Upload Excel'}
+                    </Button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".xlsx,.xls"
+                      className="hidden"
+                      onChange={handleFileChange}
+                    />
+                    {previewDone && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Users className="h-4 w-4" />
+                        {matched.length} matched
+                        {unmatched.length > 0 && (
+                          <span className="text-destructive font-medium">
+                            · {unmatched.length} unmatched
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {previewDone && matched.length > 0 && (
+                    <div className="rounded-md border p-3 space-y-1 max-h-48 overflow-y-auto">
+                      <p className="text-xs font-medium text-muted-foreground mb-2">
+                        Matched participants ({matched.length})
+                      </p>
+                      {matched.map((m) => (
+                        <div key={m.userId} className="flex items-center gap-2 text-sm">
+                          <Badge variant="outline" className="text-xs shrink-0">
+                            {m.rank ?? '—'}
+                          </Badge>
+                          <span>{m.fullName}</span>
+                          {m.battery && (
+                            <span className="text-muted-foreground text-xs">{m.battery}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {previewDone && unmatched.length > 0 && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
+                      <div className="flex items-center gap-2 text-sm font-medium text-destructive mb-2">
+                        <AlertCircle className="h-4 w-4" />
+                        Unmatched rows — resolve before creating
+                      </div>
+                      {unmatched.map((u) => (
+                        <div key={u.rowNum} className="text-sm text-destructive/80">
+                          Row {u.rowNum}: <strong>{u.fullName}</strong> — {u.reason}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-4">
-                <Button type="submit" disabled={createMutation.isPending}>
+                <Button
+                  type="submit"
+                  disabled={isPending || (scope === 'custom_list' && (!previewDone || unmatched.length > 0))}
+                >
                   <Save className="mr-2 h-4 w-4" />
-                  {createMutation.isPending ? 'Creating...' : 'Create Session'}
+                  {isPending ? 'Creating...' : 'Create Session'}
                 </Button>
               </div>
             </form>
@@ -172,4 +297,3 @@ function CreateSessionPage() {
     </DashboardLayout>
   );
 }
-

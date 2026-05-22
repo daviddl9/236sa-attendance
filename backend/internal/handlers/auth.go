@@ -31,20 +31,15 @@ type SignInRequest struct {
 }
 
 // SignInOutcome is the machine-readable result of a sign-in attempt.
-// "authenticated"   — credentials matched, session created.
-// "signup_required" — full_name is not in the DB; admin should import
-//
-//	or the user can create their own account.
 type SignInOutcome string
 
 const (
-	SignInOutcomeAuthenticated   SignInOutcome = "authenticated"
-	SignInOutcomeSignupRequired  SignInOutcome = "signup_required"
+	SignInOutcomeAuthenticated    SignInOutcome = "authenticated"
+	SignInOutcomeSignupRequired   SignInOutcome = "signup_required"
+	SignInOutcomePendingApproval  SignInOutcome = "pending_approval"
 )
 
 // SignInResponse is returned for every successful (2xx) sign-in call.
-// When Outcome=="authenticated", User and Session are populated.
-// When Outcome=="signup_required", FullName is populated.
 type SignInResponse struct {
 	Outcome  SignInOutcome `json:"outcome"`
 	User     *models.User `json:"user,omitempty"`
@@ -53,14 +48,29 @@ type SignInResponse struct {
 }
 
 type SignUpRequest struct {
-	FullName        string `json:"fullName"`
-	NRICLast5       string `json:"nricLast5"`
+	FullName         string `json:"fullName"`
+	NRICLast5        string `json:"nricLast5"`
 	ConfirmNRICLast5 string `json:"confirmNricLast5"`
 }
 
-// AuthResponse is kept for backward-compatibility with the admin path
-// which returns the same shape as before.
+// AuthResponse is kept for backward-compatibility.
 type AuthResponse = SignInResponse
+
+// userRow holds all columns needed when scanning a user for sign-in.
+type userRow struct {
+	id           string
+	fullName     *string
+	rank         *string
+	battery      *string
+	nricLast5    *string
+	dob          *string
+	isSuperadmin bool
+	tierOverride *int16
+	verified     bool
+	createdAt    time.Time
+	updatedAt    time.Time
+	password     string
+}
 
 func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	var req SignInRequest
@@ -81,21 +91,18 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userID, hashedPassword string
-	var fullName, rank, battery *string
-	var nricLast5, dob *string
-	var isSuperadmin bool
-	var createdAt, updatedAt time.Time
-
+	var ur userRow
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT
 			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
+			u.tier_override, u.verified,
 			u."createdAt", u."updatedAt", u.password
 		FROM "user" u
 		WHERE u."full_name" = $1 AND u."nric_last5" IS NOT DISTINCT FROM $2
 	`, req.Identifier, nricLast5Val).Scan(
-		&userID, &fullName, &rank, &battery, &nricLast5, &dob, &isSuperadmin,
-		&createdAt, &updatedAt, &hashedPassword,
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.tierOverride, &ur.verified,
+		&ur.createdAt, &ur.updatedAt, &ur.password,
 	)
 
 	if err != nil {
@@ -105,16 +112,13 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Admin path: no auto-create, no signup_required.
 		if req.Identifier == "admin" {
 			log.Printf("[SignIn] Admin login failed - invalid credentials")
 			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
 			return
 		}
 
-		// Name-leak protection (FR-021): if the full_name exists in the DB
-		// with a different NRIC, return generic invalid_credentials rather than
-		// signup_required so we don't reveal that the name is registered.
+		// Name-leak protection: if the name exists with a different NRIC, return generic error.
 		var nameExists bool
 		_ = h.db.Pool.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM "user" WHERE "full_name" = $1)`, req.Identifier,
@@ -125,7 +129,6 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Name not in DB: explicit signup required.
 		log.Printf("[SignIn] Unknown name %q — returning signup_required", req.Identifier)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -136,17 +139,26 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// User found — verify password.
-	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(passwordForAuth)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(ur.password), []byte(passwordForAuth)); err != nil {
 		log.Printf("[SignIn] Password verification failed for user: %s", req.Identifier)
 		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
 		return
 	}
+
+	// Block unverified (pending) users.
+	if !ur.verified {
+		log.Printf("[SignIn] User %q is pending approval", req.Identifier)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomePendingApproval})
+		return
+	}
+
 	log.Printf("[SignIn] User authenticated successfully: %s", req.Identifier)
 
-	user, session, err := h.createSession(ctx, r, userID, fullName, rank, battery, nricLast5, dob, isSuperadmin, createdAt, updatedAt)
+	user, session, err := h.createSession(ctx, r, ur)
 	if err != nil {
-		log.Printf("[SignIn] Failed to create session for user %s: %v", userID, err)
+		log.Printf("[SignIn] Failed to create session for user %s: %v", ur.id, err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
@@ -161,9 +173,8 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 }
 
 // SignUp handles POST /api/auth/sign-up.
-// It creates a new user account when the full_name is not already in the
-// DB. Both nricLast5 values must match and pass the feature-001 format
-// check. The account is immediately authenticated (session created).
+// Called after sign-in returns signup_required (name not in DB).
+// Creates account with verified=false; returns pending_approval.
 func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	var req SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -192,13 +203,11 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Guard against creating a duplicate account.
 	var nameExists bool
 	_ = h.db.Pool.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM "user" WHERE "full_name" = $1)`, req.FullName,
 	).Scan(&nameExists)
 	if nameExists {
-		// Return generic error — do not reveal that the name exists.
 		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
 		return
 	}
@@ -212,40 +221,23 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	userID := generateID()
 	now := time.Now()
 	_, err = h.db.Pool.Exec(ctx, `
-		INSERT INTO "user" (id, "full_name", "nric_last5", password, extras, "createdAt", "updatedAt", "is_superadmin")
-		VALUES ($1, $2, $3, $4, '{}'::jsonb, $5, $6, false)
+		INSERT INTO "user" (id, "full_name", "nric_last5", password, extras, "createdAt", "updatedAt", "is_superadmin", verified)
+		VALUES ($1, $2, $3, $4, '{}'::jsonb, $5, $6, false, false)
 	`, userID, req.FullName, nric, string(hash), now, now)
 	if err != nil {
 		log.Printf("[SignUp] Failed to create user %q: %v", req.FullName, err)
 		http.Error(w, "Failed to create account", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[SignUp] Created account for %q", req.FullName)
+	log.Printf("[SignUp] Created pending account for %q", req.FullName)
 
-	fullName := req.FullName
-	user, session, err := h.createSession(ctx, r, userID, &fullName, nil, nil, &nric, nil, false, now, now)
-	if err != nil {
-		log.Printf("[SignUp] Failed to create session for %s: %v", userID, err)
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
-		return
-	}
-
-	setSessionCookie(w, session)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(SignInResponse{
-		Outcome: SignInOutcomeAuthenticated,
-		User:    &user,
-		Session: &session,
-	})
+	_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomePendingApproval})
 }
 
-// createSession inserts a session row, returns the user model and token.
-func (h *AuthHandler) createSession(
-	ctx context.Context, r *http.Request,
-	userID string, fullName, rank, battery, nricLast5, dob *string,
-	isSuperadmin bool, createdAt, updatedAt time.Time,
-) (models.User, string, error) {
+// createSession inserts a session row and returns the populated user model and token.
+func (h *AuthHandler) createSession(ctx context.Context, r *http.Request, ur userRow) (models.User, string, error) {
 	token := generateSessionToken()
 	sessionID := generateID()
 	expiresAt := time.Now().Add(30 * 24 * time.Hour)
@@ -254,28 +246,29 @@ func (h *AuthHandler) createSession(
 	_, err := h.db.Pool.Exec(ctx, `
 		INSERT INTO session (id, "expiresAt", token, "userId", "createdAt", "updatedAt", "ipAddress", "userAgent")
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, sessionID, expiresAt, token, userID, now, now, r.RemoteAddr, r.UserAgent())
+	`, sessionID, expiresAt, token, ur.id, now, now, r.RemoteAddr, r.UserAgent())
 	if err != nil {
 		return models.User{}, "", err
 	}
-	log.Printf("[SignIn] Session created successfully for user: %s", userID)
+	log.Printf("[SignIn] Session created successfully for user: %s", ur.id)
 
 	user := models.User{
-		ID:           userID,
-		FullName:     fullName,
-		Rank:         rank,
-		Battery:      battery,
-		NRICLast5:    nricLast5,
-		DOB:          dob,
-		IsSuperadmin: isSuperadmin,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
+		ID:           ur.id,
+		FullName:     ur.fullName,
+		Rank:         ur.rank,
+		Battery:      ur.battery,
+		NRICLast5:    ur.nricLast5,
+		DOB:          ur.dob,
+		TierOverride: ur.tierOverride,
+		Verified:     ur.verified,
+		IsSuperadmin: ur.isSuperadmin,
+		CreatedAt:    ur.createdAt,
+		UpdatedAt:    ur.updatedAt,
 	}
 	return user, token, nil
 }
 
 func (h *AuthHandler) SignOut(w http.ResponseWriter, r *http.Request) {
-	// Get session token from cookie
 	cookie, err := r.Cookie("session")
 	if err != nil {
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
@@ -284,14 +277,12 @@ func (h *AuthHandler) SignOut(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Delete session from database
 	_, err = h.db.Pool.Exec(ctx, `DELETE FROM session WHERE token = $1`, cookie.Value)
 	if err != nil {
 		http.Error(w, "Failed to delete session", http.StatusInternalServerError)
 		return
 	}
 
-	// Clear cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    "",
@@ -306,8 +297,13 @@ func (h *AuthHandler) SignOut(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"success": true}`))
 }
 
+// sessionUserResponse wraps the user model with the computed tier for frontend use.
+type sessionUserResponse struct {
+	models.User
+	Tier int `json:"tier"`
+}
+
 func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
-	// Get session token from cookie
 	cookie, err := r.Cookie("session")
 	if err != nil {
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
@@ -316,50 +312,51 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 
 	ctx := context.Background()
 
-	// Find session and user with all fields
-	var userID string
-	var fullName, rank, battery *string
-	var nricLast5, dob *string
-	var isSuperadmin bool
-	var createdAt, updatedAt time.Time
-
+	var ur userRow
 	err = h.db.Pool.QueryRow(ctx, `
-		SELECT 
+		SELECT
 			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
+			u.tier_override, u.verified,
 			u."createdAt", u."updatedAt"
 		FROM "user" u
 		JOIN session s ON s."userId" = u.id
 		WHERE s.token = $1 AND s."expiresAt" > NOW()
 	`, cookie.Value).Scan(
-		&userID, &fullName, &rank, &battery, &nricLast5, &dob, &isSuperadmin,
-		&createdAt, &updatedAt,
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.tierOverride, &ur.verified,
+		&ur.createdAt, &ur.updatedAt,
 	)
 
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			log.Printf("[GetSession] Error querying user table: %v", err)
-		} else {
-			log.Printf("[GetSession] Session not found or expired for token")
 		}
 		http.Error(w, "Invalid or expired session", http.StatusUnauthorized)
 		return
 	}
-	log.Printf("[GetSession] Found user session for user: %s", userID)
+	log.Printf("[GetSession] Found user session for user: %s", ur.id)
 
 	user := models.User{
-		ID:           userID,
-		FullName:     fullName,
-		Rank:         rank,
-		Battery:      battery,
-		NRICLast5:    nricLast5,
-		DOB:          dob,
-		IsSuperadmin: isSuperadmin,
-		CreatedAt:    createdAt,
-		UpdatedAt:    updatedAt,
+		ID:           ur.id,
+		FullName:     ur.fullName,
+		Rank:         ur.rank,
+		Battery:      ur.battery,
+		NRICLast5:    ur.nricLast5,
+		DOB:          ur.dob,
+		TierOverride: ur.tierOverride,
+		Verified:     ur.verified,
+		IsSuperadmin: ur.isSuperadmin,
+		CreatedAt:    ur.createdAt,
+		UpdatedAt:    ur.updatedAt,
+	}
+
+	resp := sessionUserResponse{
+		User: user,
+		Tier: int(user.GetTier()),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(user)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func generateID() string {

@@ -1,30 +1,25 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { Users, Calendar, ScanLine, BarChart3, Clock } from "lucide-react";
+import { Users, Calendar, ScanLine, BarChart3, Clock, UserCheck } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
-import { canAccessCommanderFeatures, isSuperadmin } from "../lib/user-utils";
+import { isSuperadmin, getUserTier } from "../lib/user-utils";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "../lib/api-client";
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  requiresCommander?: boolean;
-  requiresSuperadmin?: boolean;
+  minTier?: number;
 }
 
 const navItems: NavItem[] = [
   {
-    label: "Users",
-    href: "/dashboard/users",
-    icon: Users,
-    requiresSuperadmin: true, // Only superadmins can see users
-  },
-  {
     label: "Sessions",
     href: "/dashboard/sessions",
     icon: Calendar,
-    requiresCommander: true, // Commanders and superadmins can see sessions
+    minTier: 2,
   },
   {
     label: "Scan QR",
@@ -32,16 +27,22 @@ const navItems: NavItem[] = [
     icon: ScanLine,
   },
   {
+    label: "Users",
+    href: "/dashboard/users",
+    icon: Users,
+    minTier: 2,
+  },
+  {
     label: "Statuses",
     href: "/dashboard/statuses",
     icon: Clock,
-    requiresSuperadmin: true, // Only superadmins can manage statuses
+    minTier: 3,
   },
   {
     label: "Reports",
     href: "/dashboard/reports",
     icon: BarChart3,
-    requiresSuperadmin: true, // Only superadmins can see reports
+    minTier: 2,
   },
 ];
 
@@ -50,15 +51,21 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // Use utility functions that match backend logic
-  const canAccessCommander = canAccessCommanderFeatures(user);
-  const isSuperadminUser = isSuperadmin(user);
+  const tier = getUserTier(user);
+  const isAdmin = isSuperadmin(user);
 
-  // Filter nav items based on user permissions
-  // This will automatically re-render when user data changes via useAuth()
+  // Poll pending registration count for superadmins.
+  const { data: pendingData } = useQuery({
+    queryKey: ['pending-registrations'],
+    queryFn: () => apiClient.listPendingRegistrations(),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const pendingCount = pendingData?.total ?? 0;
+
   const filteredNavItems = navItems.filter((item) => {
-    if (item.requiresSuperadmin && !isSuperadminUser) return false;
-    if (item.requiresCommander && !canAccessCommander) return false;
+    if (item.minTier && tier < item.minTier) return false;
     return true;
   });
 
@@ -91,6 +98,26 @@ export default function Sidebar() {
                 {item.label}
               </div>
             ))}
+
+            {isAdmin && (
+              <div
+                onClick={() => navigate({ to: '/dashboard/admin/registrations' })}
+                className={clsx(
+                  "flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:cursor-pointer",
+                  location.pathname.startsWith('/dashboard/admin/registrations')
+                    ? "bg-primary/10 text-primary hover:bg-primary/20"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <UserCheck className="h-4 w-4" />
+                <span className="flex-1">Registrations</span>
+                {pendingCount > 0 && (
+                  <span className="flex items-center justify-center h-5 min-w-5 px-1 rounded-full bg-destructive text-destructive-foreground text-xs font-semibold">
+                    {pendingCount}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           <UserProfile />

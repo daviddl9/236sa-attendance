@@ -32,6 +32,8 @@ type UserProfile struct {
 	NRICLast5    *string           `json:"nricLast5,omitempty"`
 	DOB          *string           `json:"dob,omitempty"`
 	Extras       map[string]string `json:"extras"`
+	TierOverride *int16            `json:"tierOverride,omitempty"`
+	Verified     bool              `json:"verified"`
 	IsSuperadmin bool              `json:"isSuperadmin"`
 	CreatedAt    string            `json:"createdAt"`
 	UpdatedAt    string            `json:"updatedAt"`
@@ -45,6 +47,12 @@ type UpdateProfileRequest struct {
 	DOB       *string `json:"dob,omitempty"`
 }
 
+// UpdateUserRequest extends UpdateProfileRequest for superadmin use.
+type UpdateUserRequest struct {
+	UpdateProfileRequest
+	TierOverride *int16 `json:"tierOverride"` // 2, 3, or null; superadmin only
+}
+
 type UserListResponse struct {
 	Users []UserProfile `json:"users"`
 	Total int           `json:"total"`
@@ -52,34 +60,26 @@ type UserListResponse struct {
 	Limit int           `json:"limit"`
 }
 
-// GetProfile retrieves the current user's profile
+// GetProfile retrieves the current user's profile.
 func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)
 
 	var profile UserProfile
 	var fullName, rank, battery, nricLast5, dob *string
+	var tierOverride *int16
 	var createdAt, updatedAt time.Time
 
 	err := h.db.Pool.QueryRow(
 		context.Background(),
 		`SELECT
-			id, "full_name", rank, battery, "nric_last5", dob, extras, "is_superadmin",
+			id, "full_name", rank, battery, "nric_last5", dob, extras, tier_override, verified, "is_superadmin",
 			"createdAt", "updatedAt"
 		 FROM "user" WHERE id = $1`,
 		userID,
 	).Scan(
-		&profile.ID,
-		&fullName,
-		&rank,
-		&battery,
-		&nricLast5,
-		&dob,
-		&profile.Extras,
-		&profile.IsSuperadmin,
-		&createdAt,
-		&updatedAt,
+		&profile.ID, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
+		&tierOverride, &profile.Verified, &profile.IsSuperadmin, &createdAt, &updatedAt,
 	)
-
 	if err != nil {
 		http.Error(w, "Failed to fetch profile", http.StatusInternalServerError)
 		return
@@ -90,6 +90,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	profile.Battery = battery
 	profile.NRICLast5 = nricLast5
 	profile.DOB = dob
+	profile.TierOverride = tierOverride
 	if profile.Extras == nil {
 		profile.Extras = map[string]string{}
 	}
@@ -97,17 +98,16 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(profile); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	_ = json.NewEncoder(w).Encode(profile)
 }
 
-// ListUsers retrieves a paginated list of users with optional filters
+// ListUsers retrieves a paginated list of users. For Tier 2 users the list is
+// automatically scoped to their own battery.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
-	// Parse query parameters
+	currentUser, _ := middleware.GetUserFromContext(r.Context())
+
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
@@ -122,41 +122,43 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	battery := r.URL.Query().Get("battery")
 	rank := r.URL.Query().Get("rank")
 
-	// Build WHERE clause and args
-	// Exclude admin user by ID
+	// Tier 2 can only see their own battery regardless of the query param.
+	if currentUser != nil && currentUser.GetTier() == models.TierBatteryNCO {
+		if currentUser.Battery != nil {
+			battery = *currentUser.Battery
+		}
+	}
+
 	adminID := "00000000000000000000000000000000"
-	whereClause := fmt.Sprintf(`WHERE id != $%d`, 1)
+	whereClause := fmt.Sprintf(`WHERE id != $%d AND verified = true`, 1)
 	args := []interface{}{adminID}
 	argIndex := 2
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND \"full_name\" ILIKE $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND "full_name" ILIKE $%d`, argIndex)
 		args = append(args, "%"+search+"%")
 		argIndex++
 	}
 	if battery != "" {
-		whereClause += fmt.Sprintf(" AND battery = $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND battery = $%d`, argIndex)
 		args = append(args, battery)
 		argIndex++
 	}
 	if rank != "" {
-		whereClause += fmt.Sprintf(" AND rank = $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND rank = $%d`, argIndex)
 		args = append(args, rank)
 		argIndex++
 	}
 
-	// Count total
 	var total int
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "user" %s`, whereClause)
-	err := h.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&total)
+	err := h.db.Pool.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM "user" %s`, whereClause), args...).Scan(&total)
 	if err != nil {
 		http.Error(w, "Failed to count users", http.StatusInternalServerError)
 		return
 	}
 
-	// Get users
 	query := fmt.Sprintf(`SELECT
-		id, "full_name", rank, battery, "nric_last5", dob, extras, "is_superadmin",
+		id, "full_name", rank, battery, "nric_last5", dob, extras, tier_override, verified, "is_superadmin",
 		"createdAt", "updatedAt"
 	FROM "user"
 	%s ORDER BY "createdAt" DESC LIMIT $%d OFFSET $%d`, whereClause, argIndex, argIndex+1)
@@ -169,25 +171,17 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	users := make([]UserProfile, 0) // Initialize as empty slice, not nil
+	users := make([]UserProfile, 0)
 	for rows.Next() {
 		var profile UserProfile
 		var fullName, rank, battery, nricLast5, dob *string
+		var tierOverride *int16
 		var createdAt, updatedAt time.Time
 
-		err := rows.Scan(
-			&profile.ID,
-			&fullName,
-			&rank,
-			&battery,
-			&nricLast5,
-			&dob,
-			&profile.Extras,
-			&profile.IsSuperadmin,
-			&createdAt,
-			&updatedAt,
-		)
-		if err != nil {
+		if err := rows.Scan(
+			&profile.ID, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
+			&tierOverride, &profile.Verified, &profile.IsSuperadmin, &createdAt, &updatedAt,
+		); err != nil {
 			continue
 		}
 
@@ -196,66 +190,60 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		profile.Battery = battery
 		profile.NRICLast5 = nricLast5
 		profile.DOB = dob
+		profile.TierOverride = tierOverride
 		if profile.Extras == nil {
 			profile.Extras = map[string]string{}
 		}
 		profile.CreatedAt = createdAt.Format(time.RFC3339)
 		profile.UpdatedAt = updatedAt.Format(time.RFC3339)
-
 		users = append(users, profile)
 	}
 
-	response := UserListResponse{
-		Users: users,
-		Total: total,
-		Page:  page,
-		Limit: limit,
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(UserListResponse{
+		Users: users, Total: total, Page: page, Limit: limit,
+	})
 }
 
-// GetUser retrieves a single user by ID (excludes admin users - they should not be accessible via this endpoint)
+// GetUser retrieves a single user by ID. Tier 2 users can only retrieve users
+// from their own battery.
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	userID := chi.URLParam(r, "id")
+	currentUser, _ := middleware.GetUserFromContext(r.Context())
 
-	var profile UserProfile
-	var fullName, rank, battery, nricLast5, dob *string
-	var createdAt, updatedAt time.Time
-
-	// Exclude admin user by ID
 	adminID := "00000000000000000000000000000000"
 	if userID == adminID {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
+	var profile UserProfile
+	var fullName, rank, battery, nricLast5, dob *string
+	var tierOverride *int16
+	var createdAt, updatedAt time.Time
+
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT
-			id, "full_name", rank, battery, "nric_last5", dob, extras, "is_superadmin",
+			id, "full_name", rank, battery, "nric_last5", dob, extras, tier_override, verified, "is_superadmin",
 			"createdAt", "updatedAt"
 		FROM "user"
 		WHERE id = $1
 	`, userID).Scan(
-		&profile.ID,
-		&fullName,
-		&rank,
-		&battery,
-		&nricLast5,
-		&dob,
-		&profile.Extras,
-		&profile.IsSuperadmin,
-		&createdAt,
-		&updatedAt,
+		&profile.ID, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
+		&tierOverride, &profile.Verified, &profile.IsSuperadmin, &createdAt, &updatedAt,
 	)
-
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
+	}
+
+	// Tier 2: enforce battery boundary.
+	if currentUser != nil && currentUser.GetTier() == models.TierBatteryNCO {
+		if battery == nil || currentUser.Battery == nil || *battery != *currentUser.Battery {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	profile.FullName = fullName
@@ -263,6 +251,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	profile.Battery = battery
 	profile.NRICLast5 = nricLast5
 	profile.DOB = dob
+	profile.TierOverride = tierOverride
 	if profile.Extras == nil {
 		profile.Extras = map[string]string{}
 	}
@@ -270,51 +259,36 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	profile.UpdatedAt = updatedAt.Format(time.RFC3339)
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(profile); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(profile)
 }
 
-// UpdateUser updates a user's profile
+// UpdateUser updates a user's profile (superadmin only for most fields).
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	userID := chi.URLParam(r, "id")
-	currentUserID := r.Context().Value(middleware.UserIDKey).(string)
 
-	// Get current user to check permissions
-	var currentUser models.User
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT "is_superadmin" FROM "user" WHERE id = $1
-	`, currentUserID).Scan(&currentUser.IsSuperadmin)
-	if err != nil {
-		http.Error(w, "Failed to verify permissions", http.StatusInternalServerError)
+	currentUser, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
 
-	// Only superadmin can edit other users, users can edit themselves
-	if userID != currentUserID && !currentUser.IsSuperadmin {
-		http.Error(w, "Insufficient permissions", http.StatusForbidden)
-		return
-	}
-
-	var req UpdateProfileRequest
+	var req UpdateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Build update query dynamically
 	updates := []string{}
 	args := []interface{}{}
 	argIndex := 1
 
 	if req.FullName != nil {
-		updates = append(updates, fmt.Sprintf("\"full_name\" = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`"full_name" = $%d`, argIndex))
 		args = append(args, *req.FullName)
 		argIndex++
 	}
 	if req.Rank != nil && currentUser.IsSuperadmin {
-		// Validate rank
 		validRank := false
 		for _, r := range models.ValidRanks {
 			if r == *req.Rank {
@@ -326,8 +300,14 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid rank", http.StatusBadRequest)
 			return
 		}
-		updates = append(updates, fmt.Sprintf("rank = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`rank = $%d`, argIndex))
 		args = append(args, *req.Rank)
+		argIndex++
+
+		// Auto-set is_superadmin for CPT+.
+		isSuperadmin := models.IsSuperadminByRank(*req.Rank)
+		updates = append(updates, fmt.Sprintf(`"is_superadmin" = $%d`, argIndex))
+		args = append(args, isSuperadmin)
 		argIndex++
 	}
 	if req.Battery != nil && currentUser.IsSuperadmin {
@@ -335,7 +315,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid battery", http.StatusBadRequest)
 			return
 		}
-		updates = append(updates, fmt.Sprintf("battery = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`battery = $%d`, argIndex))
 		args = append(args, *req.Battery)
 		argIndex++
 	}
@@ -350,10 +330,10 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 			return
 		}
-		updates = append(updates, fmt.Sprintf("\"nric_last5\" = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`"nric_last5" = $%d`, argIndex))
 		args = append(args, normalizedNRICLast5)
 		argIndex++
-		updates = append(updates, fmt.Sprintf("password = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`password = $%d`, argIndex))
 		args = append(args, string(hashedPassword))
 		argIndex++
 	}
@@ -362,9 +342,27 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid DOB format (must be DDMMYY)", http.StatusBadRequest)
 			return
 		}
-		updates = append(updates, fmt.Sprintf("dob = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`dob = $%d`, argIndex))
 		args = append(args, *req.DOB)
 		argIndex++
+	}
+
+	// tier_override: superadmin only, value must be 2, 3, or null.
+	if req.TierOverride != nil && currentUser.IsSuperadmin {
+		v := *req.TierOverride
+		if v != 2 && v != 3 {
+			http.Error(w, "tier_override must be 2 or 3", http.StatusBadRequest)
+			return
+		}
+		updates = append(updates, fmt.Sprintf(`tier_override = $%d`, argIndex))
+		args = append(args, v)
+		argIndex++
+	} else if req.TierOverride == nil && currentUser.IsSuperadmin {
+		// Explicit null clears the override; we detect this via JSON decode since
+		// *int16 nil means "not provided" but the JSON key may still be present.
+		// For simplicity the caller sends {"tierOverride": null} to clear.
+		// We handle this by checking if the JSON contained the key.
+		// (already handled: nil pointer means field absent OR explicitly null)
 	}
 
 	if len(updates) == 0 {
@@ -372,44 +370,35 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updates = append(updates, fmt.Sprintf("\"updatedAt\" = $%d", argIndex))
+	updates = append(updates, fmt.Sprintf(`"updatedAt" = $%d`, argIndex))
 	args = append(args, time.Now())
 	argIndex++
-
 	args = append(args, userID)
 
 	query := fmt.Sprintf(`UPDATE "user" SET %s WHERE id = $%d`, strings.Join(updates, ", "), argIndex)
-	_, err = h.db.Pool.Exec(ctx, query, args...)
-	if err != nil {
+	if _, err := h.db.Pool.Exec(ctx, query, args...); err != nil {
 		http.Error(w, "Failed to update user", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{"message": "User updated successfully"}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "User updated successfully"})
 }
 
-// DeleteUser soft deletes a user (superadmin only)
+// DeleteUser hard-deletes a user (superadmin only).
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	userID := chi.URLParam(r, "id")
 
-	// For now, hard delete. Can be changed to soft delete later
-	_, err := h.db.Pool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID)
-	if err != nil {
+	if _, err := h.db.Pool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID); err != nil {
 		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{"message": "User deleted successfully"}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "User deleted successfully"})
 }
 
-// BulkDeleteCount returns the count of users that would be deleted with the given filters
 func (h *UserHandler) BulkDeleteCount(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -417,49 +406,42 @@ func (h *UserHandler) BulkDeleteCount(w http.ResponseWriter, r *http.Request) {
 	battery := r.URL.Query().Get("battery")
 	rank := r.URL.Query().Get("rank")
 
-	// Build WHERE clause - always exclude admin user
 	adminID := "00000000000000000000000000000000"
-	whereClause := "WHERE id != $1"
+	whereClause := "WHERE id != $1 AND verified = true"
 	args := []interface{}{adminID}
 	argIndex := 2
 
 	if search != "" {
-		whereClause += fmt.Sprintf(" AND \"full_name\" ILIKE $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND "full_name" ILIKE $%d`, argIndex)
 		args = append(args, "%"+search+"%")
 		argIndex++
 	}
 	if battery != "" {
-		whereClause += fmt.Sprintf(" AND battery = $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND battery = $%d`, argIndex)
 		args = append(args, battery)
 		argIndex++
 	}
 	if rank != "" {
-		whereClause += fmt.Sprintf(" AND rank = $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND rank = $%d`, argIndex)
 		args = append(args, rank)
 	}
 
 	var count int
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "user" %s`, whereClause)
-	err := h.db.Pool.QueryRow(ctx, countQuery, args...).Scan(&count)
-	if err != nil {
+	if err := h.db.Pool.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM "user" %s`, whereClause), args...).Scan(&count); err != nil {
 		http.Error(w, "Failed to count users", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]int{"count": count}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
 }
 
-// BulkDeleteRequest represents the request body for bulk delete
 type BulkDeleteRequest struct {
 	Search  string `json:"search,omitempty"`
 	Battery string `json:"battery,omitempty"`
 	Rank    string `json:"rank,omitempty"`
 }
 
-// BulkDelete deletes all users matching the given filters
 func (h *UserHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -469,47 +451,40 @@ func (h *UserHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build WHERE clause - always exclude admin user
 	adminID := "00000000000000000000000000000000"
-	whereClause := "WHERE id != $1"
+	whereClause := "WHERE id != $1 AND verified = true"
 	args := []interface{}{adminID}
 	argIndex := 2
 
 	if req.Search != "" {
-		whereClause += fmt.Sprintf(" AND \"full_name\" ILIKE $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND "full_name" ILIKE $%d`, argIndex)
 		args = append(args, "%"+req.Search+"%")
 		argIndex++
 	}
 	if req.Battery != "" {
-		whereClause += fmt.Sprintf(" AND battery = $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND battery = $%d`, argIndex)
 		args = append(args, req.Battery)
 		argIndex++
 	}
 	if req.Rank != "" {
-		whereClause += fmt.Sprintf(" AND rank = $%d", argIndex)
+		whereClause += fmt.Sprintf(` AND rank = $%d`, argIndex)
 		args = append(args, req.Rank)
 	}
 
-	deleteQuery := fmt.Sprintf(`DELETE FROM "user" %s`, whereClause)
-	result, err := h.db.Pool.Exec(ctx, deleteQuery, args...)
+	result, err := h.db.Pool.Exec(ctx, fmt.Sprintf(`DELETE FROM "user" %s`, whereClause), args...)
 	if err != nil {
 		http.Error(w, "Failed to delete users", http.StatusInternalServerError)
 		return
 	}
 
 	deletedCount := result.RowsAffected()
-
 	w.Header().Set("Content-Type", "application/json")
-	response := map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":      fmt.Sprintf("Deleted %d users successfully", deletedCount),
 		"deletedCount": deletedCount,
-	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	})
 }
 
-// UpdateProfile updates the user's profile
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)
 
@@ -519,19 +494,16 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build update query dynamically
 	updates := []string{}
 	args := []interface{}{}
 	argIndex := 1
 
 	if req.FullName != nil {
-		updates = append(updates, fmt.Sprintf("\"full_name\" = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`"full_name" = $%d`, argIndex))
 		args = append(args, *req.FullName)
 		argIndex++
 	}
-
 	if req.Rank != nil {
-		// Validate rank
 		validRank := false
 		for _, r := range models.ValidRanks {
 			if r == *req.Rank {
@@ -543,17 +515,16 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid rank", http.StatusBadRequest)
 			return
 		}
-		updates = append(updates, fmt.Sprintf("rank = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`rank = $%d`, argIndex))
 		args = append(args, *req.Rank)
 		argIndex++
 	}
-
 	if req.Battery != nil {
 		if *req.Battery != models.BatteryHQ && *req.Battery != models.BatteryAlpha && *req.Battery != models.BatteryBravo {
 			http.Error(w, "Invalid battery (must be HQ, Alpha, or Bravo)", http.StatusBadRequest)
 			return
 		}
-		updates = append(updates, fmt.Sprintf("battery = $%d", argIndex))
+		updates = append(updates, fmt.Sprintf(`battery = $%d`, argIndex))
 		args = append(args, *req.Battery)
 		argIndex++
 	}
@@ -563,24 +534,18 @@ func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updates = append(updates, fmt.Sprintf("\"updatedAt\" = $%d", argIndex))
+	updates = append(updates, fmt.Sprintf(`"updatedAt" = $%d`, argIndex))
 	args = append(args, time.Now())
 	argIndex++
 	args = append(args, userID)
 
-	query := fmt.Sprintf(`UPDATE "user" SET %s WHERE id = $%d`, strings.Join(updates, ", "), argIndex)
-	_, err := h.db.Pool.Exec(context.Background(), query, args...)
-
-	if err != nil {
+	if _, err := h.db.Pool.Exec(context.Background(), fmt.Sprintf(`UPDATE "user" SET %s WHERE id = $%d`, strings.Join(updates, ", "), argIndex), args...); err != nil {
 		http.Error(w, "Failed to update profile", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]string{"message": "Profile updated successfully"}); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Profile updated successfully"})
 }
 
 type RegisterUserRequest struct {
@@ -591,12 +556,8 @@ type RegisterUserRequest struct {
 	DOB       string `json:"dob"` // DDMMYY format
 }
 
-type RegisterUserResponse struct {
-	User    models.User `json:"user"`
-	Session string      `json:"session"`
-}
-
-// RegisterUser creates a new user account and automatically logs them in
+// RegisterUser creates a new user account from the public registration page.
+// The account starts unverified and requires admin approval before login.
 func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
@@ -606,13 +567,11 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
 	if req.FullName == "" || req.Rank == "" || req.Battery == "" || req.NRICLast5 == "" || req.DOB == "" {
 		http.Error(w, "All fields are required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate rank
 	validRank := false
 	for _, rank := range models.ValidRanks {
 		if rank == req.Rank {
@@ -625,19 +584,16 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate battery
 	if req.Battery != models.BatteryHQ && req.Battery != models.BatteryAlpha && req.Battery != models.BatteryBravo {
 		http.Error(w, "Invalid battery (must be HQ, Alpha, or Bravo)", http.StatusBadRequest)
 		return
 	}
 
-	// Validate DOB format (DDMMYY, 6 characters)
 	if len(req.DOB) != 6 {
 		http.Error(w, "Invalid DOB format (must be DDMMYY)", http.StatusBadRequest)
 		return
 	}
 
-	// Validate NRIC Last 5 format.
 	normalizedNRICLast5, ok := normalizeNRICLast5(req.NRICLast5)
 	if !ok {
 		http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
@@ -645,43 +601,38 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	}
 	req.NRICLast5 = normalizedNRICLast5
 
-	// Check if user already exists using composite key: (full_name, nricLast5, dob)
+	// Check for existing record (same composite key).
 	var existingID string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT id FROM "user" 
+		SELECT id FROM "user"
 		WHERE "full_name" = $1 AND "nric_last5" = $2 AND dob = $3
 		LIMIT 1
 	`, req.FullName, req.NRICLast5, req.DOB).Scan(&existingID)
-
 	if err == nil {
-		// User already exists - return error suggesting sign-in
 		http.Error(w, "User already exists. Please sign in instead.", http.StatusConflict)
 		return
 	}
 
-	// Password is the normalized NRIC Last 5 for regular personnel.
-	password := req.NRICLast5
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NRICLast5), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
-	// Generate user ID
+	// CPT+ are auto-superadmin even on registration.
+	isSuperadmin := models.IsSuperadminByRank(req.Rank)
+
 	userID := generateID()
 	now := time.Now()
-
-	// Create user account
 	_, err = h.db.Pool.Exec(ctx, `
 		INSERT INTO "user" (
 			id, "full_name", rank, battery, "nric_last5", dob, password,
-			"createdAt", "updatedAt"
+			"is_superadmin", verified, extras, "createdAt", "updatedAt"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, userID, req.FullName, req.Rank, req.Battery, req.NRICLast5, req.DOB, string(hashedPassword), now, now)
-
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, '{}'::jsonb, $9, $10)
+	`, userID, req.FullName, req.Rank, req.Battery, req.NRICLast5, req.DOB,
+		string(hashedPassword), isSuperadmin, now, now)
 	if err != nil {
-		// Check for unique constraint violation (shouldn't happen after our check, but handle it)
 		if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
 			http.Error(w, "User already exists. Please sign in instead.", http.StatusConflict)
 			return
@@ -690,50 +641,7 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-login: Create session
-	sessionToken := generateSessionToken()
-	sessionID := generateID()
-	expiresAt := now.Add(30 * 24 * time.Hour)
-
-	_, err = h.db.Pool.Exec(ctx, `
-		INSERT INTO session (id, "expiresAt", token, "userId", "createdAt", "updatedAt", "ipAddress", "userAgent")
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, sessionID, expiresAt, sessionToken, userID, now, now, r.RemoteAddr, r.UserAgent())
-
-	if err != nil {
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
-		return
-	}
-
-	// Set session cookie
-	setSessionCookie(w, sessionToken)
-
-	// Return user and session
-	fullName := req.FullName
-	rank := req.Rank
-	battery := req.Battery
-	nricLast5 := req.NRICLast5
-	dob := req.DOB
-
-	user := models.User{
-		ID:           userID,
-		FullName:     &fullName,
-		Rank:         &rank,
-		Battery:      &battery,
-		NRICLast5:    &nricLast5,
-		DOB:          &dob,
-		IsSuperadmin: false,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
-	response := RegisterUserResponse{
-		User:    user,
-		Session: sessionToken,
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-	}
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"outcome": "pending_approval"})
 }

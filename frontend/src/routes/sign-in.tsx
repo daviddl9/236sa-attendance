@@ -20,7 +20,7 @@ import { useAuth } from '../lib/auth-context';
 import { apiClient } from '../lib/api-client';
 import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FORMAT_MESSAGE } from '../lib/nric-password';
 import { NoPasteInput } from '../components/no-paste-input';
-import { Info, Eye, EyeOff, UserPlus } from 'lucide-react';
+import { Info, Eye, EyeOff, UserPlus, Clock } from 'lucide-react';
 
 export const Route = createFileRoute('/sign-in')({
   component: SignInComponent,
@@ -43,6 +43,7 @@ function SignInContent() {
   const [signupName, setSignupName] = useState('');
   const [confirmNric, setConfirmNric] = useState('');
   const [nricMismatch, setNricMismatch] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(false);
 
   const { refetch } = useAuth();
   const search = useSearch({ from: '/sign-in' }) as { redirect?: string; qrToken?: string };
@@ -126,6 +127,12 @@ function SignInContent() {
         return;
       }
 
+      if (data.outcome === 'pending_approval') {
+        setPendingApproval(true);
+        setLoading(false);
+        return;
+      }
+
       // outcome === 'authenticated'
       await finishAuth(data.user.rank, data.user.battery);
     } catch (error) {
@@ -162,7 +169,15 @@ function SignInContent() {
         nricLast5: nric,
         confirmNricLast5: confirm,
       });
-      await finishAuth(data.user.rank, data.user.battery);
+      if (data.outcome === 'pending_approval') {
+        setPendingApproval(true);
+        setSignupRequired(false);
+        setLoading(false);
+        return;
+      }
+      if (data.outcome === 'authenticated') {
+        await finishAuth(data.user.rank, data.user.battery);
+      }
     } catch (error) {
       setLoading(false);
       const errorMessage = error instanceof Error ? error.message : 'Failed to create account';
@@ -178,11 +193,35 @@ function SignInContent() {
             236SA Attendance System
           </CardTitle>
           <CardDescription className="text-xs md:text-sm">
-            {signupRequired ? `Create your account for ${signupName}` : 'Sign in to your account'}
+            {pendingApproval
+              ? 'Registration submitted'
+              : signupRequired
+              ? `Create your account for ${signupName}`
+              : 'Sign in to your account'}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {!signupRequired ? (
+          {pendingApproval ? (
+            <div className="grid gap-4">
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20">
+                <div className="flex items-start gap-3 text-sm text-amber-800 dark:text-amber-300">
+                  <Clock className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium mb-1">Pending admin approval</p>
+                    <p>Your registration has been submitted. An administrator will review and approve your account before you can sign in.</p>
+                  </div>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={() => { setPendingApproval(false); setSignupRequired(false); }}
+              >
+                Back to sign in
+              </Button>
+            </div>
+          ) : !signupRequired ? (
             <form onSubmit={handleSignIn} className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="identifier">Full Name (as in NRIC)</Label>

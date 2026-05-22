@@ -8,8 +8,8 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 )
 
-// RequireCommander middleware ensures user is a commander (3SG+) or superadmin
-func RequireCommander(db *database.DB) func(http.Handler) http.Handler {
+// RequireBatteryNCO allows Tier 2+ (3SG–1SG, SSG+, superadmin).
+func RequireBatteryNCO(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, ok := GetUserFromContext(r.Context())
@@ -17,18 +17,39 @@ func RequireCommander(db *database.DB) func(http.Handler) http.Handler {
 				http.Error(w, "Not authenticated", http.StatusUnauthorized)
 				return
 			}
-
-			if !user.IsCommander() && !user.IsSuperadmin {
-				http.Error(w, "Insufficient permissions: Commander access required", http.StatusForbidden)
+			if user.GetTier() < models.TierBatteryNCO {
+				http.Error(w, "Insufficient permissions", http.StatusForbidden)
 				return
 			}
-
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// RequireSuperadmin middleware ensures user is a superadmin
+// RequireUnitCommander allows Tier 3+ (SSG+, superadmin).
+func RequireUnitCommander(db *database.DB) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, ok := GetUserFromContext(r.Context())
+			if !ok {
+				http.Error(w, "Not authenticated", http.StatusUnauthorized)
+				return
+			}
+			if user.GetTier() < models.TierUnitCommander {
+				http.Error(w, "Insufficient permissions", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireCommander is kept as an alias for RequireBatteryNCO for the SSE handler.
+func RequireCommander(db *database.DB) func(http.Handler) http.Handler {
+	return RequireBatteryNCO(db)
+}
+
+// RequireSuperadmin middleware ensures user is a superadmin.
 func RequireSuperadmin(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,25 +58,22 @@ func RequireSuperadmin(db *database.DB) func(http.Handler) http.Handler {
 				http.Error(w, "Not authenticated", http.StatusUnauthorized)
 				return
 			}
-
 			if !user.IsSuperadmin {
 				http.Error(w, "Insufficient permissions: Superadmin access required", http.StatusForbidden)
 				return
 			}
-
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// GetUserFromContext retrieves the user from request context
+// GetUserFromContext retrieves the user from request context.
 func GetUserFromContext(ctx context.Context) (*models.User, bool) {
 	user, ok := ctx.Value(UserKey).(*models.User)
 	return user, ok
 }
 
-// LoadUser middleware loads the full user object into context
-// This should be used after Auth middleware
+// LoadUser middleware loads the full user object into context.
 func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,21 +85,23 @@ func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 
 			ctx := r.Context()
 
-			// Load full user object
 			var user models.User
 			var fullName, rank, battery *string
 			var nricLast5, dob *string
+			var tierOverride *int16
 
 			err := db.Pool.QueryRow(ctx, `
 				SELECT
 					id, "full_name",
 					rank, battery, "nric_last5", dob, "is_superadmin",
+					tier_override, verified,
 					"createdAt", "updatedAt"
 				FROM "user"
 				WHERE id = $1
 			`, userID).Scan(
 				&user.ID, &fullName,
 				&rank, &battery, &nricLast5, &dob, &user.IsSuperadmin,
+				&tierOverride, &user.Verified,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 
@@ -95,8 +115,8 @@ func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 			user.Battery = battery
 			user.NRICLast5 = nricLast5
 			user.DOB = dob
+			user.TierOverride = tierOverride
 
-			// Add user to context
 			ctx = context.WithValue(ctx, UserKey, &user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

@@ -15,6 +15,7 @@ import (
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/go-chi/chi/v5"
 	"github.com/xuri/excelize/v2"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -602,4 +603,97 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Failed to encode bulk create response: %v", err)
 	}
+}
+
+// ---- Registration Approval ----
+
+type PendingRegistration struct {
+	ID        string  `json:"id"`
+	FullName  *string `json:"fullName,omitempty"`
+	Rank      *string `json:"rank,omitempty"`
+	Battery   *string `json:"battery,omitempty"`
+	NRICLast5 *string `json:"nricLast5,omitempty"`
+	CreatedAt string  `json:"createdAt"`
+}
+
+// ListPendingRegistrations returns users with verified=false (self-registered, awaiting approval).
+func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+	rows, err := h.db.Pool.Query(ctx, `
+		SELECT id, "full_name", rank, battery, "nric_last5", "createdAt"
+		FROM "user"
+		WHERE verified = false
+		ORDER BY "createdAt" ASC
+	`)
+	if err != nil {
+		http.Error(w, "Failed to fetch pending registrations", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	pending := make([]PendingRegistration, 0)
+	for rows.Next() {
+		var p PendingRegistration
+		var fullName, rank, battery, nricLast5 *string
+		var createdAt time.Time
+		if err := rows.Scan(&p.ID, &fullName, &rank, &battery, &nricLast5, &createdAt); err != nil {
+			continue
+		}
+		p.FullName = fullName
+		p.Rank = rank
+		p.Battery = battery
+		p.NRICLast5 = nricLast5
+		p.CreatedAt = createdAt.Format(time.RFC3339)
+		pending = append(pending, p)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"registrations": pending,
+		"total":         len(pending),
+	})
+}
+
+// ApproveRegistration sets verified=true so the user can log in.
+func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	userID := chi.URLParam(r, "id")
+
+	result, err := h.db.Pool.Exec(ctx, `
+		UPDATE "user" SET verified = true, "updatedAt" = NOW()
+		WHERE id = $1 AND verified = false
+	`, userID)
+	if err != nil {
+		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		http.Error(w, "Registration not found or already approved", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Registration approved"})
+}
+
+// RejectRegistration deletes the pending user record.
+func (h *AdminHandler) RejectRegistration(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+	userID := chi.URLParam(r, "id")
+
+	result, err := h.db.Pool.Exec(ctx, `
+		DELETE FROM "user" WHERE id = $1 AND verified = false
+	`, userID)
+	if err != nil {
+		http.Error(w, "Failed to reject registration", http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		http.Error(w, "Registration not found or already approved", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Registration rejected"})
 }

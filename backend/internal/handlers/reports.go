@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/go-chi/chi/v5"
 )
@@ -63,16 +64,44 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Build user query based on session scope
-	// Exclude superadmin users from attendance tracking
+	// Tier 2 users see only their own battery's slice of the analytics.
+	currentUser, _ := middleware.GetUserFromContext(r.Context())
+	var batteryScope *string
+	if currentUser != nil && currentUser.GetTier() == models.TierBatteryNCO && currentUser.Battery != nil {
+		batteryScope = currentUser.Battery
+	}
+
+	// Build user query based on session scope + optional battery scope for Tier 2.
 	var userQuery string
 	var userArgs []any
-	if sessionScope == "unit_wide" {
-		userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false`
-		userArgs = nil
-	} else {
-		userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = ANY($1)`
-		userArgs = []any{sessionBatteries}
+	switch sessionScope {
+	case models.SessionScopeCustomList:
+		if batteryScope != nil {
+			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
+				JOIN session_participants sp ON sp.user_id = u.id
+				WHERE sp.session_id = $1 AND u."is_superadmin" = false AND u.battery = $2`
+			userArgs = []any{sessionID, *batteryScope}
+		} else {
+			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
+				JOIN session_participants sp ON sp.user_id = u.id
+				WHERE sp.session_id = $1 AND u."is_superadmin" = false`
+			userArgs = []any{sessionID}
+		}
+	case models.SessionScopeUnitWide:
+		if batteryScope != nil {
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = $1`
+			userArgs = []any{*batteryScope}
+		} else {
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false`
+		}
+	default: // battery_specific
+		if batteryScope != nil {
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = $1`
+			userArgs = []any{*batteryScope}
+		} else {
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = ANY($1)`
+			userArgs = []any{sessionBatteries}
+		}
 	}
 
 	// Get all eligible users
@@ -210,33 +239,68 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Build query for eligible users
-	// Exclude superadmin users from attendance tracking
+	// Tier 2 battery scoping for missing list.
+	missingUser, _ := middleware.GetUserFromContext(r.Context())
+	var missingBatteryScope *string
+	if missingUser != nil && missingUser.GetTier() == models.TierBatteryNCO && missingUser.Battery != nil {
+		missingBatteryScope = missingUser.Battery
+	}
+
 	var userQuery string
 	var userArgs []any
-	if sessionScope == "unit_wide" {
-		userQuery = `
-			SELECT u.id, u."full_name", u.rank, u.battery
-			FROM "user" u
-			WHERE u."is_superadmin" = false
-			AND NOT EXISTS (
-				SELECT 1 FROM attendance_record ar
-				WHERE ar.session_id = $1 AND ar.user_id = u.id
-			)
-		`
-		userArgs = []any{sessionID}
-	} else {
-		userQuery = `
-			SELECT u.id, u."full_name", u.rank, u.battery
-			FROM "user" u
-			WHERE u."is_superadmin" = false
-			AND u.battery = ANY($1)
-			AND NOT EXISTS (
-				SELECT 1 FROM attendance_record ar
-				WHERE ar.session_id = $2 AND ar.user_id = u.id
-			)
-		`
-		userArgs = []any{sessionBatteries, sessionID}
+	switch sessionScope {
+	case models.SessionScopeCustomList:
+		if missingBatteryScope != nil {
+			userQuery = `
+				SELECT u.id, u."full_name", u.rank, u.battery
+				FROM "user" u
+				JOIN session_participants sp ON sp.user_id = u.id
+				WHERE sp.session_id = $1 AND u."is_superadmin" = false AND u.battery = $2
+				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
+			`
+			userArgs = []any{sessionID, *missingBatteryScope}
+		} else {
+			userQuery = `
+				SELECT u.id, u."full_name", u.rank, u.battery
+				FROM "user" u
+				JOIN session_participants sp ON sp.user_id = u.id
+				WHERE sp.session_id = $1 AND u."is_superadmin" = false
+				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
+			`
+			userArgs = []any{sessionID}
+		}
+	case models.SessionScopeUnitWide:
+		if missingBatteryScope != nil {
+			userQuery = `
+				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
+				WHERE u."is_superadmin" = false AND u.battery = $1
+				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
+			`
+			userArgs = []any{*missingBatteryScope, sessionID}
+		} else {
+			userQuery = `
+				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
+				WHERE u."is_superadmin" = false
+				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
+			`
+			userArgs = []any{sessionID}
+		}
+	default: // battery_specific
+		if missingBatteryScope != nil {
+			userQuery = `
+				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
+				WHERE u."is_superadmin" = false AND u.battery = $1
+				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
+			`
+			userArgs = []any{*missingBatteryScope, sessionID}
+		} else {
+			userQuery = `
+				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
+				WHERE u."is_superadmin" = false AND u.battery = ANY($1)
+				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
+			`
+			userArgs = []any{sessionBatteries, sessionID}
+		}
 	}
 
 	rows, err := h.db.Pool.Query(ctx, userQuery, userArgs...)

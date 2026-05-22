@@ -8,31 +8,26 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import UserProfile from "./user-profile";
-import { Menu, Settings, Users, Calendar, ScanLine, BarChart3, Clock } from "lucide-react";
+import { Menu, Settings, Users, Calendar, ScanLine, BarChart3, Clock, UserCheck } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
-import { canAccessCommanderFeatures, isSuperadmin } from "@/lib/user-utils";
+import { isSuperadmin, getUserTier } from "@/lib/user-utils";
+import { useQuery } from "@tanstack/react-query";
+import { apiClient } from "@/lib/api-client";
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  requiresCommander?: boolean;
-  requiresSuperadmin?: boolean;
+  minTier?: number;
 }
 
 const navItems: NavItem[] = [
   {
-    label: "Users",
-    href: "/dashboard/users",
-    icon: Users,
-    requiresSuperadmin: true,
-  },
-  {
     label: "Sessions",
     href: "/dashboard/sessions",
     icon: Calendar,
-    requiresCommander: true,
+    minTier: 2,
   },
   {
     label: "Scan QR",
@@ -40,16 +35,22 @@ const navItems: NavItem[] = [
     icon: ScanLine,
   },
   {
+    label: "Users",
+    href: "/dashboard/users",
+    icon: Users,
+    minTier: 2,
+  },
+  {
     label: "Statuses",
     href: "/dashboard/statuses",
     icon: Clock,
-    requiresSuperadmin: true,
+    minTier: 3,
   },
   {
     label: "Reports",
     href: "/dashboard/reports",
     icon: BarChart3,
-    requiresSuperadmin: true,
+    minTier: 2,
   },
 ];
 
@@ -57,12 +58,20 @@ export default function DashboardTopNav({ children }: { children: React.ReactNod
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const canAccessCommander = canAccessCommanderFeatures(user);
-  const isSuperadminUser = isSuperadmin(user);
+  const tier = getUserTier(user);
+  const isAdmin = isSuperadmin(user);
+
+  const { data: pendingData } = useQuery({
+    queryKey: ['pending-registrations'],
+    queryFn: () => apiClient.listPendingRegistrations(),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const pendingCount = pendingData?.total ?? 0;
 
   const filteredNavItems = navItems.filter((item) => {
-    if (item.requiresSuperadmin && !isSuperadminUser) return false;
-    if (item.requiresCommander && !canAccessCommander) return false;
+    if (item.minTier && tier < item.minTier) return false;
     return true;
   });
 
@@ -95,6 +104,25 @@ export default function DashboardTopNav({ children }: { children: React.ReactNod
                   </Button>
                 </DialogClose>
               ))}
+
+              {isAdmin && (
+                <DialogClose asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start px-4"
+                    onClick={() => navigate({ to: '/dashboard/admin/registrations' })}
+                  >
+                    <UserCheck className="mr-3 h-4 w-4" />
+                    Registrations
+                    {pendingCount > 0 && (
+                      <span className="ml-auto flex items-center justify-center h-5 min-w-5 px-1 rounded-full bg-destructive text-destructive-foreground text-xs font-semibold">
+                        {pendingCount}
+                      </span>
+                    )}
+                  </Button>
+                </DialogClose>
+              )}
+
               <Separator className="my-3" />
               <DialogClose asChild>
                 <Link to="/dashboard/settings">
@@ -117,4 +145,3 @@ export default function DashboardTopNav({ children }: { children: React.ReactNod
     </div>
   );
 }
-
