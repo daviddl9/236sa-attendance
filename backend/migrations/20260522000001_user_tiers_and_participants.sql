@@ -1,3 +1,6 @@
+-- +goose Up
+-- +goose StatementBegin
+
 -- Feature 003: user tiers (tier_override + verified)
 ALTER TABLE "user"
   ADD COLUMN IF NOT EXISTS tier_override SMALLINT DEFAULT NULL
@@ -23,3 +26,22 @@ ALTER TABLE attendance_session
 ALTER TABLE attendance_session
   ADD CONSTRAINT attendance_session_scope_check
   CHECK (scope IN ('unit_wide', 'battery_specific', 'custom_list'));
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+
+DROP TABLE IF EXISTS session_participants;
+
+ALTER TABLE attendance_session
+  DROP CONSTRAINT IF EXISTS attendance_session_scope_check;
+
+ALTER TABLE attendance_session
+  ADD CONSTRAINT attendance_session_scope_check
+  CHECK (scope IN ('unit_wide', 'battery_specific'));
+
+ALTER TABLE "user" DROP COLUMN IF EXISTS tier_override;
+ALTER TABLE "user" DROP COLUMN IF EXISTS verified;
+
+-- +goose StatementEnd
