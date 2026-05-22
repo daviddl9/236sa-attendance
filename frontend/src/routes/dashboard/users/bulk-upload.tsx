@@ -411,10 +411,15 @@ function BulkUploadPage() {
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
-          <div>
+          <div className="flex-1">
             <h1 className="text-3xl font-semibold tracking-tight">Bulk Upload Users</h1>
             <p className="text-muted-foreground">Upload users from an Excel file</p>
           </div>
+          <Link to="/dashboard/users/import-document">
+            <Button variant="outline" size="sm">
+              Try the new agent-driven document import →
+            </Button>
+          </Link>
         </div>
 
         <Card>

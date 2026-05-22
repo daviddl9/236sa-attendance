@@ -19,7 +19,8 @@ import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
 import { apiClient } from '../lib/api-client';
 import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FORMAT_MESSAGE } from '../lib/nric-password';
-import { Info, Eye, EyeOff } from 'lucide-react';
+import { NoPasteInput } from '../components/no-paste-input';
+import { Info, Eye, EyeOff, UserPlus } from 'lucide-react';
 
 export const Route = createFileRoute('/sign-in')({
   component: SignInComponent,
@@ -36,8 +37,67 @@ function SignInContent() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Signup state — shown when sign-in returns signup_required
+  const [signupRequired, setSignupRequired] = useState(false);
+  const [signupName, setSignupName] = useState('');
+  const [confirmNric, setConfirmNric] = useState('');
+  const [nricMismatch, setNricMismatch] = useState(false);
+
   const { refetch } = useAuth();
   const search = useSearch({ from: '/sign-in' }) as { redirect?: string; qrToken?: string };
+
+  const finishAuth = async (rank: string | null | undefined, battery: string | null | undefined) => {
+    const profileComplete = rank && battery;
+
+    if (search.qrToken && !profileComplete) {
+      sessionStorage.setItem('pendingQrToken', search.qrToken);
+    }
+
+    await refetch();
+    toast.success('Signed in successfully');
+
+    if (search.qrToken) {
+      if (!profileComplete) {
+        window.location.href = '/dashboard';
+        return;
+      }
+      try {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+        const response = await fetch(`${apiUrl}/api/qr/${search.qrToken}`, {
+          method: 'GET',
+          credentials: 'include',
+          redirect: 'manual',
+        });
+        if (response.type === 'opaqueredirect') {
+          const sessionId = search.qrToken.split(':')[0];
+          window.location.href = `/attendance/marked?session=${sessionId}`;
+          return;
+        }
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('Location');
+          if (location) {
+            try {
+              const url = new URL(location);
+              window.location.href = url.pathname + url.search;
+            } catch {
+              window.location.href = location;
+            }
+            return;
+          }
+        }
+        if (response.ok) {
+          const sessionId = search.qrToken.split(':')[0];
+          window.location.href = `/attendance/marked?session=${sessionId}`;
+          return;
+        }
+      } catch {
+        toast.error('Signed in but failed to mark attendance. Please scan the QR code again.');
+      }
+    }
+
+    window.location.href = search.redirect ?? '/dashboard';
+  };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,81 +119,53 @@ function SignInContent() {
         password: isAdmin ? password : normalizeNricLast5(password),
       });
 
-      // Check if profile is complete (has rank and battery)
-      const profileComplete = data.user.rank && data.user.battery;
-
-      // IMPORTANT: Store qrToken BEFORE refetch() to avoid race condition
-      // refetch() updates isAuthenticated which triggers Navigate before this code completes
-      console.log('[SignIn] search.qrToken:', search.qrToken, 'profileComplete:', profileComplete);
-      if (search.qrToken && !profileComplete) {
-        console.log('[SignIn] Storing pendingQrToken in sessionStorage');
-        sessionStorage.setItem('pendingQrToken', search.qrToken);
+      if (data.outcome === 'signup_required') {
+        setSignupRequired(true);
+        setSignupName(data.fullName);
+        setLoading(false);
+        return;
       }
 
-      await refetch(); // Refresh auth context to get updated user data
-      toast.success('Signed in successfully');
-
-      // If there's a QR token, mark attendance (after profile completion if needed)
-      if (search.qrToken) {
-        // If profile is not complete, redirect to dashboard where modal will show
-        if (!profileComplete) {
-          window.location.href = '/dashboard';
-          return;
-        }
-        
-        // Profile is complete, mark attendance immediately
-        try {
-          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-          const response = await fetch(`${apiUrl}/api/qr/${search.qrToken}`, {
-            method: 'GET',
-            credentials: 'include',
-            redirect: 'manual',
-          });
-
-          // Handle opaque redirects (CORS) - backend returned a redirect
-          if (response.type === 'opaqueredirect') {
-            const sessionId = search.qrToken.split(':')[0];
-            window.location.href = `/attendance/marked?session=${sessionId}`;
-            return;
-          }
-
-          // Handle transparent redirects (same-origin)
-          if (response.status >= 300 && response.status < 400) {
-            const location = response.headers.get('Location');
-            if (location) {
-              try {
-                const url = new URL(location);
-                const path = url.pathname + url.search;
-                window.location.href = path;
-                return;
-              } catch {
-                window.location.href = location;
-                return;
-              }
-            }
-          }
-
-          // If successful, redirect to marked page
-          if (response.ok) {
-            const sessionId = search.qrToken.split(':')[0];
-            window.location.href = `/attendance/marked?session=${sessionId}`;
-            return;
-          }
-        } catch (qrError) {
-          console.error('Failed to mark attendance:', qrError);
-          toast.error('Signed in but failed to mark attendance. Please scan the QR code again.');
-        }
-      }
-      
-      // Redirect to the redirect URL if present, otherwise go to dashboard
-      if (search.redirect) {
-        window.location.href = search.redirect;
-      } else {
-        window.location.href = '/dashboard';
-      }
+      // outcome === 'authenticated'
+      await finishAuth(data.user.rank, data.user.battery);
     } catch (error) {
       setLoading(false);
       const errorMessage = error instanceof Error ? error.message : 'Invalid identifier or password';
+      toast.error(errorMessage);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setNricMismatch(false);
+
+    const nric = normalizeNricLast5(password);
+    const confirm = normalizeNricLast5(confirmNric);
+
+    if (!isValidNricLast5(password)) {
+      toast.error(NRIC_LAST5_FORMAT_MESSAGE);
+      return;
+    }
+    if (!isValidNricLast5(confirmNric)) {
+      toast.error('Confirmation: ' + NRIC_LAST5_FORMAT_MESSAGE);
+      return;
+    }
+    if (nric !== confirm) {
+      setNricMismatch(true);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const data = await apiClient.signUp({
+        fullName: signupName,
+        nricLast5: nric,
+        confirmNricLast5: confirm,
+      });
+      await finishAuth(data.user.rank, data.user.battery);
+    } catch (error) {
+      setLoading(false);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create account';
       toast.error(errorMessage);
     }
   };
@@ -146,75 +178,142 @@ function SignInContent() {
             236SA Attendance System
           </CardTitle>
           <CardDescription className="text-xs md:text-sm">
-            Sign in to your account
+            {signupRequired ? `Create your account for ${signupName}` : 'Sign in to your account'}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSignIn} className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="identifier">
-                Full Name (as in NRIC)
-              </Label>
-              <Input
-                id="identifier"
-                type="text"
-                placeholder="Enter your full name as in NRIC"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                disabled={loading}
-                required
-              />
-            </div>
-            <div className="grid gap-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="password">Password</Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center"
-                    >
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p className="text-xs">
-                      Last 5 characters of NRIC: 4 numbers and the final alphabet letter.
-                      <br />
-                      Example: <strong>4567A</strong>
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <div className="relative">
+          {!signupRequired ? (
+            <form onSubmit={handleSignIn} className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="identifier">Full Name (as in NRIC)</Label>
                 <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  id="identifier"
+                  type="text"
+                  placeholder="Enter your full name as in NRIC"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   disabled={loading}
                   required
-                  className="pr-10"
                 />
-                <button
+              </div>
+              <div className="grid gap-2">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" className="inline-flex items-center justify-center">
+                        <Info className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p className="text-xs">
+                        Last 5 characters of NRIC: 4 numbers and the final alphabet letter.
+                        <br />
+                        Example: <strong>4567A</strong>
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={loading}
+                    required
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    disabled={loading}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? 'Signing in...' : 'Sign In'}
+              </Button>
+            </form>
+          ) : (
+            <form onSubmit={handleSignUp} className="grid gap-4">
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/20">
+                <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+                  <UserPlus className="h-4 w-4 shrink-0" />
+                  <span>
+                    <strong>{signupName}</strong> is not in the system yet. Complete the fields below to create your account.
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid gap-2">
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="nric-entry">NRIC Last 5</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" className="inline-flex items-center justify-center">
+                        <Info className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p className="text-xs">
+                        4 digits followed by 1 letter. Example: <strong>4567A</strong>
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input
+                  id="nric-entry"
+                  type="text"
+                  placeholder="e.g. 1234A"
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setNricMismatch(false); }}
+                  disabled={loading}
+                  maxLength={5}
+                  required
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="nric-confirm">Confirm NRIC Last 5</Label>
+                <p className="text-xs text-muted-foreground -mt-1">
+                  Type it again — paste and autofill are disabled here.
+                </p>
+                <NoPasteInput
+                  id="nric-confirm"
+                  type="text"
+                  placeholder="Type it again"
+                  value={confirmNric}
+                  onChange={(e) => { setConfirmNric(e.target.value); setNricMismatch(false); }}
+                  disabled={loading}
+                  maxLength={5}
+                  required
+                />
+                {nricMismatch && (
+                  <p className="text-sm text-destructive">NRIC Last 5 values do not match.</p>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <Button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => { setSignupRequired(false); setConfirmNric(''); setNricMismatch(false); }}
                   disabled={loading}
                 >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
+                  Back
+                </Button>
+                <Button type="submit" className="flex-1" disabled={loading}>
+                  {loading ? 'Creating account...' : 'Create account'}
+                </Button>
               </div>
-            </div>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Signing in...' : 'Sign In'}
-            </Button>
-          </form>
+            </form>
+          )}
         </CardContent>
       </Card>
       <p className="mt-6 text-xs text-center text-gray-500 dark:text-gray-400 max-w-md">

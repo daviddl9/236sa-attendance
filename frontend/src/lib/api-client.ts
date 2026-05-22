@@ -15,14 +15,33 @@ export interface User {
   updatedAt: string;
 }
 
-export interface AuthResponse {
+export type SignInOutcome = 'authenticated' | 'signup_required';
+
+export interface SignInAuthenticatedResponse {
+  outcome: 'authenticated';
   user: User;
   session: string;
 }
 
+export interface SignInSignupRequiredResponse {
+  outcome: 'signup_required';
+  fullName: string;
+}
+
+export type SignInResponse = SignInAuthenticatedResponse | SignInSignupRequiredResponse;
+
+// Kept for callers that destructure { user, session } from sign-in directly.
+export type AuthResponse = SignInAuthenticatedResponse;
+
 export interface SignInRequest {
   identifier: string;
   password: string;
+}
+
+export interface SignUpRequest {
+  fullName: string;
+  nricLast5: string;
+  confirmNricLast5: string;
 }
 
 export interface RegisterUserRequest {
@@ -183,6 +202,56 @@ export interface BulkUploadResponse {
   users?: User[];
 }
 
+// Document-import (feature 002) types
+export type ImportMatchStatus = 'new' | 'existing_match' | 'invalid';
+
+export interface ImportRowCounts {
+  created: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface ImportPreviewedRow {
+  fullName: string;
+  rank?: string;
+  battery?: string;
+  nricLast5: string;
+  extras?: Record<string, string>;
+  sourceSnippet?: string;
+  confidence: number;
+  matchStatus: ImportMatchStatus;
+  existingId?: string;
+  validationMsg?: string;
+}
+
+export interface ImportPreviewResponse {
+  importId: string;
+  filename: string;
+  rowCounts: ImportRowCounts;
+  rows: ImportPreviewedRow[];
+}
+
+export type ImportMergeMode = 'fill_gaps' | 'override';
+
+export interface ImportCommitRow {
+  fullName: string;
+  rank?: string;
+  battery?: string;
+  nricLast5: string;
+}
+
+export interface ImportCommitRequest {
+  importId: string;
+  mergeMode: ImportMergeMode;
+  rows: ImportCommitRow[];
+}
+
+export interface ImportCommitResponse {
+  importId: string;
+  rowCounts: ImportRowCounts;
+}
+
 // Status types
 export type StatusType = 'stay_out' | 'off_pass' | 'mc' | 'course' | 'other';
 
@@ -298,8 +367,15 @@ export class APIClient {
   }
 
   // Auth endpoints
-  async signIn(data: SignInRequest): Promise<AuthResponse> {
-    return this.request<AuthResponse>('/api/auth/sign-in', {
+  async signIn(data: SignInRequest): Promise<SignInResponse> {
+    return this.request<SignInResponse>('/api/auth/sign-in', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async signUp(data: SignUpRequest): Promise<SignInAuthenticatedResponse> {
+    return this.request<SignInAuthenticatedResponse>('/api/auth/sign-up', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -405,6 +481,54 @@ export class APIClient {
       method: 'POST',
       body: JSON.stringify({ users }),
     });
+  }
+
+  async previewImportDocument(file: File): Promise<ImportPreviewResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(
+      `${this.baseURL}/api/admin/users/import-document/preview`,
+      { method: 'POST', body: formData, credentials: 'include' },
+    );
+
+    if (!response.ok) {
+      let message = response.statusText;
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (body.error) message = body.error;
+      } catch {
+        // Body wasn't JSON — fall back to statusText.
+      }
+      throw new APIError(message, response.status, response.statusText);
+    }
+
+    return response.json() as Promise<ImportPreviewResponse>;
+  }
+
+  async commitImport(req: ImportCommitRequest): Promise<ImportCommitResponse> {
+    const response = await fetch(
+      `${this.baseURL}/api/admin/users/import-document/commit`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req),
+        credentials: 'include',
+      },
+    );
+
+    if (!response.ok) {
+      let message = response.statusText;
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (body.error) message = body.error;
+      } catch {
+        // fall back to statusText
+      }
+      throw new APIError(message, response.status, response.statusText);
+    }
+
+    return response.json() as Promise<ImportCommitResponse>;
   }
 
   // Session endpoints (commander+)
