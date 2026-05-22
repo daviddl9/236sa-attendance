@@ -13,6 +13,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/handlers"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/agent"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -96,6 +97,20 @@ func main() {
 		r.Get("/", sseHandler.StreamSession)
 	})
 
+	// Agent-driven document import — Anthropic API calls can take 2-3 min for large rosters;
+	// registered outside the 60s group with its own 5-minute timeout.
+	importHandler := handlers.NewImportHandler(db, newAgentParser())
+	r.Group(func(r chi.Router) {
+		r.Use(chimiddleware.Timeout(5 * time.Minute))
+		r.Route("/api/admin/users/import-document", func(r chi.Router) {
+			r.Use(middleware.Auth(db))
+			r.Use(middleware.LoadUser(db))
+			r.Use(middleware.RequireSuperadmin(db))
+			r.Post("/preview", importHandler.PreviewImport)
+			r.Post("/commit", importHandler.CommitImport)
+		})
+	})
+
 	// All other API routes with timeout middleware
 	r.Group(func(r chi.Router) {
 		r.Use(chimiddleware.Timeout(60 * time.Second))
@@ -112,6 +127,8 @@ func main() {
 				r.Post("/sign-in", authHandler.SignIn)
 				r.Post("/sign-out", authHandler.SignOut)
 				r.Get("/session", authHandler.GetSession)
+				// Explicit signup — called after sign-in returns signup_required
+				r.Post("/sign-up", authHandler.SignUp)
 			})
 
 			// User registration route (public)
@@ -208,7 +225,7 @@ func main() {
 		Addr:         fmt.Sprintf(":%s", port),
 		Handler:      r,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: 310 * time.Second, // covers 5-min import routes
 		IdleTimeout:  60 * time.Second,
 	}
 
@@ -243,4 +260,17 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// newAgentParser builds the Anthropic-backed parser used by the
+// document-import admin route. Returns nil (with a log line) when
+// ANTHROPIC_API_KEY is unset so the rest of the app keeps working;
+// the import handler converts a nil parser to a clear 503 response.
+func newAgentParser() agent.Parser {
+	client, err := agent.NewHTTPClient()
+	if err != nil {
+		log.Printf("Anthropic agent disabled: %v (set ANTHROPIC_API_KEY to enable)", err)
+		return nil
+	}
+	return agent.NewParser(client)
 }

@@ -33,9 +33,9 @@ services:
       # This overrides any DATABASE_URL from env_file
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/app?sslmode=disable
       PORT: 8080
-      # Variables from ./backend/.env: FRONTEND_URL, BACKEND_URL, ENVIRONMENT, 
-      # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET are loaded via env_file above
-      # These can be overridden here if needed:
+      # Variables from ./backend/.env: FRONTEND_URL, BACKEND_URL, ENVIRONMENT,
+      # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ANTHROPIC_API_KEY (feature 002)
+      # are loaded via env_file above. These can be overridden here if needed:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       BACKEND_URL: ${BACKEND_URL:-http://localhost:8080}
       ENVIRONMENT: ${ENVIRONMENT:-development}

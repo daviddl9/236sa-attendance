@@ -1,0 +1,1023 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Onboarding Requirements Questionnaire</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #5b6670;
+      --line: #d9e0e5;
+      --soft: #f4f7f9;
+      --paper: #ffffff;
+      --accent: #166a6a;
+      --accent-soft: #d8eeee;
+      --warn: #8a5a00;
+      --shadow: 0 10px 30px rgba(21, 36, 46, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #eef3f5;
+      color: var(--ink);
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 22px;
+      background: #11252a;
+      color: #f7fbfb;
+      overflow: auto;
+    }
+
+    .rail h1 {
+      margin: 0 0 12px;
+      font-size: 1.45rem;
+      line-height: 1.16;
+      letter-spacing: 0;
+    }
+
+    .rail p {
+      margin: 0;
+      color: #c9d8db;
+      line-height: 1.5;
+      font-size: 0.94rem;
+    }
+
+    .status {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.16);
+      display: grid;
+      gap: 14px;
+    }
+
+    .meter {
+      display: grid;
+      gap: 8px;
+    }
+
+    .meter-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #e7f0f1;
+      font-size: 0.86rem;
+    }
+
+    .bar {
+      height: 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+      overflow: hidden;
+    }
+
+    .bar > span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: #7fe0cf;
+      transition: width 180ms ease;
+    }
+
+    .nav {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .nav a {
+      color: #f3faf9;
+      text-decoration: none;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 0.9rem;
+    }
+
+    .nav a:hover,
+    .nav a:focus {
+      outline: none;
+      border-color: #7fe0cf;
+      background: rgba(127, 224, 207, 0.1);
+    }
+
+    .actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .button {
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--ink);
+      background: #7fe0cf;
+      cursor: pointer;
+      font-weight: 700;
+      text-align: center;
+    }
+
+    .button.secondary {
+      color: #f7fbfb;
+      background: transparent;
+      border-color: rgba(255, 255, 255, 0.24);
+      font-weight: 600;
+    }
+
+    .button:hover,
+    .button:focus {
+      outline: 2px solid rgba(127, 224, 207, 0.38);
+      outline-offset: 2px;
+    }
+
+    main {
+      padding: 30px clamp(16px, 3vw, 44px) 54px;
+    }
+
+    .intro {
+      max-width: 1060px;
+      margin: 0 auto 20px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .intro h2 {
+      margin: 0;
+      font-size: clamp(1.75rem, 3vw, 2.55rem);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .intro p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      max-width: 780px;
+    }
+
+    .notice {
+      border: 1px solid #e2d1a8;
+      background: #fff7e4;
+      color: #5d4100;
+      border-radius: 8px;
+      padding: 12px 14px;
+      max-width: 1060px;
+      margin: 0 auto 22px;
+      line-height: 1.45;
+    }
+
+    .section {
+      max-width: 1060px;
+      margin: 0 auto 24px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .section-header {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+
+    .section-header h3 {
+      margin: 0;
+      font-size: 1.1rem;
+      letter-spacing: 0;
+    }
+
+    .section-header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.93rem;
+    }
+
+    .question {
+      padding: 18px 20px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 14px;
+    }
+
+    .question:first-of-type {
+      border-top: 0;
+    }
+
+    .question-title {
+      display: grid;
+      gap: 6px;
+    }
+
+    .question-title label {
+      font-weight: 750;
+      line-height: 1.35;
+    }
+
+    .default-hint {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .option {
+      position: relative;
+      min-height: 74px;
+    }
+
+    .option input {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+    }
+
+    .option span {
+      display: block;
+      height: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      background: #fff;
+      line-height: 1.35;
+      cursor: pointer;
+    }
+
+    .option strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 0.95rem;
+    }
+
+    .option small {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .option input:checked + span {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+
+    .option input:focus + span {
+      outline: 2px solid rgba(22, 106, 106, 0.24);
+      outline-offset: 2px;
+    }
+
+    .custom-row {
+      display: grid;
+      gap: 7px;
+    }
+
+    .custom-row label {
+      color: var(--muted);
+      font-size: 0.88rem;
+      font-weight: 650;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 64px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      color: var(--ink);
+      background: #fff;
+      line-height: 1.45;
+    }
+
+    textarea:focus {
+      outline: 2px solid rgba(22, 106, 106, 0.2);
+      border-color: var(--accent);
+    }
+
+    .output {
+      max-width: 1060px;
+      margin: 0 auto;
+      background: #102126;
+      color: #edf8f7;
+      border-radius: 8px;
+      border: 1px solid #203a42;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .output-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 16px;
+      border-bottom: 1px solid #203a42;
+    }
+
+    .output-head h3 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .output textarea {
+      min-height: 310px;
+      border: 0;
+      border-radius: 0;
+      background: #102126;
+      color: #edf8f7;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.86rem;
+    }
+
+    .mini-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .mini-actions button {
+      border: 1px solid #37545d;
+      border-radius: 8px;
+      color: #f7fbfb;
+      background: #17323a;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    .mini-actions button:hover,
+    .mini-actions button:focus {
+      outline: 2px solid rgba(127, 224, 207, 0.25);
+      outline-offset: 2px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      padding: 11px 13px;
+      border-radius: 8px;
+      background: #123036;
+      color: #f7fbfb;
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity 140ms ease, transform 140ms ease;
+      font-size: 0.92rem;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 880px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .rail {
+        position: relative;
+        height: auto;
+      }
+
+      .option-grid {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        padding-top: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <h1>Onboarding Spec Intake</h1>
+      <p>Recommended defaults are already selected. Add custom answers only where the defaults miss the intent.</p>
+
+      <div class="status">
+        <div class="meter" aria-live="polite">
+          <div class="meter-row">
+            <span>Answered</span>
+            <strong id="answered-count">0/25</strong>
+          </div>
+          <div class="bar" aria-hidden="true"><span id="answered-bar"></span></div>
+        </div>
+        <nav class="nav" aria-label="Question sections">
+          <a href="#core-goal">Core Goal</a>
+          <a href="#existing-users">Existing User Database</a>
+          <a href="#agent-import">Document and Agent Import</a>
+          <a href="#login">Login Behavior</a>
+          <a href="#signup">New Signup Flow</a>
+          <a href="#safety">Safety and Audit</a>
+          <a href="#scope">Scope</a>
+          <a href="#export">Export</a>
+        </nav>
+        <div class="actions">
+          <button class="button" type="button" id="generate">Generate Spec Answers</button>
+          <button class="button secondary" type="button" id="reset">Reset Defaults</button>
+        </div>
+      </div>
+    </aside>
+
+    <main>
+      <div class="intro">
+        <h2>Improve User Onboarding</h2>
+        <p>Answer these once and the feature spec can be written without guessing. The defaults lean toward a controlled roster import plus self-claiming flow for an attendance app.</p>
+      </div>
+
+      <div class="notice">
+        The most important questions are marked through their defaults: import source, match identifier, who runs import, Anthropic role, login identifier, new-user confirmation, admin preview, and v1 operating model.
+      </div>
+
+      <form id="questionnaire">
+        <section class="section" id="core-goal">
+          <div class="section-header">
+            <h3>Core Goal</h3>
+            <p>Define who the onboarding system serves and the top product outcome.</p>
+          </div>
+          <div class="question" data-question="1">
+            <div class="question-title">
+              <label>1. Who is being onboarded?</label>
+              <div class="default-hint">Default: students and parents, with staff/admin support roles.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q1" value="Students and parents are onboarded as the primary users; staff and admins are support roles." checked><span><strong>Students and parents</strong><small>Best fit for attendance workflows with guardian involvement.</small></span></label>
+              <label class="option"><input type="radio" name="q1" value="Students only are onboarded; parents are out of scope for this feature."><span><strong>Students only</strong><small>Simpler claim flow and fewer relationship checks.</small></span></label>
+              <label class="option"><input type="radio" name="q1" value="Students, parents, staff, and admins are all onboarded through this flow."><span><strong>All user types</strong><small>Broadest scope with role-specific branching.</small></span></label>
+              <label class="option"><input type="radio" name="q1" value="custom"><span><strong>Custom</strong><small>Use a different audience boundary.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q1-custom">Custom answer</label><textarea id="q1-custom" name="q1_custom" placeholder="Example: Students and class leaders only for v1."></textarea></div>
+          </div>
+
+          <div class="question" data-question="2">
+            <div class="question-title">
+              <label>2. What problem are we solving first?</label>
+              <div class="default-hint">Default: reduce duplicate accounts while making existing users easy to claim.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q2" value="The primary problem is preventing duplicate accounts while letting existing users claim access quickly." checked><span><strong>Prevent duplicates</strong><small>Prioritizes match confidence and explicit new-account gating.</small></span></label>
+              <label class="option"><input type="radio" name="q2" value="The primary problem is faster login for existing users."><span><strong>Faster existing login</strong><small>Optimizes claim and sign-in speed.</small></span></label>
+              <label class="option"><input type="radio" name="q2" value="The primary problem is replacing manual roster imports."><span><strong>Replace manual import</strong><small>Centers admin import tooling and review.</small></span></label>
+              <label class="option"><input type="radio" name="q2" value="custom"><span><strong>Custom</strong><small>State a different first-order goal.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q2-custom">Custom answer</label><textarea id="q2-custom" name="q2_custom" placeholder="Example: Make parent onboarding smoother before camp starts."></textarea></div>
+          </div>
+        </section>
+
+        <section class="section" id="existing-users">
+          <div class="section-header">
+            <h3>Existing User Database</h3>
+            <p>Set the source of truth and how users are matched, updated, and de-duplicated.</p>
+          </div>
+          <div class="question" data-question="3">
+            <div class="question-title">
+              <label>3. Where does the existing user database live today?</label>
+              <div class="default-hint">Default: admin-provided roster documents and spreadsheets.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q3" value="The existing user database is supplied through admin-uploaded roster documents and spreadsheets." checked><span><strong>Roster uploads</strong><small>Supports practical extraction by an agent.</small></span></label>
+              <label class="option"><input type="radio" name="q3" value="The existing user database lives in an external system that exports files for import."><span><strong>External export</strong><small>Useful when another system remains source of truth.</small></span></label>
+              <label class="option"><input type="radio" name="q3" value="The existing user database is already in the app and imports enrich or correct it."><span><strong>Existing app table</strong><small>Focuses on override and cleanup.</small></span></label>
+              <label class="option"><input type="radio" name="q3" value="custom"><span><strong>Custom</strong><small>Describe the actual source.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q3-custom">Custom answer</label><textarea id="q3-custom" name="q3_custom" placeholder="Example: A Google Sheet maintained by admin team plus occasional PDF forms."></textarea></div>
+          </div>
+
+          <div class="question" data-question="4">
+            <div class="question-title">
+              <label>4. What fields matter for matching an existing user?</label>
+              <div class="default-hint">Default: name plus at least one stable identifier.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q4" value="Matching uses full name plus at least one stable identifier such as phone, email, student ID, or parent name." checked><span><strong>Name plus identifier</strong><small>Balanced accuracy without overfitting.</small></span></label>
+              <label class="option"><input type="radio" name="q4" value="Matching requires a unique student or member ID whenever available."><span><strong>Unique ID first</strong><small>Strictest duplicate prevention.</small></span></label>
+              <label class="option"><input type="radio" name="q4" value="Matching uses phone or email as the primary identifier, with name as secondary confirmation."><span><strong>Contact first</strong><small>Convenient for self-service login.</small></span></label>
+              <label class="option"><input type="radio" name="q4" value="custom"><span><strong>Custom</strong><small>Specify exact fields and priority.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q4-custom">Custom answer</label><textarea id="q4-custom" name="q4_custom" placeholder="Example: Student ID, legal name, mobile number, parent mobile, class."></textarea></div>
+          </div>
+
+          <div class="question" data-question="5">
+            <div class="question-title">
+              <label>5. Which field is the last 5 characters confirmation based on?</label>
+              <div class="default-hint">Default: phone number when available, otherwise student/member ID.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q5" value="The last 5 characters confirmation uses the user's phone number when available, falling back to student or member ID." checked><span><strong>Phone, fallback ID</strong><small>Good for real users and imported records.</small></span></label>
+              <label class="option"><input type="radio" name="q5" value="The last 5 characters confirmation uses student or member ID only."><span><strong>ID only</strong><small>More stable, but requires users to know the ID.</small></span></label>
+              <label class="option"><input type="radio" name="q5" value="The last 5 characters confirmation uses a generated invite or claim code."><span><strong>Invite code</strong><small>Most explicit but needs distribution.</small></span></label>
+              <label class="option"><input type="radio" name="q5" value="custom"><span><strong>Custom</strong><small>Choose a different source field.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q5-custom">Custom answer</label><textarea id="q5-custom" name="q5_custom" placeholder="Example: Last 5 of NRIC-equivalent membership code, never phone."></textarea></div>
+          </div>
+
+          <div class="question" data-question="6">
+            <div class="question-title">
+              <label>6. If two existing users look similar, what happens?</label>
+              <div class="default-hint">Default: block self-claim and route to admin review.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q6" value="Ambiguous matches are blocked from self-claim and routed to admin review." checked><span><strong>Admin review</strong><small>Safest for identity errors.</small></span></label>
+              <label class="option"><input type="radio" name="q6" value="The user is asked for additional verification details to resolve ambiguous matches."><span><strong>Ask more details</strong><small>Keeps users moving with extra checks.</small></span></label>
+              <label class="option"><input type="radio" name="q6" value="The system selects the best match only when confidence is high; otherwise it blocks."><span><strong>Confidence gate</strong><small>Useful if matching quality can be measured.</small></span></label>
+              <label class="option"><input type="radio" name="q6" value="custom"><span><strong>Custom</strong><small>Define a different escalation rule.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q6-custom">Custom answer</label><textarea id="q6-custom" name="q6_custom" placeholder="Example: Allow class leaders to resolve duplicates before admin."></textarea></div>
+          </div>
+
+          <div class="question" data-question="7">
+            <div class="question-title">
+              <label>7. When should imported data override existing table data?</label>
+              <div class="default-hint">Default: only after admin preview and confirmation.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q7" value="Imported data overrides existing table data only after an admin reviews the proposed changes and confirms them." checked><span><strong>Admin-confirmed override</strong><small>Traceable and safer than automatic replacement.</small></span></label>
+              <label class="option"><input type="radio" name="q7" value="Imported data automatically overrides existing table data when match confidence is high."><span><strong>High-confidence auto</strong><small>Faster, with greater risk.</small></span></label>
+              <label class="option"><input type="radio" name="q7" value="Imported data only fills missing fields and never overwrites populated fields in v1."><span><strong>Fill blanks only</strong><small>Very safe, less corrective.</small></span></label>
+              <label class="option"><input type="radio" name="q7" value="custom"><span><strong>Custom</strong><small>Set field-specific override rules.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q7-custom">Custom answer</label><textarea id="q7-custom" name="q7_custom" placeholder="Example: Override class/unit but never overwrite phone unless admin checks a box."></textarea></div>
+          </div>
+        </section>
+
+        <section class="section" id="agent-import">
+          <div class="section-header">
+            <h3>Document and Agent Import</h3>
+            <p>Choose who imports records, what files matter, and how Anthropic fits into the workflow.</p>
+          </div>
+          <div class="question" data-question="8">
+            <div class="question-title">
+              <label>8. Who runs the document import?</label>
+              <div class="default-hint">Default: admins in the app UI.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q8" value="Admins run document imports from the app UI and review results before applying them." checked><span><strong>Admin UI import</strong><small>Best productized v1 path.</small></span></label>
+              <label class="option"><input type="radio" name="q8" value="A developer or agent process runs imports outside the app and writes reviewed results into the app."><span><strong>Agent process</strong><small>Lower product scope, more operational.</small></span></label>
+              <label class="option"><input type="radio" name="q8" value="Imports run as a background job whenever new source documents are added."><span><strong>Background job</strong><small>Automated but needs stronger monitoring.</small></span></label>
+              <label class="option"><input type="radio" name="q8" value="custom"><span><strong>Custom</strong><small>Describe the operator and trigger.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q8-custom">Custom answer</label><textarea id="q8-custom" name="q8_custom" placeholder="Example: Staff upload files; admins approve the final import."></textarea></div>
+          </div>
+
+          <div class="question" data-question="9">
+            <div class="question-title">
+              <label>9. What document types must be supported in v1?</label>
+              <div class="default-hint">Default: CSV, XLSX, PDF, and DOCX.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q9" value="v1 supports CSV, XLSX, PDF, and DOCX roster sources." checked><span><strong>CSV, XLSX, PDF, DOCX</strong><small>Good coverage for common admin documents.</small></span></label>
+              <label class="option"><input type="radio" name="q9" value="v1 supports CSV and XLSX only."><span><strong>Spreadsheets only</strong><small>Cleaner and more deterministic.</small></span></label>
+              <label class="option"><input type="radio" name="q9" value="v1 supports spreadsheets plus images or scanned PDFs."><span><strong>Scans included</strong><small>More flexible, higher extraction risk.</small></span></label>
+              <label class="option"><input type="radio" name="q9" value="custom"><span><strong>Custom</strong><small>List exact formats.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q9-custom">Custom answer</label><textarea id="q9-custom" name="q9_custom" placeholder="Example: Google Sheets export, XLSX, PDF only."></textarea></div>
+          </div>
+
+          <div class="question" data-question="10">
+            <div class="question-title">
+              <label>10. What does Claude agent / Anthropic doc skills mean for this product?</label>
+              <div class="default-hint">Default: the app supports Anthropic-assisted extraction using an admin-provided key, with skills documented as an operational dependency.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q10" value="The app supports Anthropic-assisted document extraction using an admin-provided API key, and the agent document skills are an operational dependency for setup/import workflows." checked><span><strong>App-assisted import</strong><small>Matches your API-key note while staying product-focused.</small></span></label>
+              <label class="option"><input type="radio" name="q10" value="Only a developer or Claude agent uses Anthropic outside the app during setup/import; end users never interact with Anthropic features."><span><strong>Outside-app agent</strong><small>Smaller app scope.</small></span></label>
+              <label class="option"><input type="radio" name="q10" value="Both the app and developer agents may use Anthropic for import, validation, and cleanup."><span><strong>Both</strong><small>Maximum flexibility, larger governance needs.</small></span></label>
+              <label class="option"><input type="radio" name="q10" value="custom"><span><strong>Custom</strong><small>Clarify exactly where Anthropic is used.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q10-custom">Custom answer</label><textarea id="q10-custom" name="q10_custom" placeholder="Example: Anthropic only parses docs, never sees final authentication secrets."></textarea></div>
+          </div>
+
+          <div class="question" data-question="11">
+            <div class="question-title">
+              <label>11. Is Anthropic required, or should there be a non-AI fallback?</label>
+              <div class="default-hint">Default: non-AI/manual fallback is required.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q11" value="The product must have a non-AI fallback so admins can import or correct roster data without Anthropic availability." checked><span><strong>Fallback required</strong><small>More reliable and easier to operate.</small></span></label>
+              <label class="option"><input type="radio" name="q11" value="Anthropic-assisted extraction is required for document import in v1."><span><strong>AI required</strong><small>Faster to specify, harder dependency.</small></span></label>
+              <label class="option"><input type="radio" name="q11" value="AI is optional for PDFs and DOCX, while CSV/XLSX imports work without AI."><span><strong>Hybrid</strong><small>Practical split by document complexity.</small></span></label>
+              <label class="option"><input type="radio" name="q11" value="custom"><span><strong>Custom</strong><small>Set fallback expectations.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q11-custom">Custom answer</label><textarea id="q11-custom" name="q11_custom" placeholder="Example: AI required for PDFs, manual CSV template fallback allowed."></textarea></div>
+          </div>
+
+          <div class="question" data-question="12">
+            <div class="question-title">
+              <label>12. What happens to raw uploaded documents after import?</label>
+              <div class="default-hint">Default: retain for a limited audit window, then allow deletion.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q12" value="Raw uploaded documents are retained for a limited audit window and can be deleted by admins afterward." checked><span><strong>Limited retention</strong><small>Balances auditability and privacy.</small></span></label>
+              <label class="option"><input type="radio" name="q12" value="Raw uploaded documents are deleted immediately after a successful import."><span><strong>Delete after import</strong><small>Minimizes sensitive data retention.</small></span></label>
+              <label class="option"><input type="radio" name="q12" value="Raw uploaded documents are retained permanently as import audit evidence unless manually deleted."><span><strong>Keep for audit</strong><small>Useful for traceability, higher privacy burden.</small></span></label>
+              <label class="option"><input type="radio" name="q12" value="custom"><span><strong>Custom</strong><small>Define retention policy.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q12-custom">Custom answer</label><textarea id="q12-custom" name="q12_custom" placeholder="Example: Keep 30 days, then delete automatically unless pinned by admin."></textarea></div>
+          </div>
+        </section>
+
+        <section class="section" id="login">
+          <div class="section-header">
+            <h3>Login Behavior</h3>
+            <p>Describe how a person identifies themselves and what happens after a match or miss.</p>
+          </div>
+          <div class="question" data-question="13">
+            <div class="question-title">
+              <label>13. What identifier does the user enter first?</label>
+              <div class="default-hint">Default: phone or email, with student/member ID as fallback.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q13" value="Users first enter phone or email, with student or member ID available as a fallback identifier." checked><span><strong>Phone/email first</strong><small>Most user-friendly for account claiming.</small></span></label>
+              <label class="option"><input type="radio" name="q13" value="Users first enter student or member ID."><span><strong>ID first</strong><small>Stronger roster matching.</small></span></label>
+              <label class="option"><input type="radio" name="q13" value="Users first enter full name and one secondary field."><span><strong>Name plus field</strong><small>Works when contact data is incomplete.</small></span></label>
+              <label class="option"><input type="radio" name="q13" value="custom"><span><strong>Custom</strong><small>Define the first login prompt.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q13-custom">Custom answer</label><textarea id="q13-custom" name="q13_custom" placeholder="Example: First ask class code, then phone number."></textarea></div>
+          </div>
+
+          <div class="question" data-question="14">
+            <div class="question-title">
+              <label>14. If login finds an existing user, what comes next?</label>
+              <div class="default-hint">Default: claim account, then set or confirm credentials.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q14" value="Existing users continue through an account-claim step and then set or confirm their sign-in credentials." checked><span><strong>Claim then credentials</strong><small>Clear for first-time existing users.</small></span></label>
+              <label class="option"><input type="radio" name="q14" value="Existing users receive a one-time code or magic link to verify access."><span><strong>OTP or magic link</strong><small>Reduces password friction.</small></span></label>
+              <label class="option"><input type="radio" name="q14" value="Existing users continue to the current authentication flow without extra claim steps."><span><strong>Current auth</strong><small>Smallest login change.</small></span></label>
+              <label class="option"><input type="radio" name="q14" value="custom"><span><strong>Custom</strong><small>Specify the claim path.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q14-custom">Custom answer</label><textarea id="q14-custom" name="q14_custom" placeholder="Example: OTP first, then password setup only if no credential exists."></textarea></div>
+          </div>
+
+          <div class="question" data-question="15">
+            <div class="question-title">
+              <label>15. If login does not find a match, where does the user go?</label>
+              <div class="default-hint">Default: show no-match explanation, then explicit signup.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q15" value="No-match users see a clear explanation before entering the explicit new-account signup flow." checked><span><strong>Explain then signup</strong><small>Good UX while making account creation explicit.</small></span></label>
+              <label class="option"><input type="radio" name="q15" value="No-match users are sent directly into explicit signup."><span><strong>Direct signup</strong><small>Fastest path for genuinely new users.</small></span></label>
+              <label class="option"><input type="radio" name="q15" value="No-match users are blocked and told to contact an admin."><span><strong>Block and contact admin</strong><small>Strict duplicate prevention.</small></span></label>
+              <label class="option"><input type="radio" name="q15" value="custom"><span><strong>Custom</strong><small>Define the no-match branch.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q15-custom">Custom answer</label><textarea id="q15-custom" name="q15_custom" placeholder="Example: Allow signup only after trying two identifiers."></textarea></div>
+          </div>
+        </section>
+
+        <section class="section" id="signup">
+          <div class="section-header">
+            <h3>New Signup Flow</h3>
+            <p>Make new-account creation intentionally different from claiming an existing roster record.</p>
+          </div>
+          <div class="question" data-question="16">
+            <div class="question-title">
+              <label>16. For new users, what exactly must they confirm with the last 5 characters?</label>
+              <div class="default-hint">Default: the identifier they typed during signup.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q16" value="New users must manually re-enter the last 5 characters of the identifier they provided during signup." checked><span><strong>Entered identifier</strong><small>Confirms intention without needing a preexisting record.</small></span></label>
+              <label class="option"><input type="radio" name="q16" value="New users must confirm the last 5 characters of their phone number."><span><strong>Phone number</strong><small>Simple and memorable.</small></span></label>
+              <label class="option"><input type="radio" name="q16" value="New users must confirm the last 5 characters of a supplied invite or claim code."><span><strong>Invite code</strong><small>Stronger gating if codes exist.</small></span></label>
+              <label class="option"><input type="radio" name="q16" value="custom"><span><strong>Custom</strong><small>Choose a different confirmation value.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q16-custom">Custom answer</label><textarea id="q16-custom" name="q16_custom" placeholder="Example: Last 5 of student ID, even for new accounts."></textarea></div>
+          </div>
+
+          <div class="question" data-question="17">
+            <div class="question-title">
+              <label>17. Where should copy/paste be blocked?</label>
+              <div class="default-hint">Default: only the last-5 confirmation field.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q17" value="Copy and paste are blocked only on the last-5 confirmation field." checked><span><strong>Confirmation only</strong><small>Meets intent without hurting the rest of signup.</small></span></label>
+              <label class="option"><input type="radio" name="q17" value="Copy and paste are blocked on all identity confirmation fields."><span><strong>Identity fields</strong><small>More restrictive for sensitive checks.</small></span></label>
+              <label class="option"><input type="radio" name="q17" value="Copy and paste are blocked across the entire signup form."><span><strong>Entire signup</strong><small>Strong friction, not usually recommended.</small></span></label>
+              <label class="option"><input type="radio" name="q17" value="custom"><span><strong>Custom</strong><small>Set exact fields.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q17-custom">Custom answer</label><textarea id="q17-custom" name="q17_custom" placeholder="Example: Block paste in last-5 and invite-code confirmation only."></textarea></div>
+          </div>
+
+          <div class="question" data-question="18">
+            <div class="question-title">
+              <label>18. Should mobile autofill and password managers still work elsewhere?</label>
+              <div class="default-hint">Default: yes, except the last-5 confirmation field.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q18" value="Mobile autofill and password managers must continue to work except on the last-5 confirmation field." checked><span><strong>Allow elsewhere</strong><small>Protects accessibility and reduces friction.</small></span></label>
+              <label class="option"><input type="radio" name="q18" value="Autofill is allowed, but password managers are only relevant after identity confirmation."><span><strong>Limited password stage</strong><small>Fine when credentials come later.</small></span></label>
+              <label class="option"><input type="radio" name="q18" value="Autofill and password managers are blocked throughout new signup."><span><strong>Block throughout</strong><small>High friction and accessibility risk.</small></span></label>
+              <label class="option"><input type="radio" name="q18" value="custom"><span><strong>Custom</strong><small>Define autofill rules.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q18-custom">Custom answer</label><textarea id="q18-custom" name="q18_custom" placeholder="Example: Allow password managers, disable browser autofill for identity fields only."></textarea></div>
+          </div>
+
+          <div class="question" data-question="19">
+            <div class="question-title">
+              <label>19. Do new accounts require admin approval?</label>
+              <div class="default-hint">Default: no approval for low-risk users, admin review for suspicious or conflicting signups.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q19" value="New users can self-create after explicit confirmation unless the signup conflicts with existing records or risk checks." checked><span><strong>Self-create with gates</strong><small>Balances access and safety.</small></span></label>
+              <label class="option"><input type="radio" name="q19" value="Every new account requires admin approval before activation."><span><strong>Always approve</strong><small>Safest, slowest.</small></span></label>
+              <label class="option"><input type="radio" name="q19" value="New accounts are activated immediately after signup confirmation."><span><strong>Immediate activation</strong><small>Fastest, more duplicate risk.</small></span></label>
+              <label class="option"><input type="radio" name="q19" value="custom"><span><strong>Custom</strong><small>Define approval conditions.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q19-custom">Custom answer</label><textarea id="q19-custom" name="q19_custom" placeholder="Example: Students require approval; parents self-create if tied to a claimed student."></textarea></div>
+          </div>
+        </section>
+
+        <section class="section" id="safety">
+          <div class="section-header">
+            <h3>Safety and Audit</h3>
+            <p>Define the guardrails around imports, identity claims, notifications, and tradeoffs.</p>
+          </div>
+          <div class="question" data-question="20">
+            <div class="question-title">
+              <label>20. Do admins need an import preview before applying changes?</label>
+              <div class="default-hint">Default: yes, with adds, updates, duplicates, and rejected rows.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q20" value="Admins must see an import preview that separates adds, updates, possible duplicates, rejected rows, and field-level overrides before applying changes." checked><span><strong>Full preview</strong><small>Important for trust and data cleanup.</small></span></label>
+              <label class="option"><input type="radio" name="q20" value="Admins see a summary preview, but field-level details are optional."><span><strong>Summary preview</strong><small>Faster UI, less audit detail.</small></span></label>
+              <label class="option"><input type="radio" name="q20" value="Imports apply automatically and admins review the result afterward."><span><strong>Post-review</strong><small>Faster, riskier.</small></span></label>
+              <label class="option"><input type="radio" name="q20" value="custom"><span><strong>Custom</strong><small>Specify preview detail.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q20-custom">Custom answer</label><textarea id="q20-custom" name="q20_custom" placeholder="Example: Full preview only for overrides; additions can bulk-apply."></textarea></div>
+          </div>
+
+          <div class="question" data-question="21">
+            <div class="question-title">
+              <label>21. Do we need an audit log?</label>
+              <div class="default-hint">Default: yes, for imports, overrides, claims, and signups.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q21" value="The system must keep an audit log of imports, overrides, account claims, ambiguous matches, and new signups." checked><span><strong>Full audit log</strong><small>Supports admin accountability.</small></span></label>
+              <label class="option"><input type="radio" name="q21" value="The system only audits imports and overrides in v1."><span><strong>Import audit only</strong><small>Smaller scope.</small></span></label>
+              <label class="option"><input type="radio" name="q21" value="Audit logging is deferred until after v1."><span><strong>Defer audit</strong><small>Lower effort, weaker trust.</small></span></label>
+              <label class="option"><input type="radio" name="q21" value="custom"><span><strong>Custom</strong><small>Define events and retention.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q21-custom">Custom answer</label><textarea id="q21-custom" name="q21_custom" placeholder="Example: Audit all admin actions, but not normal login attempts."></textarea></div>
+          </div>
+
+          <div class="question" data-question="22">
+            <div class="question-title">
+              <label>22. Should users be notified when their record is claimed or updated?</label>
+              <div class="default-hint">Default: notify on claim and significant contact/identity changes.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q22" value="Users are notified when their record is claimed and when significant contact or identity fields change." checked><span><strong>Claim and key changes</strong><small>Useful security signal without noise.</small></span></label>
+              <label class="option"><input type="radio" name="q22" value="Users are notified for every import-driven change to their record."><span><strong>Every change</strong><small>Maximum transparency, more notifications.</small></span></label>
+              <label class="option"><input type="radio" name="q22" value="Users are not notified about imports or claims in v1."><span><strong>No v1 notifications</strong><small>Simpler but less transparent.</small></span></label>
+              <label class="option"><input type="radio" name="q22" value="custom"><span><strong>Custom</strong><small>Define notification triggers.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q22-custom">Custom answer</label><textarea id="q22-custom" name="q22_custom" placeholder="Example: Notify parents only when student link changes."></textarea></div>
+          </div>
+
+          <div class="question" data-question="23">
+            <div class="question-title">
+              <label>23. What is worse: duplicates or blocking legitimate users?</label>
+              <div class="default-hint">Default: duplicates are worse, but provide admin rescue for blocked users.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q23" value="Accidentally creating duplicate accounts is worse, so the system should block uncertain cases and provide admin rescue paths." checked><span><strong>Avoid duplicates</strong><small>Fits roster/attendance integrity.</small></span></label>
+              <label class="option"><input type="radio" name="q23" value="Blocking legitimate users is worse, so the system should allow more self-service with post-signup cleanup."><span><strong>Avoid blocking</strong><small>Optimizes access.</small></span></label>
+              <label class="option"><input type="radio" name="q23" value="The system should use different tradeoffs by role: stricter for students, easier for parents or staff."><span><strong>Role-based tradeoff</strong><small>Nuanced but more complex.</small></span></label>
+              <label class="option"><input type="radio" name="q23" value="custom"><span><strong>Custom</strong><small>Set the risk posture.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q23-custom">Custom answer</label><textarea id="q23-custom" name="q23_custom" placeholder="Example: Never block admins; block uncertain student claims."></textarea></div>
+          </div>
+        </section>
+
+        <section class="section" id="scope">
+          <div class="section-header">
+            <h3>Scope</h3>
+            <p>Set the level of detail for the spec and the preferred v1 operating model.</p>
+          </div>
+          <div class="question" data-question="24">
+            <div class="question-title">
+              <label>24. Is this spec only for requirements/design, or should it include planned Anthropic integration?</label>
+              <div class="default-hint">Default: product requirements with explicit Anthropic integration expectations, leaving implementation details for planning.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q24" value="The spec should define product requirements and Anthropic integration expectations, while implementation details belong in the plan phase." checked><span><strong>Requirements plus expectations</strong><small>Clean Spec Kit boundary.</small></span></label>
+              <label class="option"><input type="radio" name="q24" value="The spec should include detailed planned behavior for Anthropic-assisted import."><span><strong>Detailed AI behavior</strong><small>More useful if AI import is central.</small></span></label>
+              <label class="option"><input type="radio" name="q24" value="The spec should avoid Anthropic-specific requirements and describe generic document extraction only."><span><strong>Generic extraction</strong><small>Vendor-neutral product scope.</small></span></label>
+              <label class="option"><input type="radio" name="q24" value="custom"><span><strong>Custom</strong><small>Set the spec boundary.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q24-custom">Custom answer</label><textarea id="q24-custom" name="q24_custom" placeholder="Example: Include Anthropic as a hard dependency because I will provide the API key."></textarea></div>
+          </div>
+
+          <div class="question" data-question="25">
+            <div class="question-title">
+              <label>25. For v1, what operating model should we optimize for?</label>
+              <div class="default-hint">Default: admin imports a roster, users claim existing accounts, new users use explicit signup only after no match.</div>
+            </div>
+            <div class="option-grid">
+              <label class="option"><input type="radio" name="q25" value="v1 optimizes for admins importing a roster first, then users claiming accounts; explicit signup is only for people with no match." checked><span><strong>Roster first</strong><small>Best fit for attendance data integrity.</small></span></label>
+              <label class="option"><input type="radio" name="q25" value="v1 optimizes for users arriving first and the system dynamically matching or creating records."><span><strong>User first</strong><small>Fast rollout when imports lag behind.</small></span></label>
+              <label class="option"><input type="radio" name="q25" value="v1 optimizes for a staff-assisted onboarding day where admins resolve edge cases live."><span><strong>Staff-assisted</strong><small>Good for launch events.</small></span></label>
+              <label class="option"><input type="radio" name="q25" value="custom"><span><strong>Custom</strong><small>Describe the launch model.</small></span></label>
+            </div>
+            <div class="custom-row"><label for="q25-custom">Custom answer</label><textarea id="q25-custom" name="q25_custom" placeholder="Example: User first for parents, roster first for students."></textarea></div>
+          </div>
+        </section>
+      </form>
+
+      <section class="output" id="export">
+        <div class="output-head">
+          <h3>Spec Answer Export</h3>
+          <div class="mini-actions">
+            <button type="button" id="copy">Copy</button>
+            <button type="button" id="download-md">Download Markdown</button>
+            <button type="button" id="download-json">Download JSON</button>
+          </div>
+        </div>
+        <textarea id="export-text" readonly aria-label="Generated spec answers"></textarea>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const questionLabels = {
+      1: "Who is being onboarded?",
+      2: "What problem are we solving first?",
+      3: "Where does the existing user database live today?",
+      4: "What fields matter for matching an existing user?",
+      5: "Which field is the last 5 characters confirmation based on?",
+      6: "If two existing users look similar, what happens?",
+      7: "When should imported data override existing table data?",
+      8: "Who runs the document import?",
+      9: "What document types must be supported in v1?",
+      10: "What does Claude agent / Anthropic doc skills mean for this product?",
+      11: "Is Anthropic required, or should there be a non-AI fallback?",
+      12: "What happens to raw uploaded documents after import?",
+      13: "What identifier does the user enter first?",
+      14: "If login finds an existing user, what comes next?",
+      15: "If login does not find a match, where does the user go?",
+      16: "For new users, what exactly must they confirm with the last 5 characters?",
+      17: "Where should copy/paste be blocked?",
+      18: "Should mobile autofill and password managers still work elsewhere?",
+      19: "Do new accounts require admin approval?",
+      20: "Do admins need an import preview before applying changes?",
+      21: "Do we need an audit log?",
+      22: "Should users be notified when their record is claimed or updated?",
+      23: "What is worse: duplicates or blocking legitimate users?",
+      24: "Is this spec only for requirements/design, or should it include planned Anthropic integration?",
+      25: "For v1, what operating model should we optimize for?"
+    };
+
+    const form = document.querySelector("#questionnaire");
+    const exportText = document.querySelector("#export-text");
+    const answeredCount = document.querySelector("#answered-count");
+    const answeredBar = document.querySelector("#answered-bar");
+    const toast = document.querySelector("#toast");
+
+    function selectedAnswer(number) {
+      const selected = form.querySelector(`input[name="q${number}"]:checked`);
+      const custom = form.querySelector(`[name="q${number}_custom"]`).value.trim();
+      const selectedValue = selected ? selected.value : "";
+      const answer = selectedValue === "custom" && custom ? custom : selectedValue;
+      return {
+        number,
+        question: questionLabels[number],
+        selected: selectedValue,
+        custom,
+        answer
+      };
+    }
+
+    function allAnswers() {
+      return Object.keys(questionLabels).map((number) => selectedAnswer(Number(number)));
+    }
+
+    function markdownExport(answers) {
+      const lines = [
+        "# Onboarding Requirements Answers",
+        "",
+        "Use these answers to create the onboarding feature specification.",
+        ""
+      ];
+
+      for (const item of answers) {
+        lines.push(`## ${item.number}. ${item.question}`);
+        lines.push("");
+        lines.push(item.answer || "_No answer selected_");
+        if (item.custom && item.selected !== "custom") {
+          lines.push("");
+          lines.push(`Additional note: ${item.custom}`);
+        }
+        lines.push("");
+      }
+
+      return lines.join("\n");
+    }
+
+    function refresh() {
+      const answers = allAnswers();
+      const completed = answers.filter((item) => item.answer).length;
+      answeredCount.textContent = `${completed}/25`;
+      answeredBar.style.width = `${(completed / 25) * 100}%`;
+      exportText.value = markdownExport(answers);
+    }
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 1800);
+    }
+
+    function download(filename, contents, type) {
+      const blob = new Blob([contents], { type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    form.addEventListener("input", refresh);
+    form.addEventListener("change", refresh);
+
+    document.querySelector("#generate").addEventListener("click", () => {
+      refresh();
+      document.querySelector("#export").scrollIntoView({ behavior: "smooth", block: "start" });
+      showToast("Answers generated");
+    });
+
+    document.querySelector("#reset").addEventListener("click", () => {
+      form.reset();
+      refresh();
+      showToast("Defaults restored");
+    });
+
+    document.querySelector("#copy").addEventListener("click", async () => {
+      refresh();
+      try {
+        await navigator.clipboard.writeText(exportText.value);
+        showToast("Copied to clipboard");
+      } catch {
+        exportText.select();
+        document.execCommand("copy");
+        showToast("Copied");
+      }
+    });
+
+    document.querySelector("#download-md").addEventListener("click", () => {
+      refresh();
+      download("onboarding-requirements-answers.md", exportText.value, "text/markdown");
+      showToast("Markdown downloaded");
+    });
+
+    document.querySelector("#download-json").addEventListener("click", () => {
+      const payload = {
+        feature: "Improve user onboarding",
+        generatedAt: new Date().toISOString(),
+        answers: allAnswers()
+      };
+      download("onboarding-requirements-answers.json", JSON.stringify(payload, null, 2), "application/json");
+      showToast("JSON downloaded");
+    });
+
+    refresh();
+  </script>
+</body>
+</html>
