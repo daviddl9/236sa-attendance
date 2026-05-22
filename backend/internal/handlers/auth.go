@@ -98,7 +98,7 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 			u.tier_override, u.verified,
 			u."createdAt", u."updatedAt", u.password
 		FROM "user" u
-		WHERE u."full_name" = $1 AND u."nric_last5" IS NOT DISTINCT FROM $2
+		WHERE upper(u."full_name") = upper($1) AND u."nric_last5" IS NOT DISTINCT FROM $2
 	`, req.Identifier, nricLast5Val).Scan(
 		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
 		&ur.tierOverride, &ur.verified,
@@ -121,7 +121,7 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		// Name-leak protection: if the name exists with a different NRIC, return generic error.
 		var nameExists bool
 		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM "user" WHERE "full_name" = $1)`, req.Identifier,
+			`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.Identifier,
 		).Scan(&nameExists)
 		if nameExists {
 			log.Printf("[SignIn] Name exists but NRIC mismatch for %q — returning generic error", req.Identifier)
@@ -205,7 +205,7 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 
 	var nameExists bool
 	_ = h.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM "user" WHERE "full_name" = $1)`, req.FullName,
+		`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.FullName,
 	).Scan(&nameExists)
 	if nameExists {
 		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
