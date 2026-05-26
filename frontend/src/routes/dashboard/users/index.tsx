@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../../../lib/api-client';
+import { apiClient, type UserProfile } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
@@ -19,11 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
-import { useState } from 'react';
-import { AlertTriangle, Search, Trash2, Upload } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
 import { UserTable } from '../../../components/users/user-table';
+import { AddUserDialog } from '../../../components/users/add-user-dialog';
+import { BulkDeleteConfirmDialog } from '../../../components/users/bulk-delete-confirm-dialog';
+
+const SEEDED_ADMIN_ID = '00000000000000000000000000000000';
 
 export const Route = createFileRoute('/dashboard/users/')({
   component: UsersPage,
@@ -37,9 +41,22 @@ function UsersPage() {
   const [search, setSearch] = useState('');
   const [batteryFilter, setBatteryFilter] = useState('');
   const [rankFilter, setRankFilter] = useState('');
+
+  // Single-row delete (unchanged behaviour).
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<{ id: string; name: string } | null>(null);
-  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+
+  // Add-user dialog (feature 003).
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
+
+  // Selection state for bulk delete (feature 004). The cache holds enough
+  // info to render the confirmation dialog for ids that are no longer
+  // visible under the current page / filters.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectionCache, setSelectionCache] = useState<Map<string, UserProfile>>(
+    () => new Map(),
+  );
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const isSuperadmin = user?.isSuperadmin || false;
 
@@ -71,26 +88,8 @@ function UsersPage() {
       setDeleteDialogOpen(false);
       setUserToDelete(null);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to delete user');
-    },
-  });
-
-  const bulkDeleteMutation = useMutation({
-    mutationFn: () =>
-      apiClient.bulkDeleteUsers({
-        search: search || undefined,
-        battery: batteryFilter || undefined,
-        rank: rankFilter || undefined,
-      }),
-    onSuccess: (result) => {
-      toast.success(`${result.deletedCount} users deleted successfully`);
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      setBulkDeleteDialogOpen(false);
-      setPage(1);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to delete users');
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete user');
     },
   });
 
@@ -113,6 +112,84 @@ function UsersPage() {
     navigate({ to: '/dashboard/users/bulk-upload' });
   };
 
+  // Selection helpers — keep `selectedIds` and `selectionCache` in lockstep
+  // so the confirmation dialog always has Full Name / Rank / Battery to
+  // show for every selected id, even ones that have scrolled off the page.
+  const rememberUser = (u: UserProfile) => {
+    setSelectionCache((prev) => {
+      if (prev.has(u.id)) return prev;
+      const next = new Map(prev);
+      next.set(u.id, u);
+      return next;
+    });
+  };
+
+  const handleToggleRow = (userId: string) => {
+    const targetUser = data?.users.find((u) => u.id === userId);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) {
+        next.delete(userId);
+        setSelectionCache((cache) => {
+          const c = new Map(cache);
+          c.delete(userId);
+          return c;
+        });
+      } else {
+        next.add(userId);
+        if (targetUser) rememberUser(targetUser);
+      }
+      return next;
+    });
+  };
+
+  const handleTogglePage = (visibleIds: string[]) => {
+    if (visibleIds.length === 0) return;
+    const allSelected = visibleIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const id of visibleIds) next.delete(id);
+        setSelectionCache((cache) => {
+          const c = new Map(cache);
+          for (const id of visibleIds) c.delete(id);
+          return c;
+        });
+      } else {
+        for (const id of visibleIds) {
+          next.add(id);
+          const u = data?.users.find((x) => x.id === id);
+          if (u) rememberUser(u);
+        }
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setSelectionCache(new Map());
+  };
+
+  // The current user cannot delete themselves; the seeded admin row is
+  // already excluded from the list, but we add it to disabledIds defensively.
+  const currentUserId = user?.id;
+  const disabledIds = useMemo(() => {
+    const s = new Set<string>([SEEDED_ADMIN_ID]);
+    if (currentUserId) s.add(currentUserId);
+    return s;
+  }, [currentUserId]);
+
+  // The list passed into the confirmation dialog — ordered, deduplicated.
+  const selectedUsers = useMemo(() => {
+    const out: UserProfile[] = [];
+    for (const id of selectedIds) {
+      const cached = selectionCache.get(id);
+      if (cached) out.push(cached);
+    }
+    return out;
+  }, [selectedIds, selectionCache]);
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-4 p-6">
@@ -125,12 +202,9 @@ function UsersPage() {
           </div>
           {isSuperadmin && (
             <div className="flex gap-2">
-              <Button
-                onClick={() => setBulkDeleteDialogOpen(true)}
-                variant="destructive"
-                disabled={!data || data.total === 0}
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
+              <Button onClick={() => setAddDialogOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add User
               </Button>
               <Button onClick={handleBulkUpload} variant="outline">
                 <Upload className="mr-2 h-4 w-4" />
@@ -208,6 +282,31 @@ function UsersPage() {
           </Select>
         </div>
 
+        {isSuperadmin && selectedIds.size > 0 && (
+          <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm">
+            <div className="flex items-center gap-3">
+              <span className="font-medium">
+                {selectedIds.size} selected
+              </span>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={clearSelection}
+              >
+                <X className="inline h-3 w-3" /> Clear
+              </button>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete selected
+            </Button>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <div className="text-muted-foreground">Loading...</div>
@@ -233,7 +332,16 @@ function UsersPage() {
                 Found {data.total} user{data.total !== 1 ? 's' : ''}
               </div>
             )}
-            <UserTable users={data?.users || []} showActions={true} onDelete={handleDeleteClick} />
+            <UserTable
+              users={data?.users || []}
+              showActions={true}
+              onDelete={handleDeleteClick}
+              selectable={isSuperadmin}
+              selectedIds={selectedIds}
+              onToggleRow={handleToggleRow}
+              onTogglePage={handleTogglePage}
+              disabledIds={disabledIds}
+            />
 
             {data && data.total > 20 && (
               <div className="flex items-center justify-between">
@@ -263,6 +371,7 @@ function UsersPage() {
         )}
       </div>
 
+      {/* Single-row delete dialog (unchanged behaviour) */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -286,57 +395,20 @@ function UsersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-destructive flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5" />
-              Delete Multiple Users
-            </DialogTitle>
-            <DialogDescription className="space-y-4">
-              <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3 text-destructive text-sm">
-                <strong>Warning:</strong> This action is permanent and cannot be
-                undone. All associated data (attendance records, sessions) will
-                also be deleted.
-              </div>
+      {/* Add-user dialog (feature 003) */}
+      {isSuperadmin && (
+        <AddUserDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
+      )}
 
-              <div className="text-foreground">
-                You are about to delete{' '}
-                <strong className="text-destructive">{data?.total} users</strong>
-                {(search || batteryFilter || rankFilter) && (
-                  <span> matching the current filters:</span>
-                )}
-              </div>
-
-              {(search || batteryFilter || rankFilter) && (
-                <ul className="text-sm text-muted-foreground list-disc list-inside">
-                  {search && <li>Name contains: &quot;{search}&quot;</li>}
-                  {batteryFilter && <li>Battery: {batteryFilter}</li>}
-                  {rankFilter && <li>Rank: {rankFilter}</li>}
-                </ul>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setBulkDeleteDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => bulkDeleteMutation.mutate()}
-              disabled={bulkDeleteMutation.isPending || (data?.total ?? 0) === 0}
-            >
-              {bulkDeleteMutation.isPending
-                ? 'Deleting...'
-                : `Delete ${data?.total} Users`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Selection-based bulk delete (feature 004) */}
+      {isSuperadmin && (
+        <BulkDeleteConfirmDialog
+          open={bulkDeleteOpen}
+          onOpenChange={setBulkDeleteOpen}
+          selectedUsers={selectedUsers}
+          onDeleted={() => clearSelection()}
+        />
+      )}
     </DashboardLayout>
   );
 }
-

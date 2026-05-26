@@ -95,6 +95,64 @@ export interface UpdateUserRequest {
   tierOverride?: 2 | 3 | null;
 }
 
+// Single-user create (feature 003) — superadmin only.
+export interface CreateUserRequest {
+  fullName: string;
+  rank: string;
+  battery: string;
+  nricLast5: string;
+  dob?: string;
+  extras?: Record<string, string>;
+}
+
+// 409 response shape from POST /api/users when a user already exists.
+export interface CreateUserConflictDetails {
+  error: 'user_exists';
+  existingUserId: string;
+  verified: boolean;
+  fullName: string;
+}
+
+export class CreateUserConflictError extends Error {
+  details: CreateUserConflictDetails;
+  constructor(details: CreateUserConflictDetails) {
+    super(`User already exists: ${details.fullName}`);
+    this.name = 'CreateUserConflictError';
+    this.details = details;
+  }
+}
+
+// Bulk-delete (feature 004) — selection-based, superadmin only.
+export interface BulkDeleteRequest {
+  userIds: string[];
+}
+
+export type BulkDeleteSkipReason = 'self' | 'system_admin' | 'not_found';
+
+export interface BulkDeleteSkip {
+  id: string;
+  reason: BulkDeleteSkipReason;
+}
+
+export interface BulkDeleteFailure {
+  id: string;
+  code: string;
+}
+
+export interface BulkDeleteSummary {
+  requested: number;
+  deleted: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface BulkDeleteResponse {
+  deleted: string[];
+  skipped: BulkDeleteSkip[];
+  failed: BulkDeleteFailure[];
+  summary: BulkDeleteSummary;
+}
+
 // Pending registration (admin approval)
 export interface PendingRegistration {
   id: string;
@@ -501,33 +559,36 @@ export class APIClient {
     });
   }
 
-  async getBulkDeleteCount(params: {
-    search?: string;
-    battery?: string;
-    rank?: string;
-  }): Promise<{ count: number }> {
-    const queryParams = new URLSearchParams();
-    if (params.search) queryParams.set('search', params.search);
-    if (params.battery) queryParams.set('battery', params.battery);
-    if (params.rank) queryParams.set('rank', params.rank);
-    const query = queryParams.toString();
-    return this.request<{ count: number }>(
-      `/api/users/bulk/count${query ? `?${query}` : ''}`
-    );
+  // Create a single user (superadmin only). On 409, the server returns a
+  // structured conflict body; we surface it as CreateUserConflictError so
+  // callers can deep-link to the existing record.
+  async createUser(data: CreateUserRequest): Promise<UserProfile> {
+    const url = `${this.baseURL}/api/users`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(data),
+    });
+
+    if (response.status === 409) {
+      const body = (await response.json()) as CreateUserConflictDetails;
+      throw new CreateUserConflictError(body);
+    }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new APIError(errorText || response.statusText, response.status, response.statusText);
+    }
+    return response.json() as Promise<UserProfile>;
   }
 
-  async bulkDeleteUsers(params: {
-    search?: string;
-    battery?: string;
-    rank?: string;
-  }): Promise<{ message: string; deletedCount: number }> {
-    return this.request<{ message: string; deletedCount: number }>(
-      '/api/users/bulk',
-      {
-        method: 'DELETE',
-        body: JSON.stringify(params),
-      }
-    );
+  // Selection-based bulk delete (superadmin only). Returns a per-id
+  // outcome with `deleted` / `skipped` / `failed` arrays.
+  async bulkDeleteUsers(data: BulkDeleteRequest): Promise<BulkDeleteResponse> {
+    return this.request<BulkDeleteResponse>('/api/users/bulk-delete', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   // Admin endpoints (superadmin only)

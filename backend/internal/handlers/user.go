@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,8 +15,11 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
+
+const seededAdminID = "00000000000000000000000000000000"
 
 type UserHandler struct {
 	db *database.DB
@@ -399,90 +404,146 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "User deleted successfully"})
 }
 
-func (h *UserHandler) BulkDeleteCount(w http.ResponseWriter, r *http.Request) {
+// BulkDeleteRequest is the body accepted by POST /api/users/bulk-delete.
+// Replaces the old filter-shaped request — every target user must now be
+// named explicitly by id.
+type BulkDeleteRequest struct {
+	UserIDs []string `json:"userIds"`
+}
+
+// BulkDeleteSkip represents a user id that was intentionally skipped. The
+// Reason field is one of: "self", "system_admin", or "not_found".
+type BulkDeleteSkip struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// BulkDeleteFailure represents an unexpected per-id error. The Code field
+// is a short machine-readable token; free-text messages are logged but not
+// returned to avoid leaking DB internals.
+type BulkDeleteFailure struct {
+	ID   string `json:"id"`
+	Code string `json:"code"`
+}
+
+// BulkDeleteSummary is a convenience payload for the frontend's toast.
+type BulkDeleteSummary struct {
+	Requested int `json:"requested"`
+	Deleted   int `json:"deleted"`
+	Skipped   int `json:"skipped"`
+	Failed    int `json:"failed"`
+}
+
+// BulkDeleteResponse is the per-id outcome shape returned by the handler.
+type BulkDeleteResponse struct {
+	Deleted []string            `json:"deleted"`
+	Skipped []BulkDeleteSkip    `json:"skipped"`
+	Failed  []BulkDeleteFailure `json:"failed"`
+	Summary BulkDeleteSummary   `json:"summary"`
+}
+
+// partitionBulkDeleteIDs splits the requested id list into deletable
+// targets, ids skipped because they are the requester themselves, and ids
+// skipped because they are the seeded system admin. Duplicate ids in the
+// input are de-duplicated; order is preserved by first occurrence. Pure
+// function — no DB access — testable in unit mode.
+func partitionBulkDeleteIDs(requested []string, selfID string) (targets []string, skipped []BulkDeleteSkip) {
+	seen := make(map[string]struct{}, len(requested))
+	for _, id := range requested {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		switch id {
+		case selfID:
+			skipped = append(skipped, BulkDeleteSkip{ID: id, Reason: "self"})
+		case seededAdminID:
+			skipped = append(skipped, BulkDeleteSkip{ID: id, Reason: "system_admin"})
+		default:
+			targets = append(targets, id)
+		}
+	}
+	return targets, skipped
+}
+
+// BulkDeleteUsers deletes a best-effort batch of users named by explicit
+// id. Superadmin only. Returns a per-id outcome shape so the frontend can
+// surface deleted / skipped / failed counts and identities.
+func (h *UserHandler) BulkDeleteUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
-	search := r.URL.Query().Get("search")
-	battery := r.URL.Query().Get("battery")
-	rank := r.URL.Query().Get("rank")
-
-	adminID := "00000000000000000000000000000000"
-	whereClause := "WHERE id != $1 AND verified = true"
-	args := []interface{}{adminID}
-	argIndex := 2
-
-	if search != "" {
-		whereClause += fmt.Sprintf(` AND "full_name" ILIKE $%d`, argIndex)
-		args = append(args, "%"+search+"%")
-		argIndex++
-	}
-	if battery != "" {
-		whereClause += fmt.Sprintf(` AND battery = $%d`, argIndex)
-		args = append(args, battery)
-		argIndex++
-	}
-	if rank != "" {
-		whereClause += fmt.Sprintf(` AND rank = $%d`, argIndex)
-		args = append(args, rank)
-	}
-
-	var count int
-	if err := h.db.Pool.QueryRow(ctx, fmt.Sprintf(`SELECT COUNT(*) FROM "user" %s`, whereClause), args...).Scan(&count); err != nil {
-		http.Error(w, "Failed to count users", http.StatusInternalServerError)
+	currentUser, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]int{"count": count})
-}
-
-type BulkDeleteRequest struct {
-	Search  string `json:"search,omitempty"`
-	Battery string `json:"battery,omitempty"`
-	Rank    string `json:"rank,omitempty"`
-}
-
-func (h *UserHandler) BulkDelete(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 
 	var req BulkDeleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	adminID := "00000000000000000000000000000000"
-	whereClause := "WHERE id != $1 AND verified = true"
-	args := []interface{}{adminID}
-	argIndex := 2
-
-	if req.Search != "" {
-		whereClause += fmt.Sprintf(` AND "full_name" ILIKE $%d`, argIndex)
-		args = append(args, "%"+req.Search+"%")
-		argIndex++
-	}
-	if req.Battery != "" {
-		whereClause += fmt.Sprintf(` AND battery = $%d`, argIndex)
-		args = append(args, req.Battery)
-		argIndex++
-	}
-	if req.Rank != "" {
-		whereClause += fmt.Sprintf(` AND rank = $%d`, argIndex)
-		args = append(args, req.Rank)
-	}
-
-	result, err := h.db.Pool.Exec(ctx, fmt.Sprintf(`DELETE FROM "user" %s`, whereClause), args...)
-	if err != nil {
-		http.Error(w, "Failed to delete users", http.StatusInternalServerError)
+	if len(req.UserIDs) == 0 {
+		http.Error(w, "userIds must be a non-empty array", http.StatusBadRequest)
 		return
 	}
 
-	deletedCount := result.RowsAffected()
+	targets, skipped := partitionBulkDeleteIDs(req.UserIDs, currentUser.ID)
+
+	deleted := []string{}
+	failed := []BulkDeleteFailure{}
+
+	if len(targets) > 0 {
+		rows, err := h.db.Pool.Query(ctx,
+			`DELETE FROM "user" WHERE id = ANY($1) RETURNING id`, targets)
+		if err != nil {
+			log.Printf("bulk delete: requester=%s requested=%d db_error=%v",
+				currentUser.ID, len(req.UserIDs), err)
+			for _, id := range targets {
+				failed = append(failed, BulkDeleteFailure{ID: id, Code: "db_error"})
+			}
+		} else {
+			deletedSet := make(map[string]struct{}, len(targets))
+			for rows.Next() {
+				var id string
+				if scanErr := rows.Scan(&id); scanErr != nil {
+					log.Printf("bulk delete: requester=%s scan_error=%v", currentUser.ID, scanErr)
+					continue
+				}
+				deleted = append(deleted, id)
+				deletedSet[id] = struct{}{}
+			}
+			rows.Close()
+			if rowsErr := rows.Err(); rowsErr != nil {
+				log.Printf("bulk delete: requester=%s rows_error=%v", currentUser.ID, rowsErr)
+			}
+			for _, id := range targets {
+				if _, was := deletedSet[id]; !was {
+					skipped = append(skipped, BulkDeleteSkip{ID: id, Reason: "not_found"})
+				}
+			}
+		}
+	}
+
+	log.Printf("bulk delete: requester=%s requested=%d deleted=%d skipped=%d failed=%d",
+		currentUser.ID, len(req.UserIDs), len(deleted), len(skipped), len(failed))
+
+	resp := BulkDeleteResponse{
+		Deleted: deleted,
+		Skipped: skipped,
+		Failed:  failed,
+		Summary: BulkDeleteSummary{
+			Requested: len(req.UserIDs),
+			Deleted:   len(deleted),
+			Skipped:   len(skipped),
+			Failed:    len(failed),
+		},
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":      fmt.Sprintf("Deleted %d users successfully", deletedCount),
-		"deletedCount": deletedCount,
-	})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -644,4 +705,196 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]string{"outcome": "pending_approval"})
+}
+
+// CreateUserRequest is the body accepted by POST /api/users (superadmin only).
+// Only the first four fields are required; DOB and Extras are optional.
+type CreateUserRequest struct {
+	FullName  string            `json:"fullName"`
+	Rank      string            `json:"rank"`
+	Battery   string            `json:"battery"`
+	NRICLast5 string            `json:"nricLast5"`
+	DOB       string            `json:"dob,omitempty"`
+	Extras    map[string]string `json:"extras,omitempty"`
+}
+
+// createUserConflict is the 409 response shape when a user already exists
+// for the (full_name, nric_last5) pair. The frontend uses Verified to
+// decide whether to deep-link to the user detail page or the registrations
+// approval queue.
+type createUserConflict struct {
+	Error          string `json:"error"`
+	ExistingUserID string `json:"existingUserId"`
+	Verified       bool   `json:"verified"`
+	FullName       string `json:"fullName"`
+}
+
+// normalizeFullName trims leading/trailing whitespace and collapses any
+// internal whitespace run to a single space. "  John   Doe  " → "John Doe".
+func normalizeFullName(name string) string {
+	return strings.Join(strings.Fields(name), " ")
+}
+
+// createUserValidationError carries a user-facing message; the handler maps
+// it to a 400 response with the message in the body.
+type createUserValidationError struct{ message string }
+
+func (e *createUserValidationError) Error() string { return e.message }
+
+// validateCreateUser normalises and validates a CreateUserRequest. The
+// returned value is safe to insert directly. Pure function: no DB access,
+// no I/O — testable in unit mode without a database.
+func validateCreateUser(req CreateUserRequest) (CreateUserRequest, error) {
+	req.FullName = normalizeFullName(req.FullName)
+	if req.FullName == "" {
+		return req, &createUserValidationError{message: "Full name is required"}
+	}
+	req.Rank = strings.TrimSpace(req.Rank)
+	if req.Rank == "" {
+		return req, &createUserValidationError{message: "Rank is required"}
+	}
+	validRank := false
+	for _, r := range models.ValidRanks {
+		if r == req.Rank {
+			validRank = true
+			break
+		}
+	}
+	if !validRank {
+		return req, &createUserValidationError{message: "Invalid rank"}
+	}
+	req.Battery = strings.TrimSpace(req.Battery)
+	if req.Battery != models.BatteryHQ && req.Battery != models.BatteryAlpha && req.Battery != models.BatteryBravo {
+		return req, &createUserValidationError{message: "Invalid battery (must be HQ, Alpha, or Bravo)"}
+	}
+	normalizedNRIC, ok := normalizeNRICLast5(strings.TrimSpace(req.NRICLast5))
+	if !ok {
+		return req, &createUserValidationError{message: nricLast5FormatMessage}
+	}
+	req.NRICLast5 = normalizedNRIC
+	req.DOB = strings.TrimSpace(req.DOB)
+	if req.DOB != "" && len(req.DOB) != 6 {
+		return req, &createUserValidationError{message: "Invalid DOB format (must be DDMMYY)"}
+	}
+	return req, nil
+}
+
+// CreateUser inserts a single new user as a verified, immediately-usable
+// account. Superadmin only. Mirrors the validation rules of RegisterUser
+// and the password-hashing path of BulkCreateUsers but for one row.
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	ctx := context.Background()
+
+	var req CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	normalized, err := validateCreateUser(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	req = normalized
+
+	// Duplicate detection on (LOWER(full_name), nric_last5). No DB-level
+	// unique constraint exists today on this pair; the application layer is
+	// authoritative.
+	var (
+		existingID       string
+		existingVerified bool
+	)
+	err = h.db.Pool.QueryRow(ctx, `
+		SELECT id, verified FROM "user"
+		WHERE upper("full_name") = upper($1) AND "nric_last5" = $2
+		LIMIT 1
+	`, req.FullName, req.NRICLast5).Scan(&existingID, &existingVerified)
+	switch {
+	case err == nil:
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(createUserConflict{
+			Error:          "user_exists",
+			ExistingUserID: existingID,
+			Verified:       existingVerified,
+			FullName:       req.FullName,
+		})
+		return
+	case errors.Is(err, pgx.ErrNoRows):
+		// Happy path — no duplicate. Proceed.
+	default:
+		http.Error(w, "Failed to check for existing user", http.StatusInternalServerError)
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NRICLast5), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	isSuperadmin := models.IsSuperadminByRank(req.Rank)
+	extras := req.Extras
+	if extras == nil {
+		extras = map[string]string{}
+	}
+	extrasJSON, err := json.Marshal(extras)
+	if err != nil {
+		http.Error(w, "Failed to encode extras", http.StatusInternalServerError)
+		return
+	}
+
+	userID := generateID()
+	now := time.Now()
+
+	var dobArg interface{}
+	if req.DOB != "" {
+		dobArg = req.DOB
+	}
+
+	_, err = h.db.Pool.Exec(ctx, `
+		INSERT INTO "user" (
+			id, "full_name", rank, battery, "nric_last5", dob, password,
+			"is_superadmin", verified, extras, "createdAt", "updatedAt"
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9::jsonb, $10, $11)
+	`, userID, req.FullName, req.Rank, req.Battery, req.NRICLast5, dobArg,
+		string(hashedPassword), isSuperadmin, string(extrasJSON), now, now)
+	if err != nil {
+		// Race: another writer may have inserted between the duplicate check
+		// and the insert. Surface as 409 with the minimum useful payload.
+		if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(createUserConflict{
+				Error:    "user_exists",
+				FullName: req.FullName,
+			})
+			return
+		}
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
+	}
+
+	profile := UserProfile{
+		ID:           userID,
+		FullName:     &req.FullName,
+		Rank:         &req.Rank,
+		Battery:      &req.Battery,
+		NRICLast5:    &req.NRICLast5,
+		Extras:       extras,
+		Verified:     true,
+		IsSuperadmin: isSuperadmin,
+		CreatedAt:    now.Format(time.RFC3339),
+		UpdatedAt:    now.Format(time.RFC3339),
+	}
+	if req.DOB != "" {
+		dobCopy := req.DOB
+		profile.DOB = &dobCopy
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(profile)
 }

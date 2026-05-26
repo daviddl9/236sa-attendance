@@ -149,12 +149,12 @@ func main() {
 				r.Route("/users", func(r chi.Router) {
 					// View routes: Tier 2+ (battery-scoped automatically for Tier 2)
 					r.With(middleware.RequireBatteryNCO(db)).Get("/", userHandler.ListUsers)
-					r.With(middleware.RequireBatteryNCO(db)).Get("/bulk/count", userHandler.BulkDeleteCount)
 					r.With(middleware.RequireBatteryNCO(db)).Get("/{id}", userHandler.GetUser)
 					// Write routes: superadmin only
+					r.With(middleware.RequireSuperadmin(db)).Post("/", userHandler.CreateUser)
 					r.With(middleware.RequireSuperadmin(db)).Put("/{id}", userHandler.UpdateUser)
 					r.With(middleware.RequireSuperadmin(db)).Delete("/{id}", userHandler.DeleteUser)
-					r.With(middleware.RequireSuperadmin(db)).Delete("/bulk", userHandler.BulkDelete)
+					r.With(middleware.RequireSuperadmin(db)).Post("/bulk-delete", userHandler.BulkDeleteUsers)
 				})
 
 				// Attendance routes
