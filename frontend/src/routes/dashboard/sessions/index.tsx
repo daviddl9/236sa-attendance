@@ -95,11 +95,13 @@ function SessionsPage() {
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Users className="h-4 w-4" />
                             <span className="capitalize">
-                              {session.scope === 'unit_wide' 
-                                ? 'Unit Wide' 
-                                : (session.batteries && session.batteries.length > 0 
-                                    ? session.batteries.join(', ') 
-                                    : 'N/A')}
+                              {session.scope === 'unit_wide'
+                                ? 'Unit Wide'
+                                : session.scope === 'custom_list'
+                                  ? 'Custom List'
+                                  : (session.batteries && session.batteries.length > 0
+                                      ? session.batteries.join(', ')
+                                      : 'N/A')}
                             </span>
                           </div>
                         </div>
