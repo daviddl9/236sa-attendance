@@ -76,15 +76,17 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	var userArgs []any
 	switch sessionScope {
 	case models.SessionScopeCustomList:
+		// Custom lists are hand-picked, so include superadmins (e.g. CPT/MAJ)
+		// who the creator explicitly added.
 		if batteryScope != nil {
 			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u."is_superadmin" = false AND u.battery = $2`
+				WHERE sp.session_id = $1 AND u.battery = $2`
 			userArgs = []any{sessionID, *batteryScope}
 		} else {
 			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u."is_superadmin" = false`
+				WHERE sp.session_id = $1`
 			userArgs = []any{sessionID}
 		}
 	case models.SessionScopeUnitWide:
@@ -250,12 +252,14 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 	var userArgs []any
 	switch sessionScope {
 	case models.SessionScopeCustomList:
+		// Custom lists are hand-picked, so include superadmins (e.g. CPT/MAJ)
+		// who the creator explicitly added.
 		if missingBatteryScope != nil {
 			userQuery = `
 				SELECT u.id, u."full_name", u.rank, u.battery
 				FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u."is_superadmin" = false AND u.battery = $2
+				WHERE sp.session_id = $1 AND u.battery = $2
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
 			`
 			userArgs = []any{sessionID, *missingBatteryScope}
@@ -264,7 +268,7 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 				SELECT u.id, u."full_name", u.rank, u.battery
 				FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u."is_superadmin" = false
+				WHERE sp.session_id = $1
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
 			`
 			userArgs = []any{sessionID}
