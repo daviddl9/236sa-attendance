@@ -703,18 +703,18 @@ func (h *SessionHandler) PreviewCustomSession(w http.ResponseWriter, r *http.Req
 			if ok {
 				_ = h.db.Pool.QueryRow(ctx, `
 					SELECT id, rank, battery FROM "user"
-					WHERE "full_name" = $1 AND "nric_last5" = $2 AND verified = true
+					WHERE upper("full_name") = upper($1) AND upper("nric_last5") = $2 AND verified = true
 					LIMIT 1
 				`, fullName, normalized).Scan(&uid, &rank, &battery)
 			}
 		}
 
 		if uid == "" {
-			// Fall back to name-only match.
+			// Fall back to name-only match (case-insensitive).
 			var count int
-			_ = h.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM "user" WHERE "full_name" = $1 AND verified = true`, fullName).Scan(&count)
+			_ = h.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM "user" WHERE upper("full_name") = upper($1) AND verified = true`, fullName).Scan(&count)
 			if count == 1 {
-				_ = h.db.Pool.QueryRow(ctx, `SELECT id, rank, battery FROM "user" WHERE "full_name" = $1 AND verified = true LIMIT 1`, fullName).Scan(&uid, &rank, &battery)
+				_ = h.db.Pool.QueryRow(ctx, `SELECT id, rank, battery FROM "user" WHERE upper("full_name") = upper($1) AND verified = true LIMIT 1`, fullName).Scan(&uid, &rank, &battery)
 			} else if count > 1 {
 				unmatched = append(unmatched, unmatchedRow{RowNum: rowNum, FullName: fullName, NRICLast5: nricLast5, Reason: "ambiguous: multiple users with this name"})
 				continue
