@@ -230,14 +230,14 @@ function SignInContent() {
                   type="text"
                   placeholder="Enter your full name as in NRIC"
                   value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
+                  onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
                   disabled={loading}
                   required
                 />
               </div>
               <div className="grid gap-2">
                 <div className="flex items-center gap-2">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">NRIC Last 5 Chars (e.g 1234A)</Label>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button type="button" className="inline-flex items-center justify-center">
@@ -257,9 +257,9 @@ function SignInContent() {
                   <Input
                     id="password"
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="Enter your password"
+                    placeholder="e.g. 1234A"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => setPassword(e.target.value.toUpperCase())}
                     disabled={loading}
                     required
                     className="pr-10"
