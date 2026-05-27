@@ -42,11 +42,6 @@ func main() {
 		log.Fatalf("Failed to run migrations: %v", err)
 	}
 
-	// Seed admin user
-	if err := database.SeedAdminUser(db); err != nil {
-		log.Printf("Warning: Failed to seed admin user: %v", err)
-	}
-
 	// Initialize SSE hub for real-time updates
 	sseHub := sse.NewHub()
 
