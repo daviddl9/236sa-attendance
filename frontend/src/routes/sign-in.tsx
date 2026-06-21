@@ -224,11 +224,11 @@ function SignInContent() {
           ) : !signupRequired ? (
             <form onSubmit={handleSignIn} className="grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="identifier">Name (as in NRIC)</Label>
+                <Label htmlFor="identifier">Full Name (as in NRIC)</Label>
                 <Input
                   id="identifier"
                   type="text"
-                  placeholder="Your full name, or any part of it"
+                  placeholder="Enter your full name as in NRIC"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
                   disabled={loading}
