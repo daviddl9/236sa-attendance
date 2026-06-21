@@ -1,6 +1,9 @@
 package handlers
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 const nricLast5FormatMessage = "NRIC Last 5 must be exactly 5 characters: 4 numbers followed by an alphabet letter (e.g., 1234A)"
 
@@ -37,4 +40,37 @@ func isValidNRICLast5(value string) bool {
 	}
 	last := value[4]
 	return (last >= 'A' && last <= 'Z') || (last >= 'a' && last <= 'z')
+}
+
+// nameMatchesIdentifier reports whether every word the user typed appears as a
+// word in the user's full name (case-insensitive, order-independent). It lets
+// personnel sign in with any subset of their name's words in any order — e.g.
+// "Andrew Tam" matches stored "Tam Le Xiang, Andrew", and "David" or "D David"
+// match "D David Livingston". Punctuation is treated as a word separator.
+func nameMatchesIdentifier(fullName *string, identifier string) bool {
+	if fullName == nil {
+		return false
+	}
+	typed := nameTokens(identifier)
+	if len(typed) == 0 {
+		return false
+	}
+	stored := make(map[string]struct{})
+	for _, w := range nameTokens(*fullName) {
+		stored[w] = struct{}{}
+	}
+	for _, w := range typed {
+		if _, ok := stored[w]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// nameTokens lowercases and splits on any non-alphanumeric rune, returning the
+// word tokens. "Tam Le Xiang, Andrew" -> [tam le xiang andrew].
+func nameTokens(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }

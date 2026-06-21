@@ -34,17 +34,17 @@ type SignInRequest struct {
 type SignInOutcome string
 
 const (
-	SignInOutcomeAuthenticated    SignInOutcome = "authenticated"
-	SignInOutcomeSignupRequired   SignInOutcome = "signup_required"
-	SignInOutcomePendingApproval  SignInOutcome = "pending_approval"
+	SignInOutcomeAuthenticated   SignInOutcome = "authenticated"
+	SignInOutcomeSignupRequired  SignInOutcome = "signup_required"
+	SignInOutcomePendingApproval SignInOutcome = "pending_approval"
 )
 
 // SignInResponse is returned for every successful (2xx) sign-in call.
 type SignInResponse struct {
 	Outcome  SignInOutcome `json:"outcome"`
-	User     *models.User `json:"user,omitempty"`
-	Session  *string      `json:"session,omitempty"`
-	FullName string       `json:"fullName,omitempty"`
+	User     *models.User  `json:"user,omitempty"`
+	Session  *string       `json:"session,omitempty"`
+	FullName string        `json:"fullName,omitempty"`
 }
 
 type SignUpRequest struct {
@@ -72,6 +72,42 @@ type userRow struct {
 	password     string
 }
 
+// signInUserColumns is the SELECT list shared by the sign-in lookups so the
+// primary query and the word-subset fallback scan an identical set of columns.
+const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin", u.tier_override, u.verified, u."createdAt", u."updatedAt", u.password`
+
+// scanUserRow scans signInUserColumns (in order) into ur. It accepts a pgx.Row,
+// which both Pool.QueryRow and Pool.Query rows satisfy.
+func scanUserRow(row pgx.Row, ur *userRow) error {
+	return row.Scan(
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.tierOverride, &ur.verified, &ur.createdAt, &ur.updatedAt, &ur.password,
+	)
+}
+
+// findUsersByNRICAndName returns users whose nric_last5 equals nricLast5 AND whose
+// full name contains every word in identifier (case-insensitive, any order). Used
+// as a sign-in fallback so personnel can type part of their name.
+func (h *AuthHandler) findUsersByNRICAndName(ctx context.Context, nricLast5, identifier string) ([]userRow, error) {
+	rows, err := h.db.Pool.Query(ctx, `SELECT `+signInUserColumns+` FROM "user" u WHERE u."nric_last5" = $1`, nricLast5)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []userRow
+	for rows.Next() {
+		var ur userRow
+		if err := scanUserRow(rows, &ur); err != nil {
+			return nil, err
+		}
+		if nameMatchesIdentifier(ur.fullName, identifier) {
+			matches = append(matches, ur)
+		}
+	}
+	return matches, rows.Err()
+}
+
 func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	var req SignInRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -92,18 +128,11 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var ur userRow
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT
-			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
-			u.tier_override, u.verified,
-			u."createdAt", u."updatedAt", u.password
+	err := scanUserRow(h.db.Pool.QueryRow(ctx, `
+		SELECT `+signInUserColumns+`
 		FROM "user" u
 		WHERE upper(u."full_name") = upper($1) AND u."nric_last5" IS NOT DISTINCT FROM $2
-	`, req.Identifier, nricLast5Val).Scan(
-		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
-		&ur.tierOverride, &ur.verified,
-		&ur.createdAt, &ur.updatedAt, &ur.password,
-	)
+	`, req.Identifier, nricLast5Val), &ur)
 
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
@@ -112,31 +141,52 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if req.Identifier == "admin" {
-			log.Printf("[SignIn] Admin login failed - invalid credentials")
-			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-			return
+		// Fallback: the exact full-name match missed. Among users with this NRIC, see
+		// if the typed words are a subset of exactly one user's name — this lets people
+		// sign in with part of their name, in any order. Skipped for the admin path
+		// (nil NRIC), and fails closed (generic error) if more than one user matches.
+		matched := false
+		if nricLast5Val != nil {
+			matches, ferr := h.findUsersByNRICAndName(ctx, *nricLast5Val, req.Identifier)
+			if ferr != nil {
+				log.Printf("[SignIn] Name fallback query failed for %q: %v", req.Identifier, ferr)
+			} else if len(matches) > 1 {
+				log.Printf("[SignIn] Ambiguous name %q for shared NRIC — returning generic error", req.Identifier)
+				http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+				return
+			} else if len(matches) == 1 {
+				ur = matches[0]
+				matched = true
+			}
 		}
 
-		// Name-leak protection: if the name exists with a different NRIC, return generic error.
-		var nameExists bool
-		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.Identifier,
-		).Scan(&nameExists)
-		if nameExists {
-			log.Printf("[SignIn] Name exists but NRIC mismatch for %q — returning generic error", req.Identifier)
-			http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+		if !matched {
+			if req.Identifier == "admin" {
+				log.Printf("[SignIn] Admin login failed - invalid credentials")
+				http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+				return
+			}
+
+			// Name-leak protection: if the name exists with a different NRIC, return generic error.
+			var nameExists bool
+			_ = h.db.Pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.Identifier,
+			).Scan(&nameExists)
+			if nameExists {
+				log.Printf("[SignIn] Name exists but NRIC mismatch for %q — returning generic error", req.Identifier)
+				http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+				return
+			}
+
+			log.Printf("[SignIn] Unknown name %q — returning signup_required", req.Identifier)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(SignInResponse{
+				Outcome:  SignInOutcomeSignupRequired,
+				FullName: req.Identifier,
+			})
 			return
 		}
-
-		log.Printf("[SignIn] Unknown name %q — returning signup_required", req.Identifier)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(SignInResponse{
-			Outcome:  SignInOutcomeSignupRequired,
-			FullName: req.Identifier,
-		})
-		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(ur.password), []byte(passwordForAuth)); err != nil {
