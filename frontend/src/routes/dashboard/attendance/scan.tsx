@@ -22,7 +22,7 @@ import {
 } from '../../../components/ui/card';
 import { useState, useRef, useEffect } from 'react';
 import jsQR from 'jsqr';
-import { ScanLine, CheckCircle2, XCircle } from 'lucide-react';
+import { ScanLine, CheckCircle2, XCircle, SwitchCamera } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
 import { canAccessCommanderFeatures } from '../../../lib/user-utils';
@@ -43,6 +43,41 @@ function toQrData(raw: string): string | null {
   return `${parts[0]}:${parts[1]}:${Math.floor(Date.now() / 1000)}`;
 }
 
+// Acquire a camera stream that works across devices. Without a deviceId we
+// prefer the rear camera (best for scanning on phones/tablets) but only as a
+// preference, so laptops/desktops with a front camera still get a stream.
+// A specific request that a device can't satisfy falls back to any camera.
+async function getCameraStream(deviceId?: string): Promise<MediaStream> {
+  const constraints: MediaStreamConstraints = deviceId
+    ? { video: { deviceId: { exact: deviceId } } }
+    : { video: { facingMode: { ideal: 'environment' } } };
+  try {
+    return await navigator.mediaDevices.getUserMedia(constraints);
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'OverconstrainedError') {
+      return await navigator.mediaDevices.getUserMedia({ video: true });
+    }
+    throw err;
+  }
+}
+
+// Map the various getUserMedia failures to guidance the user can act on.
+function cameraErrorMessage(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : '';
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Camera permission denied. Allow camera access in your browser, then try again.';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'No camera found on this device. Use "Enter Manually" instead.';
+    case 'NotReadableError':
+      return 'The camera is in use by another app. Close it and try again.';
+    default:
+      return 'Failed to access camera. Please grant camera permissions and try again.';
+  }
+}
+
 function ScanAttendancePage() {
   const { user } = useAuth();
   const [scanning, setScanning] = useState(false);
@@ -50,6 +85,7 @@ function ScanAttendancePage() {
   const [scanResult, setScanResult] = useState<'success' | 'error' | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
 
   const canViewSessions = canAccessCommanderFeatures(user);
 
@@ -80,16 +116,44 @@ function ScanAttendancePage() {
   });
 
   const startScanning = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error('Camera is not supported in this browser. Use "Enter Manually" instead.');
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-      });
+      const stream = await getCameraStream();
       streamRef.current = stream;
       // Flip to scanning so the <video> mounts; the effect below wires the
       // stream to it and starts the decode loop once it's in the DOM.
       setScanning(true);
-    } catch {
-      toast.error('Failed to access camera. Please grant camera permissions.');
+      // Device labels are only exposed after permission is granted — list the
+      // cameras now so multi-camera devices can switch between them.
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setCameras(all.filter((d) => d.kind === 'videoinput'));
+      } catch {
+        // Enumeration is best-effort; scanning still works without it.
+      }
+    } catch (err) {
+      toast.error(cameraErrorMessage(err));
+    }
+  };
+
+  const switchCamera = async () => {
+    if (cameras.length < 2) return;
+    const currentId = streamRef.current?.getVideoTracks()[0]?.getSettings().deviceId;
+    const idx = cameras.findIndex((c) => c.deviceId === currentId);
+    const next = cameras[(idx + 1) % cameras.length];
+    try {
+      const stream = await getCameraStream(next.deviceId);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    } catch (err) {
+      toast.error(cameraErrorMessage(err));
     }
   };
 
@@ -290,9 +354,17 @@ function ScanAttendancePage() {
                   </Dialog>
                 </>
               ) : (
-                <Button onClick={stopScanning} variant="destructive">
-                  Stop Scanning
-                </Button>
+                <>
+                  {cameras.length > 1 && (
+                    <Button onClick={switchCamera} variant="outline">
+                      <SwitchCamera className="mr-2 h-4 w-4" />
+                      Switch Camera
+                    </Button>
+                  )}
+                  <Button onClick={stopScanning} variant="destructive">
+                    Stop Scanning
+                  </Button>
+                </>
               )}
             </div>
 
