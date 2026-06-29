@@ -237,7 +237,7 @@ function SignInContent() {
               </div>
               <div className="grid gap-2">
                 <div className="flex items-center gap-2">
-                  <Label htmlFor="password">NRIC Last 5 Chars (e.g 1234A)</Label>
+                  <Label htmlFor="password">NRIC Last 5 (e.g 1234A)</Label>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button type="button" className="inline-flex items-center justify-center">

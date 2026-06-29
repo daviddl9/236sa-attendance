@@ -21,6 +21,7 @@ import {
   CardTitle,
 } from '../../../components/ui/card';
 import { useState, useRef, useEffect } from 'react';
+import jsQR from 'jsqr';
 import { ScanLine, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
@@ -29,6 +30,18 @@ import { canAccessCommanderFeatures } from '../../../lib/user-utils';
 export const Route = createFileRoute('/dashboard/attendance/scan')({
   component: ScanAttendancePage,
 });
+
+// Session QR codes encode a URL like https://host/qr/<sessionId>:<secret>.
+// The mark-attendance endpoint expects "<sessionId>:<secret>:<timestamp>".
+// Accept either the full URL or a bare token and normalize to that shape.
+function toQrData(raw: string): string | null {
+  const text = raw.trim();
+  const token = text.includes('/qr/') ? text.split('/qr/')[1] : text;
+  const cleaned = token.split(/[?#]/)[0];
+  const parts = cleaned.split(':');
+  if (parts.length < 2 || !parts[0] || !parts[1]) return null;
+  return `${parts[0]}:${parts[1]}:${Math.floor(Date.now() / 1000)}`;
+}
 
 function ScanAttendancePage() {
   const { user } = useAuth();
@@ -72,10 +85,9 @@ function ScanAttendancePage() {
         video: { facingMode: 'environment' },
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setScanning(true);
-      }
+      // Flip to scanning so the <video> mounts; the effect below wires the
+      // stream to it and starts the decode loop once it's in the DOM.
+      setScanning(true);
     } catch {
       toast.error('Failed to access camera. Please grant camera permissions.');
     }
@@ -92,6 +104,64 @@ function ScanAttendancePage() {
     setScanning(false);
   };
 
+  const handleScanResult = (raw: string) => {
+    const qrData = toQrData(raw);
+    if (!qrData) {
+      toast.error('Unrecognized QR code. Please try again.');
+      return;
+    }
+    setScannedData(raw);
+    stopScanning();
+    markMutation.mutate(qrData);
+  };
+  // Keep the latest handler in a ref so the decode loop never goes stale and
+  // the camera effect doesn't re-subscribe on every render.
+  const handleScanResultRef = useRef(handleScanResult);
+  useEffect(() => {
+    handleScanResultRef.current = handleScanResult;
+  });
+
+  // Attach the camera stream and run the QR decode loop while scanning.
+  useEffect(() => {
+    if (!scanning) return;
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+
+    video.srcObject = stream;
+    video.play().catch(() => {});
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    let raf = 0;
+    let stopped = false;
+
+    const tick = () => {
+      if (stopped) return;
+      if (ctx && video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(image.data, image.width, image.height, {
+          inversionAttempts: 'dontInvert',
+        });
+        if (code?.data) {
+          stopped = true;
+          handleScanResultRef.current(code.data);
+          return;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [scanning]);
+
   useEffect(() => {
     return () => {
       stopScanning();
@@ -102,12 +172,16 @@ function ScanAttendancePage() {
   const [manualQRInput, setManualQRInput] = useState('');
 
   const handleManualQR = () => {
-    if (manualQRInput.trim()) {
-      setScannedData(manualQRInput.trim());
-      markMutation.mutate(manualQRInput.trim());
-      setManualQRInput('');
-      setManualQRDialogOpen(false);
+    const trimmed = manualQRInput.trim();
+    const qrData = toQrData(trimmed);
+    if (!qrData) {
+      toast.error('Unrecognized QR code.');
+      return;
     }
+    setScannedData(trimmed);
+    markMutation.mutate(qrData);
+    setManualQRInput('');
+    setManualQRDialogOpen(false);
   };
 
   return (
@@ -142,6 +216,7 @@ function ScanAttendancePage() {
                   ref={videoRef}
                   autoPlay
                   playsInline
+                  muted
                   className="w-full h-full object-cover"
                 />
               ) : (
