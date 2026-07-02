@@ -169,8 +169,9 @@ func main() {
 					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
 					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
 					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/pdf", sessionHandler.ExportSessionPDF)
-					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
-					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
+					// Marking/unmarking: Tier 2+ (battery NCOs), battery-scoped in the handlers
+					r.With(middleware.RequireBatteryNCO(db)).Post("/{id}/attendance/manual", attendanceHandler.ManualMarkAttendance)
+					r.With(middleware.RequireBatteryNCO(db)).Delete("/{id}/attendance/{userId}", attendanceHandler.RemoveAttendance)
 
 					// Delete: superadmin only
 					r.With(middleware.RequireSuperadmin(db)).Delete("/{id}", sessionHandler.DeleteSession)

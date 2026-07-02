@@ -46,6 +46,7 @@ import { toast } from 'sonner';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useAuth } from '../../../lib/auth-context';
 import { canAccessCommanderFeatures, isSuperadmin } from '../../../lib/user-utils';
+import type { UserInfo } from '../../../lib/api-client';
 import { UserTable } from '../../../components/users/user-table';
 import { useSessionSSE } from '../../../hooks/use-session-sse';
 
@@ -67,8 +68,12 @@ function SessionDetailPage() {
   const [includeAbsentList, setIncludeAbsentList] = useState(true);
   const [includePresentList, setIncludePresentList] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [presentBatteryFilter, setPresentBatteryFilter] = useState('');
+  const [presentSearchQuery, setPresentSearchQuery] = useState('');
+  const [unmarkTarget, setUnmarkTarget] = useState<UserInfo | null>(null);
 
   const canMarkAttendance = canAccessCommanderFeatures(user);
+  const canUnmarkAttendance = canAccessCommanderFeatures(user);
 
   // SSE connection for live attendance updates
   useSessionSSE({
@@ -97,6 +102,16 @@ function SessionDetailPage() {
     return matchesBattery && matchesSearch;
   });
 
+  const presentUsers = analytics?.presentUsers ?? [];
+  const filteredPresentUsers = presentUsers.filter((u) => {
+    const matchesBattery = !presentBatteryFilter || u.battery === presentBatteryFilter;
+    const matchesSearch =
+      !presentSearchQuery ||
+      u.fullName?.toLowerCase().includes(presentSearchQuery.toLowerCase()) ||
+      u.rank?.toLowerCase().includes(presentSearchQuery.toLowerCase());
+    return matchesBattery && matchesSearch;
+  });
+
   const manualMarkMutation = useMutation({
     mutationFn: (userId: string) => {
       setMarkingUserId(userId);
@@ -110,6 +125,19 @@ function SessionDetailPage() {
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to mark attendance');
       setMarkingUserId(null);
+    },
+  });
+
+  const unmarkMutation = useMutation({
+    mutationFn: (userId: string) => apiClient.removeAttendance(sessionId, userId),
+    onSuccess: () => {
+      toast.success('Attendance removed');
+      setUnmarkTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['session-analytics', sessionId] });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to remove attendance');
+      setUnmarkTarget(null);
     },
   });
 
@@ -548,6 +576,88 @@ function SessionDetailPage() {
             </CardContent>
           </Card>
         )}
+
+        {analytics && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Present Users</CardTitle>
+                  <CardDescription>Users who have marked attendance</CardDescription>
+                </div>
+                <Select
+                  value={presentBatteryFilter || 'all'}
+                  onValueChange={(value) => setPresentBatteryFilter(value === 'all' ? '' : value)}
+                >
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="All Batteries" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Batteries</SelectItem>
+                    <SelectItem value="HQ">HQ</SelectItem>
+                    <SelectItem value="Alpha">Alpha</SelectItem>
+                    <SelectItem value="Bravo">Bravo</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name or rank..."
+                  value={presentSearchQuery}
+                  onChange={(e) => setPresentSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <UserTable
+                users={filteredPresentUsers}
+                showActions={false}
+                emptyMessage={presentSearchQuery ? 'No matching users' : 'No one marked yet'}
+                onUnmark={
+                  canUnmarkAttendance
+                    ? (userId) => {
+                        const target = presentUsers.find((u) => u.id === userId);
+                        if (target) setUnmarkTarget(target);
+                      }
+                    : undefined
+                }
+                unmarkingUserId={unmarkMutation.isPending ? unmarkMutation.variables : undefined}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        <Dialog
+          open={!!unmarkTarget}
+          onOpenChange={(open) => {
+            if (!open) setUnmarkTarget(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Remove Attendance</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to unmark{' '}
+                {[unmarkTarget?.rank, unmarkTarget?.fullName].filter(Boolean).join(' ') || 'this user'}?
+                They will move back to the missing list.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setUnmarkTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => unmarkTarget && unmarkMutation.mutate(unmarkTarget.id)}
+                disabled={unmarkMutation.isPending}
+              >
+                {unmarkMutation.isPending ? 'Removing...' : 'Unmark'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <DialogContent>

@@ -10,7 +10,7 @@ import {
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { Link } from '@tanstack/react-router';
-import { Pencil, Trash2, UserCheck } from 'lucide-react';
+import { Pencil, Trash2, UserCheck, UserX } from 'lucide-react';
 import type { UserInfo, UserProfile } from '../../lib/api-client';
 import { StatusBadge } from '../status-badge';
 
@@ -21,6 +21,8 @@ interface UserTableProps {
   onDelete?: (userId: string) => void;
   onMark?: (userId: string) => void;
   markingUserId?: string;
+  onUnmark?: (userId: string) => void;
+  unmarkingUserId?: string;
   // Selection support (feature 004). When `selectable` is true, a leading
   // checkbox column is rendered with row + header semantics. `selectedIds`
   // is authoritative; `onToggleRow` toggles a single id; `onTogglePage`
@@ -42,6 +44,8 @@ export function UserTable({
   onDelete,
   onMark,
   markingUserId,
+  onUnmark,
+  unmarkingUserId,
   selectable = false,
   selectedIds,
   onToggleRow,
@@ -49,6 +53,7 @@ export function UserTable({
   disabledIds,
 }: UserTableProps) {
   const showMarkButton = !!onMark;
+  const showUnmarkButton = !!onUnmark;
   const safeSelected = useMemo(
     () => selectedIds ?? new Set<string>(),
     [selectedIds],
@@ -103,6 +108,7 @@ export function UserTable({
               <TableHead className="hidden sm:table-cell">Battery</TableHead>
               {showActions && <TableHead>Actions</TableHead>}
               {showMarkButton && <TableHead className="w-[70px]"></TableHead>}
+              {showUnmarkButton && <TableHead className="w-[90px]"></TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -113,7 +119,8 @@ export function UserTable({
                   extraKeys.length +
                   (selectable ? 1 : 0) +
                   (showActions ? 1 : 0) +
-                  (showMarkButton ? 1 : 0)
+                  (showMarkButton ? 1 : 0) +
+                  (showUnmarkButton ? 1 : 0)
                 }
                 className="text-center text-muted-foreground"
               >
@@ -150,6 +157,7 @@ export function UserTable({
             ))}
             {showActions && <TableHead>Actions</TableHead>}
             {showMarkButton && <TableHead className="w-[70px]"></TableHead>}
+            {showUnmarkButton && <TableHead className="w-[90px]"></TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -226,6 +234,22 @@ export function UserTable({
                       <UserCheck className="h-4 w-4 sm:mr-1" />
                       <span className="hidden sm:inline">
                         {markingUserId === user.id ? '...' : 'Mark'}
+                      </span>
+                    </Button>
+                  </TableCell>
+                )}
+                {showUnmarkButton && (
+                  <TableCell className="py-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => onUnmark(user.id)}
+                      disabled={unmarkingUserId === user.id}
+                    >
+                      <UserX className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">
+                        {unmarkingUserId === user.id ? '...' : 'Unmark'}
                       </span>
                     </Button>
                   </TableCell>
