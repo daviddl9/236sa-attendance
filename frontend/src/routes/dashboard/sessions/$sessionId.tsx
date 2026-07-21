@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { apiClient } from '../../../lib/api-client';
+import { cn } from '../../../lib/utils';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
 import {
@@ -41,6 +42,7 @@ import {
   Copy,
   Search,
   Trash2,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link, useNavigate } from '@tanstack/react-router';
@@ -71,6 +73,14 @@ function SessionDetailPage() {
   const [presentBatteryFilter, setPresentBatteryFilter] = useState('');
   const [presentSearchQuery, setPresentSearchQuery] = useState('');
   const [unmarkTarget, setUnmarkTarget] = useState<UserInfo | null>(null);
+  const [highlightedCard, setHighlightedCard] = useState<string | null>(null);
+  const scrollToCard = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setHighlightedCard(id);
+    setTimeout(() => setHighlightedCard((c) => (c === id ? null : c)), 1200);
+  };
 
   const isCommander = canAccessCommanderFeatures(user);
   const canMarkAttendance = isCommander;
@@ -467,10 +477,18 @@ function SessionDetailPage() {
                       <p className="text-sm text-muted-foreground">Total Users</p>
                       <p className="text-2xl font-bold">{stats.total}</p>
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Present</p>
+                    <button
+                      type="button"
+                      onClick={() => scrollToCard('present-users-card')}
+                      className="text-left group"
+                      aria-label="View present users list"
+                    >
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        Present
+                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                      </p>
                       <p className="text-2xl font-bold">{stats.present}</p>
-                    </div>
+                    </button>
                     <div className="col-span-2">
                       <p className="text-sm text-muted-foreground">Attendance Rate</p>
                       <p className="text-2xl font-bold">
@@ -479,8 +497,18 @@ function SessionDetailPage() {
                     </div>
                   </div>
                   <div className="pt-4 border-t">
-                    <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
-                    <p className="text-lg font-semibold">{stats.missing}</p>
+                    <button
+                      type="button"
+                      onClick={() => scrollToCard('missing-users-card')}
+                      className="text-left group"
+                      aria-label="View missing users list"
+                    >
+                      <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
+                        Missing Users
+                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                      </p>
+                      <p className="text-lg font-semibold">{stats.missing}</p>
+                    </button>
                   </div>
                 </CardContent>
               </Card>
@@ -540,7 +568,7 @@ function SessionDetailPage() {
         )}
 
         {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
-          <Card>
+          <Card id="missing-users-card" className={cn(highlightedCard === 'missing-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -587,7 +615,7 @@ function SessionDetailPage() {
         )}
 
         {analytics && (
-          <Card>
+          <Card id="present-users-card" className={cn(highlightedCard === 'present-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
