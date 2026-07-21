@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
@@ -80,6 +80,8 @@ function cameraErrorMessage(err: unknown): string {
 
 function ScanAttendancePage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [markedSessionId, setMarkedSessionId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scannedData, setScannedData] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<'success' | 'error' | null>(null);
@@ -97,13 +99,10 @@ function ScanAttendancePage() {
 
   const markMutation = useMutation({
     mutationFn: (qrData: string) => apiClient.markAttendance({ qrData }),
-    onSuccess: () => {
+    onSuccess: (_data, qrData) => {
       setScanResult('success');
+      setMarkedSessionId(qrData.split(':')[0]);
       toast.success('Attendance marked successfully!');
-      setTimeout(() => {
-        setScanResult(null);
-        setScannedData(null);
-      }, 3000);
     },
     onError: (error: Error) => {
       setScanResult('error');
@@ -382,6 +381,54 @@ function ScanAttendancePage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog
+          open={!!markedSessionId}
+          onOpenChange={(open) => {
+            if (!open) {
+              setMarkedSessionId(null);
+              setScanResult(null);
+              setScannedData(null);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <div className="flex justify-center mb-2">
+                <div className="rounded-full bg-green-100 dark:bg-green-900 p-3">
+                  <CheckCircle2 className="h-8 w-8 text-green-600 dark:text-green-400" />
+                </div>
+              </div>
+              <DialogTitle className="text-center text-xl">Attendance Marked!</DialogTitle>
+              <DialogDescription className="text-center">
+                Your attendance has been recorded.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-center gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setMarkedSessionId(null);
+                  setScanResult(null);
+                  setScannedData(null);
+                }}
+              >
+                Scan Another
+              </Button>
+              <Button
+                onClick={() =>
+                  markedSessionId &&
+                  navigate({
+                    to: '/dashboard/sessions/$sessionId',
+                    params: { sessionId: markedSessionId },
+                  })
+                }
+              >
+                View Session
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {canViewSessions && activeSessions && activeSessions.length > 0 && (
           <Card>
