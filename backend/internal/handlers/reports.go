@@ -164,14 +164,6 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		presentUserIDs[userID] = true
 	}
 
-	// Calculate statistics
-	totalUsers := len(allUsers)
-	presentCount := len(presentUserIDs)
-	var attendancePercentage float64
-	if totalUsers > 0 {
-		attendancePercentage = float64(presentCount) / float64(totalUsers) * 100
-	}
-
 	// Find missing and present users
 	var missingUsers []UserInfo
 	var presentUsers []UserInfo
@@ -183,6 +175,17 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 			missingUsers = append(missingUsers, user)
 			missingUserIDs = append(missingUserIDs, user.ID)
 		}
+	}
+
+	// Calculate statistics. presentCount is counted from the scoped eligible
+	// set (presentUsers), not the raw attendance rows, so battery-scoped
+	// viewers get a present count and percentage consistent with the roster
+	// they can see.
+	totalUsers := len(allUsers)
+	presentCount := len(presentUsers)
+	var attendancePercentage float64
+	if totalUsers > 0 {
+		attendancePercentage = float64(presentCount) / float64(totalUsers) * 100
 	}
 
 	// Fetch active statuses for missing users
