@@ -47,6 +47,20 @@ type RankStats struct {
 	Present int `json:"present"`
 }
 
+// batteryScopeForAnalytics returns the battery an analytics view is restricted
+// to, or nil for no restriction. Enlisted soldiers (Tier 1) and battery NCOs
+// (Tier 2) see only their own battery; unit commanders and superadmins (Tier
+// 3+) see all batteries.
+func batteryScopeForAnalytics(user *models.User) *string {
+	if user == nil || user.Battery == nil {
+		return nil
+	}
+	if user.GetTier() < models.TierUnitCommander {
+		return user.Battery
+	}
+	return nil
+}
+
 // GetSessionAnalytics returns detailed analytics for a session
 func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
@@ -64,12 +78,9 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Tier 2 users see only their own battery's slice of the analytics.
+	// Tier 1–2 users see only their own battery's slice of the analytics.
 	currentUser, _ := middleware.GetUserFromContext(r.Context())
-	var batteryScope *string
-	if currentUser != nil && currentUser.GetTier() == models.TierBatteryNCO && currentUser.Battery != nil {
-		batteryScope = currentUser.Battery
-	}
+	batteryScope := batteryScopeForAnalytics(currentUser)
 
 	// Build user query based on session scope + optional battery scope for Tier 2.
 	var userQuery string
