@@ -19,7 +19,7 @@ func TestBatteryScopeForAnalytics(t *testing.T) {
 		{"battery NCO with battery is scoped", &models.User{Rank: strptr(models.Rank3SG), Battery: strptr(models.BatteryBravo)}, strptr(models.BatteryBravo)},
 		{"unit commander sees all batteries", &models.User{Rank: strptr(models.RankSSG), Battery: strptr(models.BatteryHQ)}, nil},
 		{"superadmin sees all batteries", &models.User{IsSuperadmin: true, Battery: strptr(models.BatteryHQ)}, nil},
-		{"enlisted without battery is unscoped", &models.User{Rank: strptr(models.RankREC)}, nil},
+		{"enlisted without battery gets empty scope (no roster)", &models.User{Rank: strptr(models.RankREC)}, strptr("")},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

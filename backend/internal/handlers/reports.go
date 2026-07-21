@@ -52,13 +52,17 @@ type RankStats struct {
 // (Tier 2) see only their own battery; unit commanders and superadmins (Tier
 // 3+) see all batteries.
 func batteryScopeForAnalytics(user *models.User) *string {
-	if user == nil || user.Battery == nil {
+	if user == nil || user.GetTier() >= models.TierUnitCommander {
 		return nil
 	}
-	if user.GetTier() < models.TierUnitCommander {
+	// Tier 1–2 are restricted to their own battery. A user with no battery has
+	// no roster to see, so scope to a sentinel that matches no one (empty
+	// board) rather than falling through to the unrestricted unit-wide query.
+	if user.Battery != nil {
 		return user.Battery
 	}
-	return nil
+	empty := ""
+	return &empty
 }
 
 // GetSessionAnalytics returns detailed analytics for a session
@@ -82,7 +86,7 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	currentUser, _ := middleware.GetUserFromContext(r.Context())
 	batteryScope := batteryScopeForAnalytics(currentUser)
 
-	// Build user query based on session scope + optional battery scope for Tier 2.
+	// Build user query based on session scope + optional battery scope for Tier 1–2.
 	var userQuery string
 	var userArgs []any
 	switch sessionScope {
