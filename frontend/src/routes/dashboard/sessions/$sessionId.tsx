@@ -78,6 +78,7 @@ function SessionDetailPage() {
     const el = document.getElementById(id);
     if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.focus({ preventScroll: true });
     setHighlightedCard(id);
     setTimeout(() => setHighlightedCard((c) => (c === id ? null : c)), 1200);
   };
@@ -89,7 +90,7 @@ function SessionDetailPage() {
   // SSE connection for live attendance updates
   useSessionSSE({
     sessionId,
-    enabled: true, // Will only connect when session is active (backend validates)
+    enabled: isCommander, // Will only connect when session is active (backend validates)
   });
 
   const { data: session, isLoading } = useQuery({
@@ -568,7 +569,7 @@ function SessionDetailPage() {
         )}
 
         {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
-          <Card id="missing-users-card" className={cn(highlightedCard === 'missing-users-card' && 'ring-2 ring-primary transition-shadow')}>
+          <Card id="missing-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'missing-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -615,7 +616,7 @@ function SessionDetailPage() {
         )}
 
         {analytics && (
-          <Card id="present-users-card" className={cn(highlightedCard === 'present-users-card' && 'ring-2 ring-primary transition-shadow')}>
+          <Card id="present-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'present-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
