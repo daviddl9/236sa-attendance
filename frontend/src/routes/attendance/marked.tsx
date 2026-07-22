@@ -61,8 +61,19 @@ function AttendanceMarkedPage() {
               </div>
             )}
             <div className="flex flex-col gap-2 pt-4">
+              {search.session && (
+                <Link
+                  to="/dashboard/sessions/$sessionId"
+                  params={{ sessionId: search.session }}
+                >
+                  <Button className="w-full">View Session</Button>
+                </Link>
+              )}
               <Link to="/dashboard">
-                <Button className="w-full">
+                <Button
+                  variant={search.session ? 'outline' : 'default'}
+                  className="w-full"
+                >
                   <ArrowLeft className="mr-2 h-4 w-4" />
                   Back to Dashboard
                 </Button>

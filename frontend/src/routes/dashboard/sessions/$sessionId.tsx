@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { apiClient } from '../../../lib/api-client';
+import { cn } from '../../../lib/utils';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
 import {
@@ -41,6 +42,7 @@ import {
   Copy,
   Search,
   Trash2,
+  ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link, useNavigate } from '@tanstack/react-router';
@@ -71,14 +73,24 @@ function SessionDetailPage() {
   const [presentBatteryFilter, setPresentBatteryFilter] = useState('');
   const [presentSearchQuery, setPresentSearchQuery] = useState('');
   const [unmarkTarget, setUnmarkTarget] = useState<UserInfo | null>(null);
+  const [highlightedCard, setHighlightedCard] = useState<string | null>(null);
+  const scrollToCard = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.focus({ preventScroll: true });
+    setHighlightedCard(id);
+    setTimeout(() => setHighlightedCard((c) => (c === id ? null : c)), 1200);
+  };
 
-  const canMarkAttendance = canAccessCommanderFeatures(user);
-  const canUnmarkAttendance = canAccessCommanderFeatures(user);
+  const isCommander = canAccessCommanderFeatures(user);
+  const canMarkAttendance = isCommander;
+  const canUnmarkAttendance = isCommander;
 
   // SSE connection for live attendance updates
   useSessionSSE({
     sessionId,
-    enabled: true, // Will only connect when session is active (backend validates)
+    enabled: isCommander, // Will only connect when session is active (backend validates)
   });
 
   const { data: session, isLoading } = useQuery({
@@ -396,33 +408,35 @@ function SessionDetailPage() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>QR Code</CardTitle>
-              <CardDescription>Scan this QR code to mark attendance</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col items-center gap-4">
-              {session && qrCodeUrl ? (
-                <div className="bg-white p-4 rounded-lg">
-                  <QRCodeSVG value={qrCodeUrl} size={256} level="H" data-qr-code />
+          {isCommander && (
+            <Card>
+              <CardHeader>
+                <CardTitle>QR Code</CardTitle>
+                <CardDescription>Scan this QR code to mark attendance</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col items-center gap-4">
+                {session && qrCodeUrl ? (
+                  <div className="bg-white p-4 rounded-lg">
+                    <QRCodeSVG value={qrCodeUrl} size={256} level="H" data-qr-code />
+                  </div>
+                ) : (
+                  <div className="w-64 h-64 bg-muted flex items-center justify-center rounded-lg">
+                    <div className="text-muted-foreground">Loading QR Code...</div>
+                  </div>
+                )}
+                <div className="flex flex-col gap-2 w-full max-w-[200px]">
+                  <Button onClick={handleDownloadQR} variant="outline" className="w-full" disabled={!session || !qrCodeUrl}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download QR Code
+                  </Button>
+                  <Button onClick={handleCopyLink} variant="outline" className="w-full" disabled={!qrCodeUrl}>
+                    <Copy className="mr-2 h-4 w-4" />
+                    Copy Link
+                  </Button>
                 </div>
-              ) : (
-                <div className="w-64 h-64 bg-muted flex items-center justify-center rounded-lg">
-                  <div className="text-muted-foreground">Loading QR Code...</div>
-                </div>
-              )}
-              <div className="flex flex-col gap-2 w-full max-w-[200px]">
-                <Button onClick={handleDownloadQR} variant="outline" className="w-full" disabled={!session || !qrCodeUrl}>
-                  <Download className="mr-2 h-4 w-4" />
-                  Download QR Code
-                </Button>
-                <Button onClick={handleCopyLink} variant="outline" className="w-full" disabled={!qrCodeUrl}>
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copy Link
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           {analytics && (() => {
             const getStats = () => {
@@ -449,23 +463,33 @@ function SessionDetailPage() {
                   <CardDescription>Session attendance overview</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <Tabs value={statsTab} onValueChange={(v) => setStatsTab(v as typeof statsTab)}>
-                    <TabsList>
-                      <TabsTrigger value="All">All</TabsTrigger>
-                      <TabsTrigger value="HQ">HQ</TabsTrigger>
-                      <TabsTrigger value="Alpha">Alpha</TabsTrigger>
-                      <TabsTrigger value="Bravo">Bravo</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
+                  {isCommander && (
+                    <Tabs value={statsTab} onValueChange={(v) => setStatsTab(v as typeof statsTab)}>
+                      <TabsList>
+                        <TabsTrigger value="All">All</TabsTrigger>
+                        <TabsTrigger value="HQ">HQ</TabsTrigger>
+                        <TabsTrigger value="Alpha">Alpha</TabsTrigger>
+                        <TabsTrigger value="Bravo">Bravo</TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm text-muted-foreground">Total Users</p>
                       <p className="text-2xl font-bold">{stats.total}</p>
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Present</p>
+                    <button
+                      type="button"
+                      onClick={() => scrollToCard('present-users-card')}
+                      className="text-left group"
+                      aria-label="View present users list"
+                    >
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        Present
+                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                      </p>
                       <p className="text-2xl font-bold">{stats.present}</p>
-                    </div>
+                    </button>
                     <div className="col-span-2">
                       <p className="text-sm text-muted-foreground">Attendance Rate</p>
                       <p className="text-2xl font-bold">
@@ -474,8 +498,18 @@ function SessionDetailPage() {
                     </div>
                   </div>
                   <div className="pt-4 border-t">
-                    <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
-                    <p className="text-lg font-semibold">{stats.missing}</p>
+                    <button
+                      type="button"
+                      onClick={() => scrollToCard('missing-users-card')}
+                      className="text-left group"
+                      aria-label="View missing users list"
+                    >
+                      <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
+                        Missing Users
+                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                      </p>
+                      <p className="text-lg font-semibold">{stats.missing}</p>
+                    </button>
                   </div>
                 </CardContent>
               </Card>
@@ -483,77 +517,81 @@ function SessionDetailPage() {
           })()}
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Export Attendance</CardTitle>
-            <CardDescription>Download attendance records</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Tabs value={exportTab} onValueChange={(v) => setExportTab(v as typeof exportTab)}>
-              <TabsList>
-                <TabsTrigger value="All">All</TabsTrigger>
-                <TabsTrigger value="HQ">HQ</TabsTrigger>
-                <TabsTrigger value="Alpha">Alpha</TabsTrigger>
-                <TabsTrigger value="Bravo">Bravo</TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="include-absent"
-                  checked={includeAbsentList}
-                  onCheckedChange={(checked) => setIncludeAbsentList(checked === true)}
-                />
-                <Label htmlFor="include-absent">Include absent list</Label>
+        {isCommander && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Export Attendance</CardTitle>
+              <CardDescription>Download attendance records</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Tabs value={exportTab} onValueChange={(v) => setExportTab(v as typeof exportTab)}>
+                <TabsList>
+                  <TabsTrigger value="All">All</TabsTrigger>
+                  <TabsTrigger value="HQ">HQ</TabsTrigger>
+                  <TabsTrigger value="Alpha">Alpha</TabsTrigger>
+                  <TabsTrigger value="Bravo">Bravo</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="include-absent"
+                    checked={includeAbsentList}
+                    onCheckedChange={(checked) => setIncludeAbsentList(checked === true)}
+                  />
+                  <Label htmlFor="include-absent">Include absent list</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="include-present"
+                    checked={includePresentList}
+                    onCheckedChange={(checked) => setIncludePresentList(checked === true)}
+                  />
+                  <Label htmlFor="include-present">Include present list</Label>
+                </div>
               </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="include-present"
-                  checked={includePresentList}
-                  onCheckedChange={(checked) => setIncludePresentList(checked === true)}
-                />
-                <Label htmlFor="include-present">Include present list</Label>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => handleExport('csv')} variant="outline">
+                  <FileDown className="mr-2 h-4 w-4" />
+                  CSV
+                </Button>
+                <Button onClick={() => handleExport('excel')} variant="outline">
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  Excel
+                </Button>
+                <Button onClick={handleCopyText} variant="outline">
+                  <Copy className="mr-2 h-4 w-4" />
+                  Copy Text
+                </Button>
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button onClick={() => handleExport('csv')} variant="outline">
-                <FileDown className="mr-2 h-4 w-4" />
-                CSV
-              </Button>
-              <Button onClick={() => handleExport('excel')} variant="outline">
-                <FileSpreadsheet className="mr-2 h-4 w-4" />
-                Excel
-              </Button>
-              <Button onClick={handleCopyText} variant="outline">
-                <Copy className="mr-2 h-4 w-4" />
-                Copy Text
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
-          <Card>
+          <Card id="missing-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'missing-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Missing Users</CardTitle>
                   <CardDescription>Users who have not marked attendance</CardDescription>
                 </div>
-                <Select
-                  value={batteryFilter || 'all'}
-                  onValueChange={(value) => setBatteryFilter(value === 'all' ? '' : value)}
-                >
-                  <SelectTrigger className="w-[150px]">
-                    <SelectValue placeholder="All Batteries" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Batteries</SelectItem>
-                    <SelectItem value="HQ">HQ</SelectItem>
-                    <SelectItem value="Alpha">Alpha</SelectItem>
-                    <SelectItem value="Bravo">Bravo</SelectItem>
-                  </SelectContent>
-                </Select>
+                {isCommander && (
+                  <Select
+                    value={batteryFilter || 'all'}
+                    onValueChange={(value) => setBatteryFilter(value === 'all' ? '' : value)}
+                  >
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="All Batteries" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Batteries</SelectItem>
+                      <SelectItem value="HQ">HQ</SelectItem>
+                      <SelectItem value="Alpha">Alpha</SelectItem>
+                      <SelectItem value="Bravo">Bravo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -578,27 +616,29 @@ function SessionDetailPage() {
         )}
 
         {analytics && (
-          <Card>
+          <Card id="present-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'present-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Present Users</CardTitle>
                   <CardDescription>Users who have marked attendance</CardDescription>
                 </div>
-                <Select
-                  value={presentBatteryFilter || 'all'}
-                  onValueChange={(value) => setPresentBatteryFilter(value === 'all' ? '' : value)}
-                >
-                  <SelectTrigger className="w-[150px]">
-                    <SelectValue placeholder="All Batteries" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Batteries</SelectItem>
-                    <SelectItem value="HQ">HQ</SelectItem>
-                    <SelectItem value="Alpha">Alpha</SelectItem>
-                    <SelectItem value="Bravo">Bravo</SelectItem>
-                  </SelectContent>
-                </Select>
+                {isCommander && (
+                  <Select
+                    value={presentBatteryFilter || 'all'}
+                    onValueChange={(value) => setPresentBatteryFilter(value === 'all' ? '' : value)}
+                  >
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="All Batteries" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Batteries</SelectItem>
+                      <SelectItem value="HQ">HQ</SelectItem>
+                      <SelectItem value="Alpha">Alpha</SelectItem>
+                      <SelectItem value="Bravo">Bravo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-3">

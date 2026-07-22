@@ -158,10 +158,11 @@ func main() {
 				// Session routes
 				sessionHandler := handlers.NewSessionHandler(db, sseHub)
 				r.Route("/sessions", func(r chi.Router) {
-					// View routes: Tier 2+
+					// List/active: Tier 2+
 					r.With(middleware.RequireBatteryNCO(db)).Get("/", sessionHandler.ListSessions)
 					r.With(middleware.RequireBatteryNCO(db)).Get("/active", sessionHandler.GetActiveSessions)
-					r.With(middleware.RequireBatteryNCO(db)).Get("/{id}", sessionHandler.GetSession)
+					// Single-session metadata: Tier 1+ (needed for the read-only board)
+					r.Get("/{id}", sessionHandler.GetSession)
 
 					// Management routes: Tier 3+
 					r.With(middleware.RequireUnitCommander(db)).Post("/", sessionHandler.CreateSession)
@@ -181,14 +182,18 @@ func main() {
 					r.With(middleware.RequireUnitCommander(db)).Post("/custom/create", sessionHandler.CreateCustomSession)
 				})
 
-				// Reports routes: Tier 2+
+				// Reports routes
 				r.Route("/reports", func(r chi.Router) {
-					r.Use(middleware.RequireBatteryNCO(db))
 					reportsHandler := handlers.NewReportsHandler(db)
+					// Analytics: Tier 1+ — soldiers get a read-only, battery-scoped board.
 					r.Get("/sessions/{id}/analytics", reportsHandler.GetSessionAnalytics)
-					r.Get("/sessions/{id}/missing", reportsHandler.GetMissingUsers)
-					r.Get("/user/{userId}", reportsHandler.GetUserReport)
-					r.Get("/battery/{battery}", reportsHandler.GetBatteryReport)
+					// Everything else: Tier 2+
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireBatteryNCO(db))
+						r.Get("/sessions/{id}/missing", reportsHandler.GetMissingUsers)
+						r.Get("/user/{userId}", reportsHandler.GetUserReport)
+						r.Get("/battery/{battery}", reportsHandler.GetBatteryReport)
+					})
 				})
 
 				// Admin routes: superadmin only
