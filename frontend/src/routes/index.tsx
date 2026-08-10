@@ -11,15 +11,11 @@ import {
 } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '../components/ui/tooltip';
 import { toast } from 'sonner';
 import { apiClient } from '../lib/api-client';
-import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FORMAT_MESSAGE } from '../lib/nric-password';
-import { Info, Eye, EyeOff } from 'lucide-react';
+import { normalizeLegacyPassword } from '../lib/legacy-password';
+import { PublicFooter } from '../components/public-footer';
+import { Eye, EyeOff } from 'lucide-react';
 
 export const Route = createFileRoute('/')({
   component: IndexComponent,
@@ -39,16 +35,12 @@ function SignInContent() {
       return;
     }
     const isAdmin = identifier.toLowerCase() === 'admin';
-    if (!isAdmin && !isValidNricLast5(password)) {
-      toast.error(NRIC_LAST5_FORMAT_MESSAGE);
-      return;
-    }
 
     try {
       setLoading(true);
       await apiClient.signIn({
         identifier,
-        password: isAdmin ? password : normalizeNricLast5(password),
+        password: isAdmin ? password : normalizeLegacyPassword(password),
       });
       await refetch(); // Refresh auth context to get updated user data
       toast.success('Signed in successfully');
@@ -65,7 +57,7 @@ function SignInContent() {
       <Card className="max-w-md w-full">
         <CardHeader>
           <CardTitle className="text-lg md:text-xl">
-            236SA Attendance System
+            236 Attendance
           </CardTitle>
           <CardDescription className="text-xs md:text-sm">
             Sign in to your account
@@ -75,12 +67,12 @@ function SignInContent() {
           <form onSubmit={handleSignIn} className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="identifier">
-                Full Name (as in NRIC)
+                Full Name
               </Label>
               <Input
                 id="identifier"
                 type="text"
-                placeholder="Enter your full name as in NRIC"
+                placeholder="Enter your full name"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 disabled={loading}
@@ -88,26 +80,7 @@ function SignInContent() {
               />
             </div>
             <div className="grid gap-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="password">Password</Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center"
-                    >
-                      <Info className="h-4 w-4 text-muted-foreground" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p className="text-xs">
-                      Last 5 characters of NRIC: 4 numbers and the final alphabet letter.
-                      <br />
-                      Example: <strong>4567A</strong>
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
+              <Label htmlFor="password">Password</Label>
               <div className="relative">
                 <Input
                   id="password"
@@ -139,9 +112,7 @@ function SignInContent() {
           </form>
         </CardContent>
       </Card>
-      <p className="mt-6 text-xs text-center text-gray-500 dark:text-gray-400 max-w-md px-4">
-        By signing in, you agree to our Terms of Service and Privacy Policy
-      </p>
+      <PublicFooter showAgreement />
     </div>
   );
 }

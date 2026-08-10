@@ -3,6 +3,7 @@ import { TanStackRouterDevtools } from '@tanstack/react-router-devtools';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { AuthProvider } from '../lib/auth-context';
+import { PublicFooter } from '../components/public-footer';
 import { Toaster } from '../components/ui/sonner';
 import '../index.css';
 
@@ -17,6 +18,18 @@ const queryClient = new QueryClient({
 
 export const Route = createRootRoute({
   component: RootComponent,
+  notFoundComponent: () => (
+    <main className="flex min-h-screen flex-col items-center justify-center px-4 py-8 text-center">
+      <h1 className="text-2xl font-semibold">Page not found</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        The page you requested does not exist.
+      </p>
+      <a className="mt-4 underline" href="/sign-in">
+        Back to sign in
+      </a>
+      <PublicFooter />
+    </main>
+  ),
 });
 
 function RootComponent() {

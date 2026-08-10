@@ -9,12 +9,13 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as QrTokenRouteImport } from './routes/qr/$token'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settings'
-import { Route as AttendanceRegisterRouteImport } from './routes/attendance/register'
 import { Route as AttendanceMarkedRouteImport } from './routes/attendance/marked'
 import { Route as DashboardUsersIndexRouteImport } from './routes/dashboard/users/index'
 import { Route as DashboardStatusesIndexRouteImport } from './routes/dashboard/statuses/index'
@@ -30,9 +31,19 @@ import { Route as DashboardAttendanceScanRouteImport } from './routes/dashboard/
 import { Route as DashboardAdminRegistrationsIndexRouteImport } from './routes/dashboard/admin/registrations/index'
 import { Route as DashboardReportsSessionsSessionIdRouteImport } from './routes/dashboard/reports/sessions/$sessionId'
 
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SignInRoute = SignInRouteImport.update({
   id: '/sign-in',
   path: '/sign-in',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -53,11 +64,6 @@ const QrTokenRoute = QrTokenRouteImport.update({
 const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
   id: '/dashboard/settings',
   path: '/dashboard/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AttendanceRegisterRoute = AttendanceRegisterRouteImport.update({
-  id: '/attendance/register',
-  path: '/attendance/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AttendanceMarkedRoute = AttendanceMarkedRouteImport.update({
@@ -139,9 +145,10 @@ const DashboardReportsSessionsSessionIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
+  '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
-  '/attendance/register': typeof AttendanceRegisterRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -161,9 +168,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
+  '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
-  '/attendance/register': typeof AttendanceRegisterRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
@@ -184,9 +192,10 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
+  '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
-  '/attendance/register': typeof AttendanceRegisterRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard/': typeof DashboardIndexRoute
@@ -208,9 +217,10 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/privacy'
     | '/sign-in'
+    | '/terms'
     | '/attendance/marked'
-    | '/attendance/register'
     | '/dashboard/settings'
     | '/qr/$token'
     | '/dashboard'
@@ -230,9 +240,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/privacy'
     | '/sign-in'
+    | '/terms'
     | '/attendance/marked'
-    | '/attendance/register'
     | '/dashboard/settings'
     | '/qr/$token'
     | '/dashboard'
@@ -252,9 +263,10 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/privacy'
     | '/sign-in'
+    | '/terms'
     | '/attendance/marked'
-    | '/attendance/register'
     | '/dashboard/settings'
     | '/qr/$token'
     | '/dashboard/'
@@ -275,9 +287,10 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PrivacyRoute: typeof PrivacyRoute
   SignInRoute: typeof SignInRoute
+  TermsRoute: typeof TermsRoute
   AttendanceMarkedRoute: typeof AttendanceMarkedRoute
-  AttendanceRegisterRoute: typeof AttendanceRegisterRoute
   DashboardSettingsRoute: typeof DashboardSettingsRoute
   QrTokenRoute: typeof QrTokenRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
@@ -298,11 +311,25 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sign-in': {
       id: '/sign-in'
       path: '/sign-in'
       fullPath: '/sign-in'
       preLoaderRoute: typeof SignInRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -331,13 +358,6 @@ declare module '@tanstack/react-router' {
       path: '/dashboard/settings'
       fullPath: '/dashboard/settings'
       preLoaderRoute: typeof DashboardSettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/attendance/register': {
-      id: '/attendance/register'
-      path: '/attendance/register'
-      fullPath: '/attendance/register'
-      preLoaderRoute: typeof AttendanceRegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/attendance/marked': {
@@ -443,9 +463,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PrivacyRoute: PrivacyRoute,
   SignInRoute: SignInRoute,
+  TermsRoute: TermsRoute,
   AttendanceMarkedRoute: AttendanceMarkedRoute,
-  AttendanceRegisterRoute: AttendanceRegisterRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,
   QrTokenRoute: QrTokenRoute,
   DashboardIndexRoute: DashboardIndexRoute,
