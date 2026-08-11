@@ -21,17 +21,12 @@ export interface User {
   updatedAt: string;
 }
 
-export type SignInOutcome = 'authenticated' | 'signup_required' | 'pending_approval';
+export type SignInOutcome = 'authenticated' | 'pending_approval';
 
 export interface SignInAuthenticatedResponse {
   outcome: 'authenticated';
   user: User;
   session: string;
-}
-
-export interface SignInSignupRequiredResponse {
-  outcome: 'signup_required';
-  fullName: string;
 }
 
 export interface SignInPendingApprovalResponse {
@@ -40,7 +35,6 @@ export interface SignInPendingApprovalResponse {
 
 export type SignInResponse =
   | SignInAuthenticatedResponse
-  | SignInSignupRequiredResponse
   | SignInPendingApprovalResponse;
 
 // Kept for callers that destructure { user, session } from sign-in directly.

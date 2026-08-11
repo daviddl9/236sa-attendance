@@ -36,16 +36,14 @@ type SignInOutcome string
 
 const (
 	SignInOutcomeAuthenticated   SignInOutcome = "authenticated"
-	SignInOutcomeSignupRequired  SignInOutcome = "signup_required"
 	SignInOutcomePendingApproval SignInOutcome = "pending_approval"
 )
 
 // SignInResponse is returned for every successful (2xx) sign-in call.
 type SignInResponse struct {
-	Outcome  SignInOutcome `json:"outcome"`
-	User     *models.User  `json:"user,omitempty"`
-	Session  *string       `json:"session,omitempty"`
-	FullName string        `json:"fullName,omitempty"`
+	Outcome SignInOutcome `json:"outcome"`
+	User    *models.User  `json:"user,omitempty"`
+	Session *string       `json:"session,omitempty"`
 }
 
 type SignUpRequest struct {
@@ -192,16 +190,8 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to query user", http.StatusInternalServerError)
 			return
 		}
-		var nameExists bool
-		_ = h.db.Pool.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.Identifier,
-		).Scan(&nameExists)
-		if nameExists || strings.EqualFold(req.Identifier, "admin") {
-			writeInvalidCredentials(w, req.Identifier)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomeSignupRequired, FullName: req.Identifier})
+		// Keep unknown identifiers indistinguishable from wrong passwords.
+		writeInvalidCredentials(w, req.Identifier)
 		return
 	}
 
