@@ -324,7 +324,7 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), 4)
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 			if err != nil {
 				hashErrors[idx] = err
 				return
@@ -510,7 +510,7 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			hash, err := bcrypt.GenerateFromPassword([]byte(password), 4)
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 			if err != nil {
 				hashErrors[idx] = err
 				return
@@ -608,22 +608,21 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 // ---- Registration Approval ----
 
 type PendingRegistration struct {
-	ID        string  `json:"id"`
-	FullName  *string `json:"fullName,omitempty"`
-	Rank      *string `json:"rank,omitempty"`
-	Battery   *string `json:"battery,omitempty"`
-	NRICLast5 *string `json:"nricLast5,omitempty"`
-	CreatedAt string  `json:"createdAt"`
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	FullName  string `json:"fullName"`
+	Rank      string `json:"rank"`
+	Battery   string `json:"battery"`
+	CreatedAt string `json:"createdAt"`
 }
 
-// ListPendingRegistrations returns users with verified=false (self-registered, awaiting approval).
+// ListPendingRegistrations returns self-registered accounts awaiting approval.
 func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	rows, err := h.db.Pool.Query(ctx, `
-		SELECT id, "full_name", rank, battery, "nric_last5", "createdAt"
-		FROM "user"
-		WHERE verified = false
+		SELECT id, username, claimed_name, claimed_rank, claimed_battery, "createdAt"
+		FROM pending_registration
 		ORDER BY "createdAt" ASC
 	`)
 	if err != nil {
@@ -635,15 +634,10 @@ func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.R
 	pending := make([]PendingRegistration, 0)
 	for rows.Next() {
 		var p PendingRegistration
-		var fullName, rank, battery, nricLast5 *string
 		var createdAt time.Time
-		if err := rows.Scan(&p.ID, &fullName, &rank, &battery, &nricLast5, &createdAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Username, &p.FullName, &p.Rank, &p.Battery, &createdAt); err != nil {
 			continue
 		}
-		p.FullName = fullName
-		p.Rank = rank
-		p.Battery = battery
-		p.NRICLast5 = nricLast5
 		p.CreatedAt = createdAt.Format(time.RFC3339)
 		pending = append(pending, p)
 	}
@@ -655,14 +649,27 @@ func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.R
 	})
 }
 
-// ApproveRegistration sets verified=true so the user can log in.
+// ApproveRegistration moves a pending registration onto the roster. PR3 will
+// replace this direct-create path with commander-selected roster matching.
 func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	userID := chi.URLParam(r, "id")
+	tx, err := h.db.Pool.Begin(ctx)
+	if err != nil {
+		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	result, err := h.db.Pool.Exec(ctx, `
-		UPDATE "user" SET verified = true, "updatedAt" = NOW()
-		WHERE id = $1 AND verified = false
+	result, err := tx.Exec(ctx, `
+		INSERT INTO "user" (
+			id, username, "full_name", rank, battery, password, extras,
+			"is_superadmin", verified, password_change_required, "createdAt", "updatedAt"
+		)
+		SELECT id, username, claimed_name, claimed_rank, claimed_battery, password_hash,
+			'{}'::jsonb, false, true, false, "createdAt", NOW()
+		FROM pending_registration
+		WHERE id = $1
 	`, userID)
 	if err != nil {
 		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
@@ -672,18 +679,26 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Registration not found or already approved", http.StatusNotFound)
 		return
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM pending_registration WHERE id = $1`, userID); err != nil {
+		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Registration approved"})
 }
 
-// RejectRegistration deletes the pending user record.
+// RejectRegistration deletes the pending registration and frees its username.
 func (h *AdminHandler) RejectRegistration(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	userID := chi.URLParam(r, "id")
 
 	result, err := h.db.Pool.Exec(ctx, `
-		DELETE FROM "user" WHERE id = $1 AND verified = false
+		DELETE FROM pending_registration WHERE id = $1
 	`, userID)
 	if err != nil {
 		http.Error(w, "Failed to reject registration", http.StatusInternalServerError)

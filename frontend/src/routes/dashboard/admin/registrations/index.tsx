@@ -114,7 +114,6 @@ function RegistrationsContent() {
                     <TableHead>Full Name</TableHead>
                     <TableHead>Rank</TableHead>
                     <TableHead>Battery</TableHead>
-                    <TableHead>NRIC Last 5</TableHead>
                     <TableHead>Submitted</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -125,7 +124,6 @@ function RegistrationsContent() {
                       <TableCell className="font-medium">{reg.fullName ?? '—'}</TableCell>
                       <TableCell>{reg.rank ?? '—'}</TableCell>
                       <TableCell>{reg.battery ?? '—'}</TableCell>
-                      <TableCell>{reg.nricLast5 ?? '—'}</TableCell>
                       <TableCell className="text-muted-foreground text-sm">
                         {new Date(reg.createdAt).toLocaleDateString()}
                       </TableCell>

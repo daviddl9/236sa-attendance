@@ -96,27 +96,27 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		if batteryScope != nil {
 			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u.battery = $2`
+				WHERE sp.session_id = $1 AND u.battery = $2 AND u.verified = true`
 			userArgs = []any{sessionID, *batteryScope}
 		} else {
 			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1`
+				WHERE sp.session_id = $1 AND u.verified = true`
 			userArgs = []any{sessionID}
 		}
 	case models.SessionScopeUnitWide:
 		if batteryScope != nil {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = $1`
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true AND battery = $1`
 			userArgs = []any{*batteryScope}
 		} else {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false`
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true`
 		}
 	default: // battery_specific
 		if batteryScope != nil {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = $1`
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true AND battery = $1`
 			userArgs = []any{*batteryScope}
 		} else {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND battery = ANY($1)`
+			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true AND battery = ANY($1)`
 			userArgs = []any{sessionBatteries}
 		}
 	}
@@ -277,7 +277,7 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 				SELECT u.id, u."full_name", u.rank, u.battery
 				FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u.battery = $2
+				WHERE sp.session_id = $1 AND u.battery = $2 AND u.verified = true
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
 			`
 			userArgs = []any{sessionID, *missingBatteryScope}
@@ -286,7 +286,7 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 				SELECT u.id, u."full_name", u.rank, u.battery
 				FROM "user" u
 				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1
+				WHERE sp.session_id = $1 AND u.verified = true
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
 			`
 			userArgs = []any{sessionID}
@@ -295,14 +295,14 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 		if missingBatteryScope != nil {
 			userQuery = `
 				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.battery = $1
+				WHERE u."is_superadmin" = false AND u.verified = true AND u.battery = $1
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
 			`
 			userArgs = []any{*missingBatteryScope, sessionID}
 		} else {
 			userQuery = `
 				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false
+				WHERE u."is_superadmin" = false AND u.verified = true
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
 			`
 			userArgs = []any{sessionID}
@@ -311,14 +311,14 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 		if missingBatteryScope != nil {
 			userQuery = `
 				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.battery = $1
+				WHERE u."is_superadmin" = false AND u.verified = true AND u.battery = $1
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
 			`
 			userArgs = []any{*missingBatteryScope, sessionID}
 		} else {
 			userQuery = `
 				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.battery = ANY($1)
+				WHERE u."is_superadmin" = false AND u.verified = true AND u.battery = ANY($1)
 				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
 			`
 			userArgs = []any{sessionBatteries, sessionID}

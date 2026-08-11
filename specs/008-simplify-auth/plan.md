@@ -173,7 +173,7 @@ Replaces the shared `admin` login (`sign-in.tsx:100`). Not required to clear Goo
 ### Unit — credentials (PR2)
 
 - Password <8 rejected; exactly 8 accepted.
-- `1234A` rejected with the NRIC-specific message; `1234AB` accepted.
+- `1234A` rejected with the NRIC-specific message; `1234ABCD` accepted (8 characters beginning with digits but not NRIC-shaped).
 - Username `TanWM` collides with existing `tanwm ` (trailing space).
 - Username collision across `user` and `pending_registration`.
 - bcrypt cost is 12 on newly written hashes.

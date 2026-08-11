@@ -1,11 +1,75 @@
 package handlers
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
+
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 )
 
-const nricLast5FormatMessage = "NRIC Last 5 must be exactly 5 characters: 4 numbers followed by an alphabet letter (e.g., 1234A)"
+const (
+	nricLast5FormatMessage        = "NRIC Last 5 must be exactly 5 characters: 4 numbers followed by an alphabet letter (e.g., 1234A)"
+	migratedPendingUsernamePrefix = "__migrated_pending__"
+)
+
+var nricShapedPassword = regexp.MustCompile(`^\d{4}[A-Za-z]$`)
+
+func normalizeUsername(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func validateSignUpRequest(req SignUpRequest) (SignUpRequest, error) {
+	req.Username = strings.TrimSpace(req.Username)
+	req.FullName = strings.TrimSpace(req.FullName)
+	req.Rank = strings.TrimSpace(req.Rank)
+	req.Battery = strings.TrimSpace(req.Battery)
+
+	switch {
+	case req.Username == "":
+		return req, newSignUpValidationError("Username is required")
+	case strings.HasPrefix(normalizeUsername(req.Username), migratedPendingUsernamePrefix):
+		return req, newSignUpValidationError("Username is unavailable")
+	case req.Password == "":
+		return req, newSignUpValidationError("Password is required")
+	case nricShapedPassword.MatchString(req.Password):
+		return req, newSignUpValidationError("Do not use your NRIC digits as your password")
+	case utf8.RuneCountInString(req.Password) < 8:
+		return req, newSignUpValidationError("Password must be at least 8 characters")
+	case req.ConfirmPassword != req.Password:
+		return req, newSignUpValidationError("Passwords do not match")
+	case req.FullName == "":
+		return req, newSignUpValidationError("Full name is required")
+	case !isValidRank(req.Rank):
+		return req, newSignUpValidationError("Invalid rank")
+	case !isValidBattery(req.Battery):
+		return req, newSignUpValidationError("Invalid battery (must be HQ, Alpha, or Bravo)")
+	default:
+		return req, nil
+	}
+}
+
+type signUpValidationError struct{ message string }
+
+func newSignUpValidationError(message string) error {
+	return &signUpValidationError{message: message}
+}
+
+func (e *signUpValidationError) Error() string { return e.message }
+
+func isValidRank(rank string) bool {
+	for _, valid := range models.ValidRanks {
+		if rank == valid {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidBattery(battery string) bool {
+	return battery == models.BatteryHQ || battery == models.BatteryAlpha || battery == models.BatteryBravo
+}
 
 func normalizeNRICLast5(value string) (string, bool) {
 	if !isValidNRICLast5(value) {
@@ -15,7 +79,7 @@ func normalizeNRICLast5(value string) (string, bool) {
 }
 
 func prepareSignInCredential(identifier string, password string) (string, *string, bool) {
-	if identifier == "admin" {
+	if strings.EqualFold(identifier, "admin") {
 		return password, nil, true
 	}
 
