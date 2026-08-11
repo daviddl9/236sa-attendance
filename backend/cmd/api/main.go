@@ -122,7 +122,6 @@ func main() {
 				r.Post("/sign-in", authHandler.SignIn)
 				r.Post("/sign-out", authHandler.SignOut)
 				r.Get("/session", authHandler.GetSession)
-				// Explicit signup — called after sign-in returns signup_required
 				r.Post("/sign-up", authHandler.SignUp)
 			})
 
@@ -204,6 +203,7 @@ func main() {
 					r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
 					// Registration approval
 					r.Get("/registrations", adminHandler.ListPendingRegistrations)
+					r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
 					r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
 					r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)
 				})
