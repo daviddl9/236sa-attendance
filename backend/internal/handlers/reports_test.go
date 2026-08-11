@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,8 +84,21 @@ func TestGetMissingUsersExcludesUnverifiedUsers(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&missing); err != nil {
 		t.Fatalf("decode missing users: %v", err)
 	}
-	if got, want := len(missing), 5; got != want {
-		t.Fatalf("missing users = %d, want %d; unverified rows must not count as absent", got, want)
+	// Count only this test's own rows. Asserting the total made the test fail
+	// against any database that already had personnel in it, which both produced
+	// spurious failures and could mask a real regression.
+	var seeded, pendingLeaked int
+	for _, user := range missing {
+		if !strings.HasPrefix(user.ID, prefix) {
+			continue
+		}
+		seeded++
+		if strings.Contains(user.ID, "-pending-") {
+			pendingLeaked++
+		}
+	}
+	if seeded != 5 || pendingLeaked != 0 {
+		t.Fatalf("seeded missing = %d (want 5), unverified leaked = %d (want 0); unverified rows must not count as absent", seeded, pendingLeaked)
 	}
 }
 
