@@ -94,14 +94,14 @@ func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 				SELECT
 					id, "full_name",
 					rank, battery, "nric_last5", dob, "is_superadmin",
-					tier_override, verified,
+					tier_override, verified, password_change_required,
 					"createdAt", "updatedAt"
 				FROM "user"
 				WHERE id = $1
 			`, userID).Scan(
 				&user.ID, &fullName,
 				&rank, &battery, &nricLast5, &dob, &user.IsSuperadmin,
-				&tierOverride, &user.Verified,
+				&tierOverride, &user.Verified, &user.PasswordChangeRequired,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 

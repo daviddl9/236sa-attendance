@@ -31,14 +31,11 @@ func validateSignUpRequest(req SignUpRequest) (SignUpRequest, error) {
 		return req, newSignUpValidationError("Username is required")
 	case strings.HasPrefix(normalizeUsername(req.Username), migratedPendingUsernamePrefix):
 		return req, newSignUpValidationError("Username is unavailable")
-	case req.Password == "":
-		return req, newSignUpValidationError("Password is required")
-	case nricShapedPassword.MatchString(req.Password):
-		return req, newSignUpValidationError("Do not use your NRIC digits as your password")
-	case utf8.RuneCountInString(req.Password) < 8:
-		return req, newSignUpValidationError("Password must be at least 8 characters")
-	case req.ConfirmPassword != req.Password:
-		return req, newSignUpValidationError("Passwords do not match")
+	}
+	if err := validatePassword(req.Password, req.ConfirmPassword); err != nil {
+		return req, err
+	}
+	switch {
 	case req.FullName == "":
 		return req, newSignUpValidationError("Full name is required")
 	case !isValidRank(req.Rank):
@@ -47,6 +44,21 @@ func validateSignUpRequest(req SignUpRequest) (SignUpRequest, error) {
 		return req, newSignUpValidationError("Invalid battery (must be HQ, Alpha, or Bravo)")
 	default:
 		return req, nil
+	}
+}
+
+func validatePassword(password, confirmation string) error {
+	switch {
+	case password == "":
+		return newSignUpValidationError("Password is required")
+	case nricShapedPassword.MatchString(password):
+		return newSignUpValidationError("Do not use your NRIC digits as your password")
+	case utf8.RuneCountInString(password) < 8:
+		return newSignUpValidationError("Password must be at least 8 characters")
+	case confirmation != password:
+		return newSignUpValidationError("Passwords do not match")
+	default:
+		return nil
 	}
 }
 

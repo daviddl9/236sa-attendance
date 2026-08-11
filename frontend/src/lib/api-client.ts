@@ -15,6 +15,7 @@ export interface User {
   extras?: Record<string, string> | null;
   tierOverride?: 2 | 3 | null;
   verified: boolean;
+  passwordChangeRequired?: boolean;
   isSuperadmin: boolean;
   tier: AccessTier; // computed by server
   createdAt: string;
@@ -72,6 +73,7 @@ export interface SignOutResponse {
 }
 
 export interface UserProfile extends User {
+  username?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -163,6 +165,11 @@ export interface PendingRegistration {
 export interface PendingRegistrationsResponse {
   registrations: PendingRegistration[];
   total: number;
+}
+
+export interface ProvisionCredentialsResponse {
+  username: string;
+  temporaryPassword: string;
 }
 
 export interface RegistrationCandidate {
@@ -515,6 +522,13 @@ export class APIClient {
     });
   }
 
+  async changePassword(data: { password: string; confirmPassword: string }): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async registerUser(data: RegisterUserRequest): Promise<RegisterUserResponse> {
     return this.request<RegisterUserResponse>('/api/users/register', {
       method: 'POST',
@@ -855,6 +869,13 @@ export class APIClient {
   async rejectRegistration(id: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/admin/registrations/${id}/reject`, {
       method: 'POST',
+    });
+  }
+
+  async provisionUserCredentials(id: string, username: string): Promise<ProvisionCredentialsResponse> {
+    return this.request<ProvisionCredentialsResponse>(`/api/admin/users/${id}/credentials`, {
+      method: 'POST',
+      body: JSON.stringify({ username }),
     });
   }
 

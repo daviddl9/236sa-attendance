@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -60,18 +61,19 @@ type AuthResponse = SignInResponse
 
 // userRow holds all columns needed when scanning a user for sign-in.
 type userRow struct {
-	id           string
-	fullName     *string
-	rank         *string
-	battery      *string
-	nricLast5    *string
-	dob          *string
-	isSuperadmin bool
-	tierOverride *int16
-	verified     bool
-	createdAt    time.Time
-	updatedAt    time.Time
-	password     string
+	id                     string
+	fullName               *string
+	rank                   *string
+	battery                *string
+	nricLast5              *string
+	dob                    *string
+	isSuperadmin           bool
+	tierOverride           *int16
+	verified               bool
+	passwordChangeRequired bool
+	createdAt              time.Time
+	updatedAt              time.Time
+	password               string
 }
 
 type pendingRegistrationRow struct {
@@ -82,14 +84,14 @@ const passwordHashCost = 12
 
 // signInUserColumns is the SELECT list shared by the sign-in lookups so the
 // primary query and the word-subset fallback scan an identical set of columns.
-const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin", u.tier_override, u.verified, u."createdAt", u."updatedAt", u.password`
+const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password`
 
 // scanUserRow scans signInUserColumns (in order) into ur. It accepts a pgx.Row,
 // which both Pool.QueryRow and Pool.Query rows satisfy.
 func scanUserRow(row pgx.Row, ur *userRow) error {
 	return row.Scan(
 		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
-		&ur.tierOverride, &ur.verified, &ur.createdAt, &ur.updatedAt, &ur.password,
+		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired, &ur.createdAt, &ur.updatedAt, &ur.password,
 	)
 }
 
@@ -348,17 +350,18 @@ func (h *AuthHandler) createSession(ctx context.Context, r *http.Request, ur use
 	log.Printf("[SignIn] Session created successfully for user: %s", ur.id)
 
 	user := models.User{
-		ID:           ur.id,
-		FullName:     ur.fullName,
-		Rank:         ur.rank,
-		Battery:      ur.battery,
-		NRICLast5:    ur.nricLast5,
-		DOB:          ur.dob,
-		TierOverride: ur.tierOverride,
-		Verified:     ur.verified,
-		IsSuperadmin: ur.isSuperadmin,
-		CreatedAt:    ur.createdAt,
-		UpdatedAt:    ur.updatedAt,
+		ID:                     ur.id,
+		FullName:               ur.fullName,
+		Rank:                   ur.rank,
+		Battery:                ur.battery,
+		NRICLast5:              ur.nricLast5,
+		DOB:                    ur.dob,
+		TierOverride:           ur.tierOverride,
+		Verified:               ur.verified,
+		PasswordChangeRequired: ur.passwordChangeRequired,
+		IsSuperadmin:           ur.isSuperadmin,
+		CreatedAt:              ur.createdAt,
+		UpdatedAt:              ur.updatedAt,
 	}
 	return user, token, nil
 }
@@ -398,6 +401,48 @@ type sessionUserResponse struct {
 	Tier int `json:"tier"`
 }
 
+type ChangePasswordRequest struct {
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirmPassword"`
+}
+
+// ChangePassword replaces the current password and clears the forced-change flag.
+func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := validatePassword(req.Password, req.ConfirmPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), passwordHashCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+	result, err := h.db.Pool.Exec(r.Context(), `
+		UPDATE "user" SET password = $1, password_change_required = false, "updatedAt" = NOW()
+		WHERE id = $2
+	`, string(hash), userID)
+	if err != nil {
+		http.Error(w, "Failed to change password", http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected() == 0 {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Password changed successfully"})
+}
+
 func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session")
 	if err != nil {
@@ -411,14 +456,14 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	err = h.db.Pool.QueryRow(ctx, `
 		SELECT
 			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
-			u.tier_override, u.verified,
+			u.tier_override, u.verified, u.password_change_required,
 			u."createdAt", u."updatedAt"
 		FROM "user" u
 		JOIN session s ON s."userId" = u.id
 		WHERE s.token = $1 AND s."expiresAt" > NOW()
 	`, cookie.Value).Scan(
 		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
-		&ur.tierOverride, &ur.verified,
+		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired,
 		&ur.createdAt, &ur.updatedAt,
 	)
 
@@ -432,17 +477,18 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[GetSession] Found user session for user: %s", ur.id)
 
 	user := models.User{
-		ID:           ur.id,
-		FullName:     ur.fullName,
-		Rank:         ur.rank,
-		Battery:      ur.battery,
-		NRICLast5:    ur.nricLast5,
-		DOB:          ur.dob,
-		TierOverride: ur.tierOverride,
-		Verified:     ur.verified,
-		IsSuperadmin: ur.isSuperadmin,
-		CreatedAt:    ur.createdAt,
-		UpdatedAt:    ur.updatedAt,
+		ID:                     ur.id,
+		FullName:               ur.fullName,
+		Rank:                   ur.rank,
+		Battery:                ur.battery,
+		NRICLast5:              ur.nricLast5,
+		DOB:                    ur.dob,
+		TierOverride:           ur.tierOverride,
+		Verified:               ur.verified,
+		PasswordChangeRequired: ur.passwordChangeRequired,
+		IsSuperadmin:           ur.isSuperadmin,
+		CreatedAt:              ur.createdAt,
+		UpdatedAt:              ur.updatedAt,
 	}
 
 	resp := sessionUserResponse{

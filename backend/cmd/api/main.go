@@ -134,6 +134,9 @@ func main() {
 				r.Use(middleware.Auth(db))
 				r.Use(middleware.LoadUser(db))
 
+				// Authenticated credential routes
+				r.Post("/auth/change-password", handlers.NewAuthHandler(db).ChangePassword)
+
 				// User profile routes
 				userHandler := handlers.NewUserHandler(db)
 				r.Get("/user/profile", userHandler.GetProfile)
@@ -201,6 +204,7 @@ func main() {
 					adminHandler := handlers.NewAdminHandler(db)
 					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
 					r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
+					r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)
 					// Registration approval
 					r.Get("/registrations", adminHandler.ListPendingRegistrations)
 					r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
