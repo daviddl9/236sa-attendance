@@ -171,6 +171,7 @@ export interface RegistrationCandidate {
   rank: string;
   battery: string;
   score: number;
+  strong: boolean;
   mismatchReasons: string[];
   alreadyClaimed: boolean;
   claimedBy?: string;

@@ -24,6 +24,9 @@ type RosterRow struct {
 	Username *string
 }
 
+// StrongCandidateScore is the minimum score for a close roster match.
+const StrongCandidateScore = 80
+
 // Candidate is a ranked roster row. Preselected is only a UI suggestion; the
 // approval endpoint still requires the commander to send an explicit user ID.
 type Candidate struct {
@@ -32,6 +35,7 @@ type Candidate struct {
 	Rank            string
 	Battery         string
 	Score           int
+	Strong          bool
 	RankMismatch    bool
 	BatteryMismatch bool
 	AlreadyClaimed  bool
@@ -45,12 +49,14 @@ type Candidate struct {
 func RankCandidates(registration Registration, roster []RosterRow) []Candidate {
 	candidates := make([]Candidate, 0, len(roster))
 	for _, row := range roster {
+		score := Score(registration.Name, row.Name, registration.Rank, row.Rank, registration.Battery, row.Battery)
 		candidate := Candidate{
 			ID:              row.ID,
 			Name:            row.Name,
 			Rank:            row.Rank,
 			Battery:         row.Battery,
-			Score:           Score(registration.Name, row.Name, registration.Rank, row.Rank, registration.Battery, row.Battery),
+			Score:           score,
+			Strong:          score >= StrongCandidateScore,
 			baseScore:       nameScore(registration.Name, row.Name),
 			RankMismatch:    !attributesEqual(registration.Rank, row.Rank),
 			BatteryMismatch: !attributesEqual(registration.Battery, row.Battery),
@@ -92,7 +98,7 @@ func MarkPreselection(candidates []Candidate) []Candidate {
 	for i := range marked {
 		marked[i].Preselected = false
 	}
-	if len(marked) == 0 || !marked[0].Selectable || marked[0].Score < 95 {
+	if len(marked) == 0 || !marked[0].Selectable || marked[0].Score < 95 || marked[0].Score < StrongCandidateScore {
 		return marked
 	}
 	if len(marked) > 1 && marked[1].Score >= 85 {

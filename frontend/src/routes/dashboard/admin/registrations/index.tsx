@@ -1,7 +1,7 @@
 import { createFileRoute, Navigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useState } from 'react';
-import { apiClient, type PendingRegistration } from '../../../../lib/api-client';
+import { apiClient, type PendingRegistration, type RegistrationCandidate } from '../../../../lib/api-client';
 import DashboardLayout from '../../../../components/dashboard/layout';
 import { Button } from '../../../../components/ui/button';
 import {
@@ -56,8 +56,33 @@ function RegistrationsContent() {
     enabled: reviewId !== null,
   });
 
-  const suggestedUserId = candidateData?.candidates.find((candidate) => candidate.preselected && candidate.selectable)?.id ?? '';
+  const candidates = candidateData?.candidates ?? [];
+  const strongCandidates = candidates.filter((candidate) => candidate.strong);
+  const weakCandidates = candidates.filter((candidate) => !candidate.strong);
+  const suggestedUserId = strongCandidates.find((candidate) => candidate.preselected && candidate.selectable)?.id ?? '';
   const activeUserId = selectedUserId || suggestedUserId;
+
+  const renderCandidate = (candidate: RegistrationCandidate) => (
+    <button
+      key={candidate.id}
+      type="button"
+      disabled={!candidate.selectable}
+      onClick={() => setSelectedUserId(candidate.id)}
+      className={`rounded-md border p-3 text-left ${activeUserId === candidate.id ? 'border-primary bg-primary/5' : ''} ${!candidate.strong ? 'border-dashed bg-muted/30' : ''} ${!candidate.selectable ? 'cursor-not-allowed opacity-60' : ''}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">{candidate.fullName}</span>
+        <Badge variant={candidate.strong ? 'default' : 'outline'}>Score {candidate.score}</Badge>
+      </div>
+      <p className="text-sm text-muted-foreground">{candidate.rank} · {candidate.battery}</p>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {!candidate.strong && <Badge variant="outline">Weaker match</Badge>}
+        {candidate.mismatchReasons.map((reason) => <Badge key={reason} variant="outline">{reason}</Badge>)}
+        {candidate.strong && candidate.preselected && <Badge variant="secondary">Suggested</Badge>}
+        {candidate.alreadyClaimed && <Badge variant="destructive">Already claimed{candidate.claimedBy ? ` by @${candidate.claimedBy}` : ''}</Badge>}
+      </div>
+    </button>
+  );
 
   const approveMutation = useMutation({
     mutationFn: (input: { id: string; mode: 'link' | 'create'; userId?: string }) => {
@@ -178,28 +203,18 @@ function RegistrationsContent() {
                             <div className="grid gap-3 rounded-md bg-muted/40 p-4">
                               <p className="font-medium">Roster candidates</p>
                               {candidatesLoading ? <p className="text-sm text-muted-foreground">Finding matches...</p> : (
-                                <div className="grid gap-2">
-                                  {(candidateData?.candidates ?? []).map((candidate) => (
-                                    <button
-                                      key={candidate.id}
-                                      type="button"
-                                      disabled={!candidate.selectable}
-                                      onClick={() => setSelectedUserId(candidate.id)}
-                                      className={`rounded-md border p-3 text-left ${activeUserId === candidate.id ? 'border-primary bg-primary/5' : ''} ${!candidate.selectable ? 'cursor-not-allowed opacity-60' : ''}`}
-                                    >
-                                      <div className="flex items-center justify-between gap-2">
-                                        <span className="font-medium">{candidate.fullName}</span>
-                                        <Badge>Score {candidate.score}</Badge>
-                                      </div>
-                                      <p className="text-sm text-muted-foreground">{candidate.rank} · {candidate.battery}</p>
-                                      <div className="mt-1 flex flex-wrap gap-1">
-                                        {candidate.mismatchReasons.map((reason) => <Badge key={reason} variant="outline">{reason}</Badge>)}
-                                        {candidate.preselected && <Badge variant="secondary">Suggested</Badge>}
-                                        {candidate.alreadyClaimed && <Badge variant="destructive">Already claimed{candidate.claimedBy ? ` by @${candidate.claimedBy}` : ''}</Badge>}
-                                      </div>
-                                    </button>
-                                  ))}
-                                </div>
+                                <>
+                                  {strongCandidates.length === 0 && (
+                                    <p className="text-sm text-amber-700">No close matches — check weaker matches before creating a new person.</p>
+                                  )}
+                                  {strongCandidates.length > 0 && <div className="grid gap-2">{strongCandidates.map(renderCandidate)}</div>}
+                                  {weakCandidates.length > 0 && (
+                                    <details className="rounded-md border border-dashed p-3">
+                                      <summary className="cursor-pointer font-medium">Show weaker matches ({weakCandidates.length})</summary>
+                                      <div className="mt-2 grid gap-2">{weakCandidates.map(renderCandidate)}</div>
+                                    </details>
+                                  )}
+                                </>
                               )}
                               <div className="flex justify-end gap-2">
                                 <Button variant="outline" onClick={() => approveMutation.mutate({ id: reg.id, mode: 'create' })} disabled={approveMutation.isPending || candidatesLoading}>
