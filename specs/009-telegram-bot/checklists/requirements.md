@@ -33,7 +33,9 @@ Note: the Context section cites measured facts (Sheets API call counts, quota) b
 
 ## Notes
 
-- **26 functional requirements across 4 user stories.** Stories 1 and 2 are both P1 and mutually dependent: pairing must exist before marking is possible.
+- **34 functional requirements across 4 user stories.** Stories 1 and 2 are both P1 and mutually dependent: pairing must exist before marking is possible.
+- **Story 4 was promoted from P3 to P2.** Manual marking happens through the bot, so it is the fallback covering soldiers not on Telegram, not a convenience. Without it a commander runs the parade from a laptop and a phone at once.
+- **FR-034 exists because the prototype's QR authorises nothing.** Its deep-link payload is base64 of the event name plus a timestamp (`app.py:172-178`), so it is derivable and brute-forceable in seconds; anyone could mark themselves present without seeing the QR. It also silently breaks for event names over 27 characters. The fixed-length random code keeps the authorisation property the existing web QR already has.
 - **The prototype's identity model is adopted; its storage is rejected.** `~/Projects/236sa-attendance-bot` marks one soldier present with 4 un-batched Google Sheets calls, so 350 soldiers in 90 seconds implies roughly 930 calls/min against a ~300/min quota. SC-003 and the load test exist to hold the replacement to a measured standard rather than an assumed one.
 - **This feature does not remove the soldier web pages.** Doing both at once would leave no fallback if Telegram adoption stalls. Retirement is tracked separately.
 - **008 is not superseded.** Commanders still need accounts, so PR4 (bulk approve, password reset) remains worthwhile at a scale of 9 rather than 431, and PR5 (dropping NRIC and DOB) is still the highest-value security work outstanding.

@@ -84,20 +84,25 @@ A commander creates a session on the web dashboard as they do today, displays it
 
 ---
 
-### User Story 4 - Commander marks another soldier from Telegram (Priority: P3)
+### User Story 4 - Commander marks other soldiers from Telegram (Priority: P2)
 
-A commander at the parade square, without a laptop, marks a soldier present from their phone by searching for that soldier in the bot.
+A commander at the parade square, holding only a phone, marks the soldiers who are not using Telegram. They see who is still missing and mark them by tapping, without typing each name.
 
-**Why this priority**: Genuinely useful at a parade square, but the dashboard already covers it. Deliberately last so it cannot delay Stories 1 and 2.
+**Why this priority**: This is the fallback that lets Telegram cover the whole unit. Without it, a soldier not on Telegram can only be marked from a laptop, so a commander would have to run the parade from two places at once. It is the manual-marking path, not a convenience.
 
-**Independent Test**: As a paired commander, search a soldier by name in the bot and mark them present; as a paired soldier, confirm the same search is unavailable.
+**Independent Test**: As a paired commander on an active session, view the missing list, mark a soldier who has no Telegram account at all, and confirm it is recorded as a manual mark attributed to that commander. As a paired soldier, confirm the same actions are unavailable.
 
 **Acceptance Scenarios**:
 
-1. **Given** a paired commander, **When** they search a name for an active session, **Then** matching roster rows within their authority are listed.
-2. **Given** a paired soldier who is not a commander, **When** they attempt the same search, **Then** it is refused and no name is returned.
-3. **Given** a commander marking another soldier, **When** it succeeds, **Then** the record is attributed to that commander as a manual mark.
-4. **Given** a commander whose authority covers only their own battery, **When** they search, **Then** no soldier outside that battery is returned.
+1. **Given** a paired commander on an active session, **When** they ask who is missing, **Then** the soldiers still unmarked within their authority are listed for tapping.
+2. **Given** that missing list, **When** the commander taps a soldier, **Then** that soldier is marked present and the list updates to exclude them.
+3. **Given** a soldier with no Telegram account at all, **When** a commander marks them, **Then** it succeeds. Pairing is not a precondition for being marked by a commander.
+4. **Given** a commander marking another soldier, **When** it succeeds, **Then** the record is a manual mark attributed to that commander.
+5. **Given** a commander who has just marked someone, **When** they mark the next soldier, **Then** they do not have to scan the QR code again.
+6. **Given** a long missing list, **When** a commander searches by name, **Then** matching roster rows within their authority are listed.
+7. **Given** a paired soldier who is not a commander, **When** they attempt to view the missing list or search a name, **Then** it is refused and no name is returned.
+8. **Given** a commander whose authority covers only their own battery, **When** they view the missing list or search, **Then** no soldier outside that battery appears.
+9. **Given** a commander who marked someone by mistake, **When** they undo it, **Then** the attendance record is removed.
 
 ---
 
@@ -112,6 +117,10 @@ A commander at the parade square, without a laptop, marks a soldier present from
 - **QR photographed and shared off-parade.** Anyone paired who obtains the image can mark themselves present remotely, exactly as with the web QR today. Session closure is the existing control.
 - **Bot blocked or never started.** A soldier who blocks the bot cannot be messaged; manual marking remains the fallback.
 - **Group chats.** The bot must ignore group messages and only act on direct messages, so a QR link pasted into the unit group cannot mark someone in-place.
+- **A guessable deep link would let anyone mark themselves present without attending.** The prototype encodes the event name and a timestamp, both derivable, so the QR identifies a session without authorising it. The existing web QR carries a random secret instead, and that property must be kept.
+- **A commander may be authorised for several concurrent sessions.** Marking must apply to the session they last scanned, never to whichever is newest.
+- **A commander's remembered session goes stale.** Once it closes, or after enough time, marking must stop applying to it rather than silently attaching records to yesterday's parade.
+- **The unmarked list changes while a commander reads it.** Soldiers scanning concurrently mark themselves, so tapping a name that was just marked must report it as already done rather than erroring.
 
 ## Requirements *(mandatory)*
 
@@ -149,8 +158,19 @@ A commander at the parade square, without a laptop, marks a soldier present from
 
 - **FR-020**: Commanders MUST continue to create sessions, view boards, import rosters and approve pairings on the existing authenticated dashboard.
 - **FR-021**: Session QR codes MUST open the Telegram bot.
+- **FR-034**: A session's deep link MUST be unguessable, so that possessing the QR code is what authorises marking. It MUST NOT be derivable from the session's name, time, or any other visible attribute.
 - **FR-022**: Commanders MUST retain manual marking for soldiers who cannot or will not use Telegram.
 - **FR-023**: A commander using the bot to mark another soldier MUST be restricted to soldiers within their existing authority, and the record MUST be attributed to them.
+
+**Manual marking from the bot**
+
+- **FR-027**: Commanders MUST be able to see, from the bot, which soldiers within their authority are still unmarked for an active session.
+- **FR-028**: Commanders MUST be able to mark a soldier from that list without typing their name.
+- **FR-029**: Commanders MUST be able to mark a soldier who has no Telegram account and no pairing.
+- **FR-030**: The system MUST remember which session a commander is working on between consecutive actions, so marking several soldiers does not require rescanning the QR code. That memory MUST survive a restart of the system and MUST stop applying once the session closes.
+- **FR-031**: Commanders MUST be able to search by name from the bot when the unmarked list is long.
+- **FR-032**: Commanders MUST be able to undo a mark they made from the bot.
+- **FR-033**: Every list or search result shown to a commander MUST be limited to soldiers within their existing authority.
 
 **Operational**
 
@@ -178,6 +198,9 @@ A commander at the parade square, without a laptop, marks a soldier present from
 - **SC-006**: Attendance history is unchanged by pairing.
 - **SC-007**: Commanders can still record attendance for the whole unit when Telegram is unavailable.
 - **SC-008**: Repeated delivery of the same scan produces exactly one attendance record.
+- **SC-009**: A commander can mark 20 soldiers who are not using Telegram in under 2 minutes from a phone, without rescanning the QR code and without typing a full name.
+- **SC-010**: A soldier who has never opened the bot can still be marked present by a commander.
+- **SC-011**: Nobody can mark themselves present for a session without having obtained that session's QR code.
 
 ## Assumptions
 
@@ -188,6 +211,8 @@ A commander at the parade square, without a laptop, marks a soldier present from
 - One bot serves both soldiers and commanders. Authority is derived from the paired roster row, so the prototype's two-bot split is unnecessary.
 - Telegram's display name is treated as a hint for a human, never as proof of identity.
 - The soldier-facing web pages are retired only after Telegram adoption is proven, so this feature does not remove them.
+- Manual marking happens mostly through the bot at the parade square. The dashboard is retained for larger corrections and for when Telegram is unavailable.
+- Commanders, about 9 people, may be shown roster names in Telegram. It is the same information the dashboard already shows them, under the same authority rules.
 - Feature 008's remaining work (bulk approve, commander password reset, dropping NRIC) proceeds independently. Commanders still need accounts, so 008 PR4 remains worthwhile at a scale of 9 rather than 431.
 
 ## Out of Scope

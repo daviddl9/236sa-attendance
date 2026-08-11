@@ -48,13 +48,30 @@ Telegram /start payload: max 64 chars, charset [A-Za-z0-9_-]
 
 The existing token cannot be used: too long, and `:` is not permitted.
 
+### What the prototype does, and why not to copy it
+
+`~/Projects/236sa-attendance-bot/app.py:172-178`:
+
+```python
+header = f"{event_name}_{timestamp_z}"        # "First Parade_2026-08-11T07:30:00Z"
+deep_link = f"https://t.me/{BOT}?start={base64url(header)}"
+```
+
+The payload is base64url of the event name plus an ISO timestamp. Two defects:
+
+1. **It authorises nothing.** The payload is derivable. Given the naming convention, the timestamp is the only unknown, and parades start at predictable times, so it is brute-forceable in seconds. Anyone can mark themselves present without ever seeing the QR code. The code comments that the link is "embedded ONLY in the QR", which is obscurity, not authorisation.
+2. **It fails silently on length.** base64 expands 4:3, so a 64-character cap allows a 48-byte header, leaving **27 characters for the event name**. A longer name produces a broken link with no validation.
+
+The existing web QR is stronger: `attendance.go:65` compares a 64-hex-character random secret server-side. Possessing the QR is what authorises the mark. **Keep that property** (FR-034).
+
 **Add a per-session `deeplink_code`:** 16 random bytes encoded base64url without padding — **22 characters**, 128 bits of entropy, charset-legal, comfortably inside the limit. It replaces the token for Telegram only; the web `/qr/{token}` path is untouched.
 
 ```
 QR encodes:  https://t.me/<bot_username>?start=<deeplink_code>
+             22 chars, fixed length, independent of the session name
 ```
 
-The code identifies **and** authorises the session, exactly as the current secret does. It is unguessable, so no separate secret is needed.
+The code identifies **and** authorises the session, exactly as the current secret does. It is unguessable, so no separate secret is needed, and being fixed-length it cannot overflow the payload limit however the session is named.
 
 ## Data model
 
@@ -81,7 +98,18 @@ ALTER TABLE attendance_session
   ADD COLUMN deeplink_code TEXT;
 CREATE UNIQUE INDEX idx_session_deeplink_code
   ON attendance_session (deeplink_code) WHERE deeplink_code IS NOT NULL;
+
+-- which session a commander is currently marking against (FR-030)
+CREATE TABLE telegram_chat_context (
+    telegram_id  BIGINT PRIMARY KEY,
+    session_id   TEXT NOT NULL REFERENCES attendance_session(id) ON DELETE CASCADE,
+    "updatedAt"  TIMESTAMP NOT NULL DEFAULT NOW()
+);
 ```
+
+`telegram_chat_context` is deliberately a table, not memory. The prototype holds this in `SESSIONS = {}` (`app.py:36`), so a restart mid-parade loses every commander's working session and they must rescan. On a host that restarts or scales to more than one instance, that breaks exactly when the parade is busiest.
+
+Context is only honoured while the referenced session is still active, so a stale context cannot attach records to a closed parade.
 
 Notes:
 
@@ -163,9 +191,11 @@ The only change is the intake channel. A pairing request carries a Telegram disp
 | **3** | Telegram client + webhook endpoint + auth; bot replies to a DM but does not mark | Low |
 | **4** | Pairing request intake and the commander confirm/unpair UI | Medium |
 | **5** | Marking from `/start <code>`; session QR generates the `t.me` link | **Highest** |
-| **6** | Commander marking others from the bot (User Story 4) | Low, deferrable |
+| **6** | Commander manual marking from the bot: missing list, tap to mark, search, undo, session context | Medium |
 
 Each under ~500 lines. PR5 is the one to review closely.
+
+PR6 is **not deferrable**. It is the manual-marking path for soldiers who are not on Telegram, so without it a commander must run the parade from a laptop and a phone simultaneously. It reuses `GetMissingUsers` and the existing unmark endpoint from 006 rather than adding new reporting logic.
 
 ## Test plan
 
@@ -187,6 +217,12 @@ Each under ~500 lines. PR5 is the one to review closely.
 - One Telegram account cannot pair to two roster rows; one roster row cannot take two accounts.
 - Unpairing allows re-pairing.
 - Commander search returns only their battery; a soldier's search returns nothing.
+- A commander can mark a soldier who has no pairing at all (FR-029).
+- Consecutive marks reuse the stored session context without rescanning (FR-030).
+- Session context is ignored once the session closes.
+- Tapping a soldier who was marked a moment ago by their own scan reports already-marked, not an error.
+- A commander can undo a mark they made (FR-032).
+- A deep-link code cannot be derived from the session name or start time: two sessions created with identical names one second apart get unrelated codes (FR-034).
 - **Parity**: for the same session and soldier, the Telegram path and the web path produce the same outcome for active, closed, duplicate and out-of-scope cases. This is the test that stops the two surfaces diverging.
 
 ### Load
