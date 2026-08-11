@@ -422,6 +422,19 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	var currentHash *string
+	if err := h.db.Pool.QueryRow(r.Context(), `SELECT password FROM "user" WHERE id = $1`, userID).Scan(&currentHash); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to fetch current password", http.StatusInternalServerError)
+		return
+	}
+	if currentHash != nil && comparePassword(*currentHash, req.Password) {
+		http.Error(w, "New password must differ from your current password", http.StatusBadRequest)
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), passwordHashCost)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)

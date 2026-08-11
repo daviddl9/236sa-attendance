@@ -73,6 +73,24 @@ func GetUserFromContext(ctx context.Context) (*models.User, bool) {
 	return user, ok
 }
 
+// RequirePasswordChange blocks authenticated application requests while a
+// temporary credential is active. The change-password endpoint is the sole
+// application route allowed through this guard.
+func RequirePasswordChange(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := GetUserFromContext(r.Context())
+		if !ok {
+			http.Error(w, "Not authenticated", http.StatusUnauthorized)
+			return
+		}
+		if user.PasswordChangeRequired && !(r.Method == http.MethodPost && r.URL.Path == "/api/auth/change-password") {
+			http.Error(w, "Password change required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // LoadUser middleware loads the full user object into context.
 func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

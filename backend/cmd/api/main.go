@@ -88,6 +88,7 @@ func main() {
 	r.Route("/api/sessions/{id}/stream", func(r chi.Router) {
 		r.Use(middleware.Auth(db))
 		r.Use(middleware.LoadUser(db))
+		r.Use(middleware.RequirePasswordChange)
 		r.Use(middleware.RequireCommander(db))
 		r.Get("/", sseHandler.StreamSession)
 	})
@@ -100,6 +101,7 @@ func main() {
 		r.Route("/api/admin/users/import-document", func(r chi.Router) {
 			r.Use(middleware.Auth(db))
 			r.Use(middleware.LoadUser(db))
+			r.Use(middleware.RequirePasswordChange)
 			r.Use(middleware.RequireSuperadmin(db))
 			r.Post("/preview", importHandler.PreviewImport)
 			r.Post("/commit", importHandler.CommitImport)
@@ -133,6 +135,7 @@ func main() {
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.Auth(db))
 				r.Use(middleware.LoadUser(db))
+				r.Use(middleware.RequirePasswordChange)
 
 				// Authenticated credential routes
 				r.Post("/auth/change-password", handlers.NewAuthHandler(db).ChangePassword)
