@@ -104,6 +104,9 @@ A soldier forgets their password. A commander opens that soldier's record and is
 
 ### Edge Cases
 
+- **A pending signup carried over from the pre-008 scheme shares its identifier with an existing roster row.** Approving it as a new person would create a duplicate of someone who already exists, so these must be linked, never created. Zero such rows exist in production today, but the path must be correct before it can occur.
+- **Sign-in reveals roster membership.** Distinct responses for "unknown account" and "wrong password" let anyone test whether a named person is in the unit. With ~431 personnel and predictable name patterns, this makes the nominal roll enumerable without signing in.
+
 - **Usernames differing only by case or surrounding spaces** — treated as the same username so `TanWM` and `tanwm` cannot both exist.
 - **Duplicate full names** — expected at 350 personnel; the username disambiguates, and the approval list must show rank and battery so a commander can tell two same-named soldiers apart.
 - **Soldier scans a QR while signed out** — must be returned to sign-in and, after signing in, land on the scan result rather than the dashboard.
@@ -158,6 +161,11 @@ A soldier forgets their password. A commander opens that soldier's record and is
 - **FR-025**: The system MUST NOT link a signup to a roster row automatically. A commander MUST confirm every link explicitly.
 - **FR-026**: When a signup is linked to an existing roster row, that row's attendance history MUST remain intact and attributed to the same person.
 - **FR-027**: The system MUST indicate roster rows that are already linked to an account, so a commander can see why an expected name is unavailable.
+- **FR-028**: Approving a pending signup that was carried over from the pre-008 scheme MUST attach it to that person's existing roster row rather than creating a second row for the same person.
+
+**Not disclosing who is on the roster**
+
+- **FR-029**: Sign-in MUST NOT reveal whether a given name or username exists. A failed sign-in MUST be indistinguishable whether the account is unknown or the password is wrong.
 
 ### Key Entities
 
@@ -179,6 +187,8 @@ A soldier forgets their password. A commander opens that soldier's record and is
 - **SC-007**: Every approval and password reset is attributable to a named commander.
 - **SC-008**: For a signup whose submitted name contains a single-character typo, the correct roster row appears as the top-ranked candidate.
 - **SC-009**: After linking, a soldier's attendance records from before the change still appear in their history and in per-person reports.
+- **SC-010**: No unauthenticated request can be used to determine whether a named person is in the system.
+- **SC-011**: No person appears twice on the roster as a result of approval.
 
 ## Assumptions
 

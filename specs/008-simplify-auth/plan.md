@@ -128,10 +128,16 @@ The password field keeps accepting each user's existing value. The page simply s
 ### PR3 — Approval with fuzzy roster matching
 
 - `backend/internal/services/matching/` — Levenshtein, normalisation, scoring. Pure, heavily unit-tested.
-- `GET /api/admin/registrations/:id/candidates` — top 5 with scores and mismatch reasons.
+- `GET /api/admin/registrations/:id/candidates` — top 5 with scores and mismatch reasons. **Commander-only**; this endpoint returns roster names and must never be reachable unauthenticated (FR-007).
 - `POST /api/admin/registrations/:id/approve` with `{ mode: "link", userId }` or `{ mode: "create" }`.
-- Link: write `username` + `password_hash` onto the existing `user` row, delete the pending row.
+- Link: write `username` + `password_hash` onto the existing `user` row, set `verified = true`, delete the pending row.
 - Approval UI shows candidates with scores and mismatch chips.
+
+**Carried-over rows must be linked, never created (FR-028).** The PR2 migration copied unapproved `user` rows into `pending_registration` reusing the same `id`, and deliberately did not delete the `user` row (see that migration's comment — deleting cascades attendance records away). `ApproveRegistration` currently does `INSERT INTO "user" (id, ...) SELECT id ... FROM pending_registration`, so approving such a row raises a primary-key violation and returns 500.
+
+These rows are identifiable by a `__migrated_pending__` username prefix. For them, create-mode must be refused and link-mode must default to the row sharing their `id`. Production currently holds zero of them, so this is correctness work, not a live incident.
+
+**Close the sign-in enumeration oracle (FR-029).** `POST /api/auth/sign-in` returns `signup_required` for an unknown identifier and an auth error for a known one, which lets anyone test whether a named person is in the unit. Now that signup has its own page, sign-in no longer needs to branch into it: return one indistinguishable failure for both cases and delete the `signup_required` outcome and the client state that renders it. This deletes code rather than adding it.
 
 ### PR4 — Operating at 350
 
@@ -156,6 +162,16 @@ Replaces the shared `admin` login (`sign-in.tsx:100`). Not required to clear Goo
 ## Test plan (TDD — tests first)
 
 ### Unit — matching (PR3, the highest-value tests)
+
+Plus:
+
+| Case | Expected |
+|---|---|
+| Approve a `__migrated_pending__` row | Links to the `user` row sharing its id; no duplicate row; no 500 |
+| Approve a `__migrated_pending__` row in create-mode | Refused |
+| Sign-in, unknown username | Identical status and body to a wrong password |
+| Sign-in, known username, wrong password | Identical status and body to an unknown username |
+| `GET .../candidates` unauthenticated | Rejected, and leaks no name |
 
 | Case | Input vs roster | Expected |
 |---|---|---|
