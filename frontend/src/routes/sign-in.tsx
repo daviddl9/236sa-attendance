@@ -12,8 +12,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
-import { APIError, apiClient } from '../lib/api-client';
-import { normalizeLegacyPassword } from '../lib/legacy-password';
+import { signInWithLegacyFallback } from '../lib/legacy-password';
 import { PublicFooter } from '../components/public-footer';
 import { Eye, EyeOff, Clock } from 'lucide-react';
 
@@ -26,21 +25,6 @@ export const Route = createFileRoute('/sign-in')({
     };
   },
 });
-
-async function signInWithLegacyFallback(identifier: string, password: string) {
-  try {
-    return await apiClient.signIn({ identifier, password });
-  } catch (error) {
-    const isLegacyIdentifier = identifier.trim().includes(' ');
-    if (!(error instanceof APIError) || error.status !== 401 || !isLegacyIdentifier) {
-      throw error;
-    }
-    return apiClient.signIn({
-      identifier,
-      password: normalizeLegacyPassword(password),
-    });
-  }
-}
 
 function SignInContent() {
   const [loading, setLoading] = useState(false);
@@ -184,7 +168,7 @@ function SignInContent() {
                   type="text"
                   placeholder="Enter your username"
                   value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
+                  onChange={(e) => setIdentifier(e.target.value)}
                   disabled={loading}
                   required
                 />
