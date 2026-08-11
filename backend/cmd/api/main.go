@@ -207,6 +207,7 @@ func main() {
 					r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)
 					// Registration approval
 					r.Get("/registrations", adminHandler.ListPendingRegistrations)
+					r.Post("/registrations/bulk-approve", adminHandler.BulkApproveRegistrations)
 					r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
 					r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
 					r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)

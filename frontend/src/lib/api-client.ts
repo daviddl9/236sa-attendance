@@ -167,6 +167,18 @@ export interface PendingRegistrationsResponse {
   total: number;
 }
 
+export interface BulkApprovalResult {
+  id: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface BulkApprovalResponse {
+  results: BulkApprovalResult[];
+  approved: number;
+  failed: number;
+}
+
 export interface ProvisionCredentialsResponse {
   username: string;
   temporaryPassword: string;
@@ -848,8 +860,16 @@ export class APIClient {
   }
 
   // Registration approval (superadmin only)
-  async listPendingRegistrations(): Promise<PendingRegistrationsResponse> {
-    return this.request<PendingRegistrationsResponse>('/api/admin/registrations');
+  async listPendingRegistrations(battery?: string): Promise<PendingRegistrationsResponse> {
+    const query = battery ? `?battery=${encodeURIComponent(battery)}` : '';
+    return this.request<PendingRegistrationsResponse>(`/api/admin/registrations${query}`);
+  }
+
+  async bulkApproveRegistrations(registrationIds: string[]): Promise<BulkApprovalResponse> {
+    return this.request<BulkApprovalResponse>('/api/admin/registrations/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ registrationIds }),
+    });
   }
 
   async listRegistrationCandidates(id: string): Promise<RegistrationCandidatesResponse> {

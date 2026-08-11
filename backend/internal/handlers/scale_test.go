@@ -16,6 +16,66 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func TestBulkApprovePartialSuccess(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	ids := make([]string, 0, 20)
+	for i := 0; i < 18; i++ {
+		id := fmt.Sprintf("%s-pending-%02d", prefix, i)
+		ids = append(ids, id)
+		seedPending(t, db, id, fmt.Sprintf("bulk-%02d", i), "PERSON", "PTE", "HQ")
+	}
+	ids = append(ids, prefix+"-invalid-1", prefix+"-invalid-2")
+	body, _ := json.Marshal(map[string]any{"registrationIds": ids})
+	rec := httptest.NewRecorder()
+	NewAdminHandler(db).BulkApproveRegistrations(rec, httptest.NewRequest(http.MethodPost, "/api/admin/registrations/bulk-approve", strings.NewReader(string(body))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Results  []bulkApprovalResult `json:"results"`
+		Approved int                  `json:"approved"`
+		Failed   int                  `json:"failed"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Approved != 18 || got.Failed != 2 || len(got.Results) != 20 {
+		t.Fatalf("result = %+v, want 18 approved and 2 failed", got)
+	}
+	var users, pending int
+	ctx := context.Background()
+	_ = db.Pool.QueryRow(ctx, `SELECT count(*) FROM "user" WHERE id LIKE $1`, prefix+"-pending-%").Scan(&users)
+	_ = db.Pool.QueryRow(ctx, `SELECT count(*) FROM pending_registration WHERE id LIKE $1`, prefix+"-%").Scan(&pending)
+	if users != 18 || pending != 0 {
+		t.Fatalf("users=%d pending=%d, want 18 and 0", users, pending)
+	}
+}
+
+func TestListPendingRegistrationsFiltersAndScopesBattery(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	for _, battery := range []string{models.BatteryHQ, models.BatteryAlpha, models.BatteryBravo} {
+		seedPending(t, db, prefix+"-"+battery, battery+"-user", battery+" PERSON", "PTE", battery)
+	}
+	h := NewAdminHandler(db)
+	rec := httptest.NewRecorder()
+	h.ListPendingRegistrations(rec, httptest.NewRequest(http.MethodGet, "/api/admin/registrations?battery=Alpha", nil))
+	var got struct {
+		Registrations []PendingRegistration `json:"registrations"`
+	}
+	_ = json.NewDecoder(rec.Body).Decode(&got)
+	if rec.Code != http.StatusOK || len(got.Registrations) != 1 || got.Registrations[0].Battery != models.BatteryAlpha {
+		t.Fatalf("filtered response = (%d, %+v)", rec.Code, got.Registrations)
+	}
+	commander := &models.User{ID: prefix + "-commander", Rank: stringPtr("3SG"), Battery: stringPtr(models.BatteryAlpha)}
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/registrations?battery=Bravo", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, commander))
+	rec = httptest.NewRecorder()
+	h.ListPendingRegistrations(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("out-of-scope status = %d, want 403", rec.Code)
+	}
+}
+
 func TestProvisionCredentialsAndForcedChange(t *testing.T) {
 	db, prefix := openRegistrationDB(t)
 	targetID := prefix + "-target"
@@ -109,3 +169,5 @@ func passwordChangeRequired(t *testing.T, db *database.DB, id string) bool {
 	}
 	return required
 }
+
+func stringPtr(value string) *string { return &value }
