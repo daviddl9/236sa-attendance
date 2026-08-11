@@ -17,6 +17,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/matching"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/xuri/excelize/v2"
@@ -670,7 +671,13 @@ func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.R
 type approveRegistrationRequest struct {
 	Mode   string `json:"mode"`
 	UserID string `json:"userId"`
+	Bulk   bool   `json:"-"`
 }
+
+var (
+	errBulkNeedsLink       = errors.New("needs_link")
+	errBulkMigratedPending = errors.New("migrated_pending")
+)
 
 type pendingApproval struct {
 	ID, Username, PasswordHash, Name, Rank, Battery string
@@ -724,6 +731,18 @@ func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID s
 	if err != nil {
 		return fmt.Errorf("registration not found or already approved: %w", err)
 	}
+	if req.Bulk && req.Mode == "create" {
+		if isMigratedPending(pending.Username) {
+			return errBulkMigratedPending
+		}
+		strongMatch, err := h.hasStrongCandidate(ctx, tx, pending)
+		if err != nil {
+			return err
+		}
+		if strongMatch {
+			return errBulkNeedsLink
+		}
+	}
 	if isMigratedPending(pending.Username) {
 		if req.Mode == "create" {
 			return fmt.Errorf("carried-over registrations must be linked")
@@ -758,6 +777,38 @@ func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID s
 	return tx.Commit(ctx)
 }
 
+func (h *AdminHandler) hasStrongCandidate(ctx context.Context, tx pgx.Tx, pending pendingApproval) (bool, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, COALESCE("full_name", ''), COALESCE(rank, ''), COALESCE(battery, ''), username
+		FROM "user"
+	`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	roster := make([]matching.RosterRow, 0)
+	for rows.Next() {
+		var row matching.RosterRow
+		if err := rows.Scan(&row.ID, &row.Name, &row.Rank, &row.Battery, &row.Username); err != nil {
+			return false, err
+		}
+		roster = append(roster, row)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	candidates := matching.RankCandidates(matching.Registration{
+		Name: pending.Name, Rank: pending.Rank, Battery: pending.Battery,
+	}, roster)
+	for _, candidate := range candidates {
+		if candidate.Score >= matching.StrongCandidateScore {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type bulkApproveRequest struct {
 	RegistrationIDs []string `json:"registrationIds"`
 }
@@ -768,8 +819,8 @@ type bulkApprovalResult struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// BulkApproveRegistrations deliberately uses create mode only. Linking needs a
-// per-registration roster decision and remains available through the single-item endpoint.
+// BulkApproveRegistrations creates only registrations without a strong roster
+// match. Likely matches and carried-over rows need an individual link decision.
 func (h *AdminHandler) BulkApproveRegistrations(w http.ResponseWriter, r *http.Request) {
 	var req bulkApproveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.RegistrationIDs) == 0 {
@@ -786,7 +837,7 @@ func (h *AdminHandler) BulkApproveRegistrations(w http.ResponseWriter, r *http.R
 		result := bulkApprovalResult{ID: id}
 		if strings.TrimSpace(id) == "" {
 			result.Error = "Registration id is required"
-		} else if err := h.approveRegistration(r.Context(), id, approveRegistrationRequest{Mode: "create"}, actorID); err != nil {
+		} else if err := h.approveRegistration(r.Context(), id, approveRegistrationRequest{Mode: "create", Bulk: true}, actorID); err != nil {
 			result.Error = approvalErrorMessage(err)
 		} else {
 			result.Success = true
@@ -801,6 +852,9 @@ func (h *AdminHandler) BulkApproveRegistrations(w http.ResponseWriter, r *http.R
 }
 
 func approvalErrorMessage(err error) string {
+	if errors.Is(err, errBulkNeedsLink) || errors.Is(err, errBulkMigratedPending) {
+		return err.Error()
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "Registration not found or already approved"
 	}

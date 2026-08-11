@@ -188,7 +188,7 @@ function RegistrationsContent() {
                   <Button size="sm" onClick={() => bulkApproveMutation.mutate()} disabled={bulkApproveMutation.isPending}>
                     {bulkApproveMutation.isPending ? 'Approving...' : `Bulk approve (${selectedIds.length})`}
                   </Button>
-                  <span className="text-xs text-muted-foreground">Create mode only; linking requires one-at-a-time review.</span>
+                  <span className="text-xs text-muted-foreground">Bulk approve only creates new people. Likely matches are refused and must be reviewed individually to link them.</span>
                 </div>
               )}
             </div>
