@@ -17,6 +17,7 @@ type RegistrationCandidate struct {
 	Rank            string   `json:"rank"`
 	Battery         string   `json:"battery"`
 	Score           int      `json:"score"`
+	Strong          bool     `json:"strong"`
 	MismatchReasons []string `json:"mismatchReasons"`
 	AlreadyClaimed  bool     `json:"alreadyClaimed"`
 	ClaimedBy       string   `json:"claimedBy,omitempty"`
@@ -43,7 +44,7 @@ func (h *AdminHandler) ListRegistrationCandidates(w http.ResponseWriter, r *http
 
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT id, COALESCE("full_name", ''), COALESCE(rank, ''), COALESCE(battery, ''), username
-		FROM "user" WHERE "is_superadmin" = false
+		FROM "user"
 	`)
 	if err != nil {
 		http.Error(w, "Failed to fetch roster", http.StatusInternalServerError)
@@ -76,7 +77,7 @@ func (h *AdminHandler) ListRegistrationCandidates(w http.ResponseWriter, r *http
 		}
 		response[i] = RegistrationCandidate{
 			ID: candidate.ID, FullName: candidate.Name, Rank: candidate.Rank, Battery: candidate.Battery,
-			Score: candidate.Score, MismatchReasons: reasons, AlreadyClaimed: candidate.AlreadyClaimed,
+			Score: candidate.Score, Strong: candidate.Strong, MismatchReasons: reasons, AlreadyClaimed: candidate.AlreadyClaimed,
 			ClaimedBy: candidate.ClaimedUsername, Selectable: candidate.Selectable, Preselected: candidate.Preselected,
 		}
 	}

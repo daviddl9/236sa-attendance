@@ -123,6 +123,61 @@ func TestRankCandidates(t *testing.T) {
 	}
 }
 
+func TestCandidateStrengthClassification(t *testing.T) {
+	tests := []struct {
+		name         string
+		registration Registration
+		rosterName   string
+		wantStrong   bool
+	}{
+		{
+			name:         "MUTHU and MOHAN uses name ratio instead of absolute distance",
+			registration: Registration{Name: "MUTHU", Rank: "PTE", Battery: "Alpha"},
+			rosterName:   "MOHAN",
+			wantStrong:   false,
+		},
+		{
+			name:         "TAN and LIM is weak",
+			registration: Registration{Name: "TAN", Rank: "PTE", Battery: "Alpha"},
+			rosterName:   "LIM",
+			wantStrong:   false,
+		},
+		{
+			name:         "single typo on a normal name is strong",
+			registration: Registration{Name: "TAN WEI MIMG", Rank: "PTE", Battery: "Alpha"},
+			rosterName:   "TAN WEI MING",
+			wantStrong:   true,
+		},
+		{
+			name:         "three typos with matching attributes reach strong",
+			registration: Registration{Name: "TAN XEI XANG", Rank: "PTE", Battery: "Alpha"},
+			rosterName:   "TAN WEI MING",
+			wantStrong:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidates := RankCandidates(tt.registration, []RosterRow{{
+				ID: "candidate", Name: tt.rosterName, Rank: "PTE", Battery: "Alpha",
+			}})
+			candidate := candidates[0]
+			if candidate.Strong != tt.wantStrong {
+				t.Fatalf("candidate score = %d, strong = %v, want %v", candidate.Score, candidate.Strong, tt.wantStrong)
+			}
+			if tt.wantStrong && candidate.Score < StrongCandidateScore {
+				t.Fatalf("candidate score = %d, want at least %d", candidate.Score, StrongCandidateScore)
+			}
+			if !tt.wantStrong && candidate.Score >= StrongCandidateScore {
+				t.Fatalf("candidate score = %d, want below %d", candidate.Score, StrongCandidateScore)
+			}
+			if !tt.wantStrong && candidate.Preselected {
+				t.Fatal("weak candidate was preselected")
+			}
+		})
+	}
+}
+
 func TestRankCandidatesReturnsTopFiveDescending(t *testing.T) {
 	roster := make([]RosterRow, 7)
 	for i := range roster {
