@@ -25,10 +25,23 @@ CREATE TABLE IF NOT EXISTS pending_registration (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_registration_username
   ON pending_registration (lower(trim(username)));
 
--- Existing unapproved rows are not roster members. Keep their submitted
--- details and password hash in the pending table. The reserved username is
--- deliberately not accepted by the sign-in path and cannot collide with a
--- user-chosen username; PR3's approval flow resolves these placeholders.
+-- Existing unapproved rows are COPIED, never deleted.
+--
+-- Deleting them is unsafe: attendance_record.user_id is ON DELETE CASCADE, and
+-- ManualMarkAttendance (attendance.go:252) does not check `verified`, so an
+-- unapproved user can legitimately hold attendance records. Deleting would
+-- silently destroy parade history. (attendance_session.created_by is ON DELETE
+-- RESTRICT, so the alternative outcome is a hard migration failure.)
+--
+-- The Missing-list bug that motivated moving these rows is fixed independently
+-- by the explicit `verified = true` filters in reports.go, so the delete buys
+-- no correctness and only risks data loss.
+--
+-- Result: an unapproved person appears in both tables. Reports exclude them via
+-- `verified = true`, and PR3's approval flow links the pending row to the
+-- existing user row, which is exactly the fuzzy-match path it already needs.
+-- The reserved username cannot collide with a user-chosen one and is rejected
+-- by the sign-in path.
 INSERT INTO pending_registration (
     id, username, password_hash, claimed_name, claimed_rank, claimed_battery, "createdAt"
 )
@@ -41,25 +54,17 @@ SELECT
     COALESCE(battery, ''),
     "createdAt"
 FROM "user"
-WHERE verified = false;
-
-DELETE FROM "user" WHERE verified = false;
+WHERE verified = false
+ON CONFLICT (id) DO NOTHING;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
--- Restore pending rows as unverified users before removing the PR2 tables.
--- NRIC/DOB are intentionally not reconstructed; PR5 owns their removal and
--- this rollback cannot recover values that pending_registration never stored.
-INSERT INTO "user" (
-    id, "full_name", rank, battery, password, extras, "is_superadmin", verified,
-    "createdAt", "updatedAt", username, password_change_required
-)
-SELECT
-    id, claimed_name, claimed_rank, claimed_battery, password_hash, '{}'::jsonb,
-    false, false, "createdAt", "createdAt", NULL, false
-FROM pending_registration;
-
+-- Up only ever copied rows out of "user", never deleted them, so rolling back
+-- is a plain teardown. Re-inserting here would violate the "user" primary key.
+-- Self-registrations created after this migration exist only in
+-- pending_registration and are intentionally discarded on rollback; they were
+-- never roster members and hold no attendance history.
 DROP INDEX IF EXISTS idx_pending_registration_username;
 DROP TABLE IF EXISTS pending_registration;
 DROP INDEX IF EXISTS idx_user_username_normalized;

@@ -63,8 +63,8 @@ func TestGetMissingUsersExcludesUnverifiedUsers(t *testing.T) {
 		}
 	}
 	if _, err := db.Pool.Exec(ctx, `
-		INSERT INTO attendance_session (id, name, session_type, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time)
-		VALUES ($1, 'Missing regression', 'first_parade', $2, $3, 'unit_wide', '{}', 'active', $4, NOW())
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time)
+		VALUES ($1, 'Missing regression', $2, $3, 'unit_wide', '{}', 'active', $4, NOW())
 	`, sessionID, prefix+"-qr", prefix+"-secret", creatorID); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
