@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
@@ -26,7 +27,7 @@ func NewAuthHandler(db *database.DB) *AuthHandler {
 }
 
 type SignInRequest struct {
-	Identifier string `json:"identifier"` // Can be full_name or admin username
+	Identifier string `json:"identifier"` // Username, or legacy full name during rollout.
 	Password   string `json:"password"`
 }
 
@@ -48,9 +49,12 @@ type SignInResponse struct {
 }
 
 type SignUpRequest struct {
-	FullName         string `json:"fullName"`
-	NRICLast5        string `json:"nricLast5"`
-	ConfirmNRICLast5 string `json:"confirmNricLast5"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirmPassword"`
+	FullName        string `json:"fullName"`
+	Rank            string `json:"rank"`
+	Battery         string `json:"battery"`
 }
 
 // AuthResponse is kept for backward-compatibility.
@@ -71,6 +75,12 @@ type userRow struct {
 	updatedAt    time.Time
 	password     string
 }
+
+type pendingRegistrationRow struct {
+	passwordHash string
+}
+
+const passwordHashCost = 12
 
 // signInUserColumns is the SELECT list shared by the sign-in lookups so the
 // primary query and the word-subset fallback scan an identical set of columns.
@@ -114,97 +124,131 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.Identifier = strings.TrimSpace(req.Identifier)
 	if req.Identifier == "" || req.Password == "" {
 		http.Error(w, "Identifier and password are required", http.StatusBadRequest)
 		return
 	}
 
 	ctx := context.Background()
-
-	passwordForAuth, nricLast5Val, ok := prepareSignInCredential(req.Identifier, req.Password)
-	if !ok {
-		http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
+	var ur userRow
+	userErr := h.findUserByUsername(ctx, req.Identifier, &ur)
+	if userErr == nil {
+		if !comparePassword(ur.password, req.Password) {
+			writeInvalidCredentials(w, req.Identifier)
+			return
+		}
+		h.finishSignIn(w, r, ctx, req.Identifier, ur)
+		return
+	}
+	if !errors.Is(userErr, pgx.ErrNoRows) {
+		log.Printf("[SignIn] Error querying user by username: %v", userErr)
+		http.Error(w, "Failed to query user", http.StatusInternalServerError)
 		return
 	}
 
-	var ur userRow
-	err := scanUserRow(h.db.Pool.QueryRow(ctx, `
+	var pending pendingRegistrationRow
+	pendingErr := h.findPendingByUsername(ctx, req.Identifier, &pending)
+	if pendingErr == nil {
+		if !comparePassword(pending.passwordHash, req.Password) {
+			writeInvalidCredentials(w, req.Identifier)
+			return
+		}
+		writePendingApproval(w, req.Identifier)
+		return
+	}
+	if !errors.Is(pendingErr, pgx.ErrNoRows) {
+		log.Printf("[SignIn] Error querying pending registrations: %v", pendingErr)
+		http.Error(w, "Failed to query pending registration", http.StatusInternalServerError)
+		return
+	}
+
+	// Compatibility path for existing roster rows that have no username yet.
+	passwordForAuth, nricLast5Val, legacyPasswordOK := prepareSignInCredential(req.Identifier, req.Password)
+	if !legacyPasswordOK {
+		passwordForAuth = strings.ToUpper(req.Password)
+	}
+	legacyErr := scanUserRow(h.db.Pool.QueryRow(ctx, `
 		SELECT `+signInUserColumns+`
 		FROM "user" u
 		WHERE upper(u."full_name") = upper($1) AND u."nric_last5" IS NOT DISTINCT FROM $2
 	`, req.Identifier, nricLast5Val), &ur)
-
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			log.Printf("[SignIn] Error querying user table: %v", err)
+	if legacyErr != nil && errors.Is(legacyErr, pgx.ErrNoRows) && nricLast5Val != nil {
+		matches, fallbackErr := h.findUsersByNRICAndName(ctx, *nricLast5Val, req.Identifier)
+		switch {
+		case fallbackErr != nil:
+			log.Printf("[SignIn] Name fallback query failed for %q: %v", req.Identifier, fallbackErr)
+		case len(matches) > 1:
+			writeInvalidCredentials(w, req.Identifier)
+			return
+		case len(matches) == 1:
+			ur = matches[0]
+			legacyErr = nil
+		}
+	}
+	if legacyErr != nil {
+		if !errors.Is(legacyErr, pgx.ErrNoRows) {
+			log.Printf("[SignIn] Error querying legacy user: %v", legacyErr)
 			http.Error(w, "Failed to query user", http.StatusInternalServerError)
 			return
 		}
-
-		// Fallback: the exact full-name match missed. Among users with this NRIC, see
-		// if the typed words are a subset of exactly one user's name — this lets people
-		// sign in with part of their name, in any order. Skipped for the admin path
-		// (nil NRIC), and fails closed (generic error) if more than one user matches.
-		matched := false
-		if nricLast5Val != nil {
-			matches, ferr := h.findUsersByNRICAndName(ctx, *nricLast5Val, req.Identifier)
-			if ferr != nil {
-				log.Printf("[SignIn] Name fallback query failed for %q: %v", req.Identifier, ferr)
-			} else if len(matches) > 1 {
-				log.Printf("[SignIn] Ambiguous name %q for shared NRIC — returning generic error", req.Identifier)
-				http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-				return
-			} else if len(matches) == 1 {
-				ur = matches[0]
-				matched = true
-			}
-		}
-
-		if !matched {
-			if req.Identifier == "admin" {
-				log.Printf("[SignIn] Admin login failed - invalid credentials")
-				http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-				return
-			}
-
-			// Name-leak protection: if the name exists with a different NRIC, return generic error.
-			var nameExists bool
-			_ = h.db.Pool.QueryRow(ctx,
-				`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.Identifier,
-			).Scan(&nameExists)
-			if nameExists {
-				log.Printf("[SignIn] Name exists but NRIC mismatch for %q — returning generic error", req.Identifier)
-				http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-				return
-			}
-
-			log.Printf("[SignIn] Unknown name %q — returning signup_required", req.Identifier)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(SignInResponse{
-				Outcome:  SignInOutcomeSignupRequired,
-				FullName: req.Identifier,
-			})
+		var nameExists bool
+		_ = h.db.Pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.Identifier,
+		).Scan(&nameExists)
+		if nameExists || strings.EqualFold(req.Identifier, "admin") {
+			writeInvalidCredentials(w, req.Identifier)
 			return
 		}
-	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(ur.password), []byte(passwordForAuth)); err != nil {
-		log.Printf("[SignIn] Password verification failed for user: %s", req.Identifier)
-		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-		return
-	}
-
-	// Block unverified (pending) users.
-	if !ur.verified {
-		log.Printf("[SignIn] User %q is pending approval", req.Identifier)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomePendingApproval})
+		_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomeSignupRequired, FullName: req.Identifier})
 		return
 	}
 
-	log.Printf("[SignIn] User authenticated successfully: %s", req.Identifier)
+	if !comparePassword(ur.password, passwordForAuth) {
+		writeInvalidCredentials(w, req.Identifier)
+		return
+	}
+	h.finishSignIn(w, r, ctx, req.Identifier, ur)
+}
+
+func (h *AuthHandler) findUserByUsername(ctx context.Context, username string, ur *userRow) error {
+	return scanUserRow(h.db.Pool.QueryRow(ctx, `
+		SELECT `+signInUserColumns+` FROM "user" u
+		WHERE lower(trim(u.username)) = lower(trim($1))
+		  AND left(lower(trim(u.username)), length($2)) <> $2
+	`, username, migratedPendingUsernamePrefix), ur)
+}
+
+func (h *AuthHandler) findPendingByUsername(ctx context.Context, username string, pending *pendingRegistrationRow) error {
+	return h.db.Pool.QueryRow(ctx, `
+		SELECT password_hash FROM pending_registration
+		WHERE lower(trim(username)) = lower(trim($1))
+		  AND left(lower(trim(username)), length($2)) <> $2
+	`, username, migratedPendingUsernamePrefix).Scan(&pending.passwordHash)
+}
+
+func comparePassword(hash, password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
+func writeInvalidCredentials(w http.ResponseWriter, identifier string) {
+	log.Printf("[SignIn] Password verification failed for user: %s", identifier)
+	http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
+}
+
+func writePendingApproval(w http.ResponseWriter, identifier string) {
+	log.Printf("[SignIn] User %q is pending approval", identifier)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomePendingApproval})
+}
+
+func (h *AuthHandler) finishSignIn(w http.ResponseWriter, r *http.Request, ctx context.Context, identifier string, ur userRow) {
+	if !ur.verified {
+		writePendingApproval(w, identifier)
+		return
+	}
 
 	user, session, err := h.createSession(ctx, r, ur)
 	if err != nil {
@@ -212,7 +256,6 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
-
 	setSessionCookie(w, session)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(SignInResponse{
@@ -222,65 +265,77 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// SignUp handles POST /api/auth/sign-up.
-// Called after sign-in returns signup_required (name not in DB).
-// Creates account with verified=false; returns pending_approval.
+// SignUp handles POST /api/auth/sign-up. It stores a pending registration,
+// not a roster user, until the PR3 approval flow resolves it.
 func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 	var req SignUpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.FullName == "" {
-		http.Error(w, "fullName is required", http.StatusBadRequest)
+	req, err := validateSignUpRequest(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	nric, ok := normalizeNRICLast5(req.NRICLast5)
-	if !ok {
-		http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
-		return
-	}
-	confirmNric, ok := normalizeNRICLast5(req.ConfirmNRICLast5)
-	if !ok {
-		http.Error(w, nricLast5FormatMessage, http.StatusBadRequest)
-		return
-	}
-	if nric != confirmNric {
-		http.Error(w, "NRIC Last 5 values do not match", http.StatusBadRequest)
-		return
-	}
-
-	ctx := context.Background()
-
-	var nameExists bool
-	_ = h.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM "user" WHERE upper("full_name") = upper($1))`, req.FullName,
-	).Scan(&nameExists)
-	if nameExists {
-		http.Error(w, "Invalid identifier or password", http.StatusUnauthorized)
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(nric), 4)
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), passwordHashCost)
 	if err != nil {
 		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
-	userID := generateID()
-	now := time.Now()
-	_, err = h.db.Pool.Exec(ctx, `
-		INSERT INTO "user" (id, "full_name", "nric_last5", password, extras, "createdAt", "updatedAt", "is_superadmin", verified)
-		VALUES ($1, $2, $3, $4, '{}'::jsonb, $5, $6, false, false)
-	`, userID, req.FullName, nric, string(hash), now, now)
+	ctx := context.Background()
+	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
-		log.Printf("[SignUp] Failed to create user %q: %v", req.FullName, err)
 		http.Error(w, "Failed to create account", http.StatusInternalServerError)
 		return
 	}
-	log.Printf("[SignUp] Created pending account for %q", req.FullName)
+	defer func() { _ = tx.Rollback(ctx) }()
 
+	normalizedUsername := normalizeUsername(req.Username)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, normalizedUsername); err != nil {
+		http.Error(w, "Failed to create account", http.StatusInternalServerError)
+		return
+	}
+	var usernameTaken bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM "user" WHERE lower(trim(username)) = $1
+			UNION ALL
+			SELECT 1 FROM pending_registration WHERE lower(trim(username)) = $1
+		)
+	`, normalizedUsername).Scan(&usernameTaken); err != nil {
+		http.Error(w, "Failed to check username", http.StatusInternalServerError)
+		return
+	}
+	if usernameTaken {
+		http.Error(w, "Username is unavailable", http.StatusConflict)
+		return
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO pending_registration (
+			id, username, password_hash, claimed_name, claimed_rank, claimed_battery
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, generateID(), req.Username, string(hash), req.FullName, req.Rank, req.Battery)
+	if err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			http.Error(w, "Username is unavailable", http.StatusConflict)
+			return
+		}
+		log.Printf("[SignUp] Failed to create pending registration for %q: %v", req.Username, err)
+		http.Error(w, "Failed to create account", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("[SignUp] Failed to commit pending registration for %q: %v", req.Username, err)
+		http.Error(w, "Failed to create account", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[SignUp] Created pending registration for %q", req.Username)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(SignInResponse{Outcome: SignInOutcomePendingApproval})

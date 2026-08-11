@@ -49,10 +49,10 @@ type PreviewedRow struct {
 
 // PreviewResponse is the JSON body returned by POST .../preview.
 type PreviewResponse struct {
-	ImportID  string         `json:"importId"`
-	Filename  string         `json:"filename"`
+	ImportID  string           `json:"importId"`
+	Filename  string           `json:"filename"`
 	RowCounts models.RowCounts `json:"rowCounts"`
-	Rows      []PreviewedRow `json:"rows"`
+	Rows      []PreviewedRow   `json:"rows"`
 }
 
 // ImportHandler holds the dependencies for the admin document-import
@@ -322,7 +322,7 @@ func (h *ImportHandler) prepareCommitRows(ctx context.Context, rows []CommitRow)
 		default:
 			p.existingID, _ = findExistingUserID(ctx, h.db, row.FullName, row.NRICLast5)
 			if p.existingID == "" {
-				hash, err := bcrypt.GenerateFromPassword([]byte(row.NRICLast5), 4)
+				hash, err := bcrypt.GenerateFromPassword([]byte(row.NRICLast5), 12)
 				if err != nil {
 					return nil, fmt.Errorf("hashing password for %q: %w", row.FullName, err)
 				}
