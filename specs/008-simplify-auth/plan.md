@@ -125,19 +125,23 @@ The password field keeps accepting each user's existing value. The page simply s
 - Sign-in accepts username **or** (legacy) full name + existing password, so nobody is locked out mid-rollout.
 - Fix `reports.go` Missing list — pending signups are no longer in `user`, so verify the count is correct.
 
-### PR3 — Approval with fuzzy roster matching
+### PR3a — Close the sign-in enumeration oracle
+
+`POST /api/auth/sign-in` returns one byte-identical failure for an unknown identifier and a wrong password. Delete the `signup_required` outcome and client state; signup has its own page. Keep the legacy full-name + password path working until PR5.
+
+### PR3b — Matching service and candidates endpoint
 
 - `backend/internal/services/matching/` — Levenshtein, normalisation, scoring. Pure, heavily unit-tested.
 - `GET /api/admin/registrations/:id/candidates` — top 5 with scores and mismatch reasons. **Commander-only**; this endpoint returns roster names and must never be reachable unauthenticated (FR-007).
+- Approval behaviour remains unchanged in this PR; the endpoint is read-only.
+
+### PR3c — Approval linking and UI
+
 - `POST /api/admin/registrations/:id/approve` with `{ mode: "link", userId }` or `{ mode: "create" }`.
 - Link: write `username` + `password_hash` onto the existing `user` row, set `verified = true`, delete the pending row.
-- Approval UI shows candidates with scores and mismatch chips.
+- Approval UI shows candidates with scores and mismatch chips; links require an explicit commander selection.
 
-**Carried-over rows must be linked, never created (FR-028).** The PR2 migration copied unapproved `user` rows into `pending_registration` reusing the same `id`, and deliberately did not delete the `user` row (see that migration's comment — deleting cascades attendance records away). `ApproveRegistration` currently does `INSERT INTO "user" (id, ...) SELECT id ... FROM pending_registration`, so approving such a row raises a primary-key violation and returns 500.
-
-These rows are identifiable by a `__migrated_pending__` username prefix. For them, create-mode must be refused and link-mode must default to the row sharing their `id`. Production currently holds zero of them, so this is correctness work, not a live incident.
-
-**Close the sign-in enumeration oracle (FR-029).** `POST /api/auth/sign-in` returns `signup_required` for an unknown identifier and an auth error for a known one, which lets anyone test whether a named person is in the unit. Now that signup has its own page, sign-in no longer needs to branch into it: return one indistinguishable failure for both cases and delete the `signup_required` outcome and the client state that renders it. This deletes code rather than adding it.
+**Carried-over rows must be linked, never created (FR-028).** The PR2 migration copied unapproved `user` rows into `pending_registration` reusing the same `id`, and deliberately did not delete the `user` row (see that migration's comment — deleting cascades attendance records away). These rows are identifiable by a `__migrated_pending__` username prefix: create-mode is refused and link-mode defaults to the row sharing their `id`.
 
 ### PR4 — Operating at 350
 
@@ -161,7 +165,7 @@ Replaces the shared `admin` login (`sign-in.tsx:100`). Not required to clear Goo
 
 ## Test plan (TDD — tests first)
 
-### Unit — matching (PR3, the highest-value tests)
+### Unit — matching (PR3b, the highest-value tests)
 
 Plus:
 
@@ -194,13 +198,17 @@ Plus:
 - Username collision across `user` and `pending_registration`.
 - bcrypt cost is 12 on newly written hashes.
 
-### Integration (PR3/PR4)
+### Integration (PR3c/PR4)
 
 - Approve-with-link preserves attendance history: seed a user with 3 records, register a fresh signup, link, assert the same 3 records resolve to the linked account and no duplicate `user` row exists.
 - Approve-with-create inserts exactly one new row.
 - Reject frees the username for reuse.
 - Bulk approve of 20 with 2 invalid: 18 succeed, 2 reported, no rollback.
 - Temp password forces a change; the old temp password stops working after the change.
+
+### Oracle regression (PR3a)
+
+- Unknown username and known username with a wrong password return byte-identical status and body.
 
 ### Regression (PR2)
 

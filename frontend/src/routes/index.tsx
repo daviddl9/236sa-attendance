@@ -36,10 +36,6 @@ function SignInContent() {
     try {
       setLoading(true);
       const response = await signInWithLegacyFallback(identifier, password);
-      if (response.outcome === 'signup_required') {
-        window.location.href = '/sign-up';
-        return;
-      }
       if (response.outcome === 'pending_approval') {
         setLoading(false);
         toast.info('Your registration is awaiting approval');

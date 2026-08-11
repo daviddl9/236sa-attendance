@@ -32,8 +32,6 @@ function SignInContent() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Account-not-found state — shown when sign-in returns signup_required
-  const [signupRequired, setSignupRequired] = useState(false);
   const [pendingApproval, setPendingApproval] = useState(false);
 
   const { refetch } = useAuth();
@@ -102,12 +100,6 @@ function SignInContent() {
       setLoading(true);
       const data = await signInWithLegacyFallback(identifier, password);
 
-      if (data.outcome === 'signup_required') {
-        setSignupRequired(true);
-        setLoading(false);
-        return;
-      }
-
       if (data.outcome === 'pending_approval') {
         setPendingApproval(true);
         setLoading(false);
@@ -131,11 +123,7 @@ function SignInContent() {
             236 Attendance
           </CardTitle>
           <CardDescription className="text-xs md:text-sm">
-            {pendingApproval
-              ? 'Registration submitted'
-              : signupRequired
-              ? 'No account found'
-              : 'Sign in to your account'}
+            {pendingApproval ? 'Registration submitted' : 'Sign in to your account'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -154,12 +142,12 @@ function SignInContent() {
                 type="button"
                 variant="outline"
                 className="w-full"
-                onClick={() => { setPendingApproval(false); setSignupRequired(false); }}
+                onClick={() => setPendingApproval(false)}
               >
                 Back to sign in
               </Button>
             </div>
-          ) : !signupRequired ? (
+          ) : (
             <form onSubmit={handleSignIn} className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="identifier">Username</Label>
@@ -206,28 +194,6 @@ function SignInContent() {
                 </Link>
               </p>
             </form>
-          ) : (
-            <div className="grid gap-4">
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/20">
-                <p className="text-sm text-amber-800 dark:text-amber-300">
-                  No account found. Contact your commander to be added.
-                </p>
-              </div>
-              <Link
-                to="/sign-up"
-                className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-              >
-                Create an account
-              </Link>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => setSignupRequired(false)}
-              >
-                Back to sign in
-              </Button>
-            </div>
           )}
         </CardContent>
       </Card>
