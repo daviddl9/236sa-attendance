@@ -1,5 +1,6 @@
 import { createFileRoute, Navigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Fragment, useState } from 'react';
 import { apiClient, type PendingRegistration } from '../../../../lib/api-client';
 import DashboardLayout from '../../../../components/dashboard/layout';
 import { Button } from '../../../../components/ui/button';
@@ -40,6 +41,8 @@ function RegistrationsPage() {
 
 function RegistrationsContent() {
   const queryClient = useQueryClient();
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState('');
 
   const { data, isLoading } = useQuery({
     queryKey: ['pending-registrations'],
@@ -47,10 +50,27 @@ function RegistrationsContent() {
     refetchInterval: 30_000,
   });
 
+  const { data: candidateData, isLoading: candidatesLoading } = useQuery({
+    queryKey: ['registration-candidates', reviewId],
+    queryFn: () => apiClient.listRegistrationCandidates(reviewId!),
+    enabled: reviewId !== null,
+  });
+
+  const suggestedUserId = candidateData?.candidates.find((candidate) => candidate.preselected && candidate.selectable)?.id ?? '';
+  const activeUserId = selectedUserId || suggestedUserId;
+
   const approveMutation = useMutation({
-    mutationFn: (id: string) => apiClient.approveRegistration(id),
-    onSuccess: (_, id) => {
+    mutationFn: (input: { id: string; mode: 'link' | 'create'; userId?: string }) => {
+      if (input.mode === 'link') {
+        if (!input.userId) throw new Error('Select a roster candidate');
+        return apiClient.approveRegistration(input.id, { mode: 'link', userId: input.userId });
+      }
+      return apiClient.approveRegistration(input.id, { mode: 'create' });
+    },
+    onSuccess: (_, { id }) => {
       toast.success('Registration approved');
+      setReviewId(null);
+      setSelectedUserId('');
       queryClient.setQueryData(['pending-registrations'], (old: { registrations: PendingRegistration[]; total: number } | undefined) => {
         if (!old) return old;
         const registrations = old.registrations.filter((r) => r.id !== id);
@@ -120,38 +140,80 @@ function RegistrationsContent() {
                 </TableHeader>
                 <TableBody>
                   {registrations.map((reg) => (
-                    <TableRow key={reg.id}>
-                      <TableCell className="font-medium">{reg.fullName ?? '—'}</TableCell>
-                      <TableCell>{reg.rank ?? '—'}</TableCell>
-                      <TableCell>{reg.battery ?? '—'}</TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {new Date(reg.createdAt).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-green-600 border-green-200 hover:bg-green-50 hover:border-green-300"
-                            onClick={() => approveMutation.mutate(reg.id)}
-                            disabled={approveMutation.isPending || rejectMutation.isPending}
-                          >
-                            <Check className="h-4 w-4 mr-1" />
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="text-destructive border-destructive/30 hover:bg-destructive/5"
-                            onClick={() => rejectMutation.mutate(reg.id)}
-                            disabled={approveMutation.isPending || rejectMutation.isPending}
-                          >
-                            <X className="h-4 w-4 mr-1" />
-                            Reject
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                    <Fragment key={reg.id}>
+                      <TableRow>
+                        <TableCell className="font-medium">{reg.fullName ?? '—'}</TableCell>
+                        <TableCell>{reg.rank ?? '—'}</TableCell>
+                        <TableCell>{reg.battery ?? '—'}</TableCell>
+                        <TableCell className="text-muted-foreground text-sm">
+                          {new Date(reg.createdAt).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => { setReviewId(reg.id); setSelectedUserId(''); }}
+                              disabled={approveMutation.isPending || rejectMutation.isPending}
+                            >
+                              <Check className="h-4 w-4 mr-1" />
+                              Review
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-destructive border-destructive/30 hover:bg-destructive/5"
+                              onClick={() => rejectMutation.mutate(reg.id)}
+                              disabled={approveMutation.isPending || rejectMutation.isPending}
+                            >
+                              <X className="h-4 w-4 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                      {reviewId === reg.id && (
+                        <TableRow>
+                          <TableCell colSpan={5}>
+                            <div className="grid gap-3 rounded-md bg-muted/40 p-4">
+                              <p className="font-medium">Roster candidates</p>
+                              {candidatesLoading ? <p className="text-sm text-muted-foreground">Finding matches...</p> : (
+                                <div className="grid gap-2">
+                                  {(candidateData?.candidates ?? []).map((candidate) => (
+                                    <button
+                                      key={candidate.id}
+                                      type="button"
+                                      disabled={!candidate.selectable}
+                                      onClick={() => setSelectedUserId(candidate.id)}
+                                      className={`rounded-md border p-3 text-left ${activeUserId === candidate.id ? 'border-primary bg-primary/5' : ''} ${!candidate.selectable ? 'cursor-not-allowed opacity-60' : ''}`}
+                                    >
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-medium">{candidate.fullName}</span>
+                                        <Badge>Score {candidate.score}</Badge>
+                                      </div>
+                                      <p className="text-sm text-muted-foreground">{candidate.rank} · {candidate.battery}</p>
+                                      <div className="mt-1 flex flex-wrap gap-1">
+                                        {candidate.mismatchReasons.map((reason) => <Badge key={reason} variant="outline">{reason}</Badge>)}
+                                        {candidate.preselected && <Badge variant="secondary">Suggested</Badge>}
+                                        {candidate.alreadyClaimed && <Badge variant="destructive">Already claimed{candidate.claimedBy ? ` by @${candidate.claimedBy}` : ''}</Badge>}
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="flex justify-end gap-2">
+                                <Button variant="outline" onClick={() => approveMutation.mutate({ id: reg.id, mode: 'create' })} disabled={approveMutation.isPending || candidatesLoading}>
+                                  Create new roster row
+                                </Button>
+                                <Button onClick={() => approveMutation.mutate({ id: reg.id, mode: 'link', userId: activeUserId })} disabled={!activeUserId || approveMutation.isPending}>
+                                  Link selected row
+                                </Button>
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
                   ))}
                 </TableBody>
               </Table>
