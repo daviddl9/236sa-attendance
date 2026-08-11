@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TermsRouteImport } from './routes/terms'
+import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as IndexRouteImport } from './routes/index'
@@ -34,6 +35,11 @@ import { Route as DashboardReportsSessionsSessionIdRouteImport } from './routes/
 const TermsRoute = TermsRouteImport.update({
   id: '/terms',
   path: '/terms',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SignUpRoute = SignUpRouteImport.update({
+  id: '/sign-up',
+  path: '/sign-up',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
   '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
@@ -170,6 +177,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
   '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
@@ -194,6 +202,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/privacy': typeof PrivacyRoute
   '/sign-in': typeof SignInRoute
+  '/sign-up': typeof SignUpRoute
   '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
@@ -219,6 +228,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy'
     | '/sign-in'
+    | '/sign-up'
     | '/terms'
     | '/attendance/marked'
     | '/dashboard/settings'
@@ -242,6 +252,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy'
     | '/sign-in'
+    | '/sign-up'
     | '/terms'
     | '/attendance/marked'
     | '/dashboard/settings'
@@ -265,6 +276,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy'
     | '/sign-in'
+    | '/sign-up'
     | '/terms'
     | '/attendance/marked'
     | '/dashboard/settings'
@@ -289,6 +301,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PrivacyRoute: typeof PrivacyRoute
   SignInRoute: typeof SignInRoute
+  SignUpRoute: typeof SignUpRoute
   TermsRoute: typeof TermsRoute
   AttendanceMarkedRoute: typeof AttendanceMarkedRoute
   DashboardSettingsRoute: typeof DashboardSettingsRoute
@@ -316,6 +329,13 @@ declare module '@tanstack/react-router' {
       path: '/terms'
       fullPath: '/terms'
       preLoaderRoute: typeof TermsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sign-up': {
+      id: '/sign-up'
+      path: '/sign-up'
+      fullPath: '/sign-up'
+      preLoaderRoute: typeof SignUpRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -465,6 +485,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PrivacyRoute: PrivacyRoute,
   SignInRoute: SignInRoute,
+  SignUpRoute: SignUpRoute,
   TermsRoute: TermsRoute,
   AttendanceMarkedRoute: AttendanceMarkedRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,

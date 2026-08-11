@@ -52,9 +52,12 @@ export interface SignInRequest {
 }
 
 export interface SignUpRequest {
+  username: string;
+  password: string;
+  confirmPassword: string;
   fullName: string;
-  nricLast5: string;
-  confirmNricLast5: string;
+  rank: string;
+  battery: string;
 }
 
 export interface RegisterUserRequest {
@@ -156,10 +159,10 @@ export interface BulkDeleteResponse {
 // Pending registration (admin approval)
 export interface PendingRegistration {
   id: string;
-  fullName?: string | null;
-  rank?: string | null;
-  battery?: string | null;
-  nricLast5?: string | null;
+  username: string;
+  fullName: string;
+  rank: string;
+  battery: string;
   createdAt: string;
 }
 
