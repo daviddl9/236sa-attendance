@@ -30,7 +30,14 @@ export const Route = createFileRoute('/dashboard/admin/registrations/')({
 });
 
 function RegistrationsPage() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
+
+  // user is null while the session is still loading, so redirecting on that
+  // alone bounces a genuine commander who opened this page directly or
+  // refreshed it. Wait for the session to resolve before deciding.
+  if (isLoading) {
+    return null;
+  }
 
   if (!isSuperadmin(user)) {
     return <Navigate to="/dashboard" />;
