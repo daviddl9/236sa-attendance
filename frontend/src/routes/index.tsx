@@ -12,7 +12,7 @@ import {
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
-import { apiClient } from '../lib/api-client';
+import { APIError, apiClient } from '../lib/api-client';
 import { normalizeLegacyPassword } from '../lib/legacy-password';
 import { PublicFooter } from '../components/public-footer';
 import { Eye, EyeOff } from 'lucide-react';
@@ -20,6 +20,21 @@ import { Eye, EyeOff } from 'lucide-react';
 export const Route = createFileRoute('/')({
   component: IndexComponent,
 });
+
+async function signInWithLegacyFallback(identifier: string, password: string) {
+  try {
+    return await apiClient.signIn({ identifier, password });
+  } catch (error) {
+    const isLegacyIdentifier = identifier.trim().includes(' ');
+    if (!(error instanceof APIError) || error.status !== 401 || !isLegacyIdentifier) {
+      throw error;
+    }
+    return apiClient.signIn({
+      identifier,
+      password: normalizeLegacyPassword(password),
+    });
+  }
+}
 
 function SignInContent() {
   const [loading, setLoading] = useState(false);
@@ -34,14 +49,18 @@ function SignInContent() {
       toast.error('Please enter your identifier and password');
       return;
     }
-    const isAdmin = identifier.toLowerCase() === 'admin';
-
     try {
       setLoading(true);
-      await apiClient.signIn({
-        identifier,
-        password: isAdmin ? password : normalizeLegacyPassword(password),
-      });
+      const response = await signInWithLegacyFallback(identifier, password);
+      if (response.outcome === 'signup_required') {
+        window.location.href = '/sign-up';
+        return;
+      }
+      if (response.outcome === 'pending_approval') {
+        setLoading(false);
+        toast.info('Your registration is awaiting approval');
+        return;
+      }
       await refetch(); // Refresh auth context to get updated user data
       toast.success('Signed in successfully');
       window.location.href = '/dashboard/attendance/scan';
@@ -67,12 +86,12 @@ function SignInContent() {
           <form onSubmit={handleSignIn} className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="identifier">
-                Full Name
+                Username
               </Label>
               <Input
                 id="identifier"
                 type="text"
-                placeholder="Enter your full name"
+                placeholder="Enter your username"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 disabled={loading}
@@ -109,6 +128,12 @@ function SignInContent() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign In'}
             </Button>
+            <p className="text-center text-sm text-muted-foreground">
+              Need an account?{' '}
+              <a href="/sign-up" className="underline hover:text-foreground">
+                Sign up
+              </a>
+            </p>
           </form>
         </CardContent>
       </Card>

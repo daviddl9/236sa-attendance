@@ -1,4 +1,4 @@
-import { createFileRoute, Navigate, useSearch } from '@tanstack/react-router';
+import { createFileRoute, Link, Navigate, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Button } from '../components/ui/button';
 import {
@@ -12,7 +12,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
-import { apiClient } from '../lib/api-client';
+import { APIError, apiClient } from '../lib/api-client';
 import { normalizeLegacyPassword } from '../lib/legacy-password';
 import { PublicFooter } from '../components/public-footer';
 import { Eye, EyeOff, Clock } from 'lucide-react';
@@ -26,6 +26,21 @@ export const Route = createFileRoute('/sign-in')({
     };
   },
 });
+
+async function signInWithLegacyFallback(identifier: string, password: string) {
+  try {
+    return await apiClient.signIn({ identifier, password });
+  } catch (error) {
+    const isLegacyIdentifier = identifier.trim().includes(' ');
+    if (!(error instanceof APIError) || error.status !== 401 || !isLegacyIdentifier) {
+      throw error;
+    }
+    return apiClient.signIn({
+      identifier,
+      password: normalizeLegacyPassword(password),
+    });
+  }
+}
 
 function SignInContent() {
   const [loading, setLoading] = useState(false);
@@ -99,14 +114,9 @@ function SignInContent() {
       return;
     }
 
-    const isAdmin = identifier.toLowerCase() === 'admin';
-
     try {
       setLoading(true);
-      const data = await apiClient.signIn({
-        identifier,
-        password: isAdmin ? password : normalizeLegacyPassword(password),
-      });
+      const data = await signInWithLegacyFallback(identifier, password);
 
       if (data.outcome === 'signup_required') {
         setSignupRequired(true);
@@ -168,11 +178,11 @@ function SignInContent() {
           ) : !signupRequired ? (
             <form onSubmit={handleSignIn} className="grid gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="identifier">Full Name</Label>
+                <Label htmlFor="identifier">Username</Label>
                 <Input
                   id="identifier"
                   type="text"
-                  placeholder="Enter your full name"
+                  placeholder="Enter your username"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value.toUpperCase())}
                   disabled={loading}
@@ -187,7 +197,7 @@ function SignInContent() {
                     type={showPassword ? 'text' : 'password'}
                     placeholder="Enter your password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value.toUpperCase())}
+                    onChange={(e) => setPassword(e.target.value)}
                     disabled={loading}
                     required
                     className="pr-10"
@@ -205,6 +215,12 @@ function SignInContent() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? 'Signing in...' : 'Sign In'}
               </Button>
+              <p className="text-center text-sm text-muted-foreground">
+                Need an account?{' '}
+                <Link to="/sign-up" className="underline hover:text-foreground">
+                  Sign up
+                </Link>
+              </p>
             </form>
           ) : (
             <div className="grid gap-4">
@@ -213,6 +229,12 @@ function SignInContent() {
                   No account found. Contact your commander to be added.
                 </p>
               </div>
+              <Link
+                to="/sign-up"
+                className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                Create an account
+              </Link>
               <Button
                 type="button"
                 variant="outline"
