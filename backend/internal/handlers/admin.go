@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/xuri/excelize/v2"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -649,11 +651,35 @@ func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.R
 	})
 }
 
-// ApproveRegistration moves a pending registration onto the roster. PR3 will
-// replace this direct-create path with commander-selected roster matching.
+type approveRegistrationRequest struct {
+	Mode   string `json:"mode"`
+	UserID string `json:"userId"`
+}
+
+type pendingApproval struct {
+	ID, Username, PasswordHash, Name, Rank, Battery string
+}
+
+// ApproveRegistration links a pending signup to an explicit roster row or
+// creates a new row. No fuzzy match is ever applied by this endpoint.
 func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	userID := chi.URLParam(r, "id")
+	var req approveRegistrationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	req.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
+	if req.Mode != "link" && req.Mode != "create" {
+		http.Error(w, "Mode must be link or create", http.StatusBadRequest)
+		return
+	}
+	if req.Mode == "create" && strings.TrimSpace(req.UserID) != "" {
+		http.Error(w, "userId is only valid for link mode", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	registrationID := chi.URLParam(r, "id")
 	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
 		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
@@ -661,26 +687,48 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	result, err := tx.Exec(ctx, `
-		INSERT INTO "user" (
-			id, username, "full_name", rank, battery, password, extras,
-			"is_superadmin", verified, password_change_required, "createdAt", "updatedAt"
-		)
-		SELECT id, username, claimed_name, claimed_rank, claimed_battery, password_hash,
-			'{}'::jsonb, false, true, false, "createdAt", NOW()
-		FROM pending_registration
-		WHERE id = $1
-	`, userID)
+	var pending pendingApproval
+	err = tx.QueryRow(ctx, `
+		SELECT id, username, password_hash, claimed_name, claimed_rank, claimed_battery
+		FROM pending_registration WHERE id = $1 FOR UPDATE
+	`, registrationID).Scan(&pending.ID, &pending.Username, &pending.PasswordHash, &pending.Name, &pending.Rank, &pending.Battery)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Registration not found or already approved", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
 		return
 	}
-	if result.RowsAffected() == 0 {
-		http.Error(w, "Registration not found or already approved", http.StatusNotFound)
+
+	if isMigratedPending(pending.Username) {
+		if req.Mode == "create" {
+			http.Error(w, "Carried-over registrations must be linked", http.StatusBadRequest)
+			return
+		}
+		if req.UserID == "" {
+			req.UserID = pending.ID
+		}
+		if req.UserID != pending.ID {
+			http.Error(w, "Carried-over registration can only link to its existing row", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Mode == "link" {
+		if req.UserID == "" {
+			http.Error(w, "userId is required for link mode", http.StatusBadRequest)
+			return
+		}
+		if err := linkPendingRegistration(ctx, tx, pending, req.UserID); err != nil {
+			writeApprovalDBError(w, err)
+			return
+		}
+	} else if err := createApprovedRegistration(ctx, tx, pending); err != nil {
+		writeApprovalDBError(w, err)
 		return
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM pending_registration WHERE id = $1`, userID); err != nil {
-		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
+	if _, err := tx.Exec(ctx, `DELETE FROM pending_registration WHERE id = $1`, pending.ID); err != nil {
+		writeApprovalDBError(w, err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -688,8 +736,57 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	message := "Registration approved"
+	if req.Mode == "link" {
+		message = "Registration linked"
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Registration approved"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+}
+
+func linkPendingRegistration(ctx context.Context, tx pgx.Tx, pending pendingApproval, userID string) error {
+	var username *string
+	var superadmin bool
+	if err := tx.QueryRow(ctx, `SELECT username, "is_superadmin" FROM "user" WHERE id = $1 FOR UPDATE`, userID).Scan(&username, &superadmin); err != nil {
+		return err
+	}
+	if superadmin {
+		return fmt.Errorf("roster row is not linkable")
+	}
+	if username != nil && strings.TrimSpace(*username) != "" {
+		return fmt.Errorf("roster row is already claimed")
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE "user" SET username = $1, password = $2, verified = true, "updatedAt" = NOW()
+		WHERE id = $3
+	`, pending.Username, pending.PasswordHash, userID)
+	return err
+}
+
+func createApprovedRegistration(ctx context.Context, tx pgx.Tx, pending pendingApproval) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO "user" (
+			id, username, "full_name", rank, battery, password, extras,
+			"is_superadmin", verified, password_change_required, "createdAt", "updatedAt"
+		) VALUES ($1,$2,$3,$4,$5,$6,'{}'::jsonb,false,true,false,NOW(),NOW())
+	`, pending.ID, pending.Username, pending.Name, pending.Rank, pending.Battery, pending.PasswordHash)
+	return err
+}
+
+func writeApprovalDBError(w http.ResponseWriter, err error) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "Roster row not found", http.StatusNotFound)
+		return
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+		http.Error(w, "Roster row or username is already claimed", http.StatusConflict)
+		return
+	}
+	http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
+}
+
+func isMigratedPending(username string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(username)), migratedPendingUsernamePrefix)
 }
 
 // RejectRegistration deletes the pending registration and frees its username.

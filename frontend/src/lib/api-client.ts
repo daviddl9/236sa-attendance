@@ -165,6 +165,23 @@ export interface PendingRegistrationsResponse {
   total: number;
 }
 
+export interface RegistrationCandidate {
+  id: string;
+  fullName: string;
+  rank: string;
+  battery: string;
+  score: number;
+  mismatchReasons: string[];
+  alreadyClaimed: boolean;
+  claimedBy?: string;
+  selectable: boolean;
+  preselected: boolean;
+}
+
+export interface RegistrationCandidatesResponse {
+  candidates: RegistrationCandidate[];
+}
+
 // Custom participant session (Feature 004)
 export interface ParticipantMatch {
   userId: string;
@@ -820,9 +837,17 @@ export class APIClient {
     return this.request<PendingRegistrationsResponse>('/api/admin/registrations');
   }
 
-  async approveRegistration(id: string): Promise<{ message: string }> {
+  async listRegistrationCandidates(id: string): Promise<RegistrationCandidatesResponse> {
+    return this.request<RegistrationCandidatesResponse>(`/api/admin/registrations/${id}/candidates`);
+  }
+
+  async approveRegistration(
+    id: string,
+    data: { mode: 'link'; userId: string } | { mode: 'create' }
+  ): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/admin/registrations/${id}/approve`, {
       method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 
