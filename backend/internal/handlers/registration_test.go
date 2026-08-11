@@ -40,6 +40,31 @@ func TestApproveRegistrationLinkPreservesAttendance(t *testing.T) {
 	if userCount != 1 || recordCount != 3 {
 		t.Fatalf("linked user/history = (%d, %d), want (1, 3)", userCount, recordCount)
 	}
+
+	// Preserving history is not enough: the soldier must also be able to sign in
+	// afterwards. Without these assertions an implementation that only deleted the
+	// pending row would still satisfy the counts above.
+	var linkedUsername string
+	var linkedHash string
+	var linkedVerified bool
+	if err := db.Pool.QueryRow(ctx, `SELECT username, password, verified FROM "user" WHERE id = $1`, rosterID).
+		Scan(&linkedUsername, &linkedHash, &linkedVerified); err != nil {
+		t.Fatal(err)
+	}
+	if linkedUsername != "tanwm" || !linkedVerified {
+		t.Fatalf("linked row = (username %q, verified %v), want (\"tanwm\", true)", linkedUsername, linkedVerified)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(linkedHash), []byte(pendingPassword)); err != nil {
+		t.Fatalf("linked row password does not verify against the signup password: %v", err)
+	}
+
+	var remainingPending int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM pending_registration WHERE id = $1`, pendingID).Scan(&remainingPending); err != nil {
+		t.Fatal(err)
+	}
+	if remainingPending != 0 {
+		t.Fatalf("pending rows after link = %d, want 0", remainingPending)
+	}
 }
 
 func TestApproveRegistrationCreateInsertsOneUser(t *testing.T) {
@@ -120,9 +145,14 @@ func seedUser(t *testing.T, db *database.DB, id, name, rank, battery, username s
 	}
 }
 
+// pendingPassword is the plaintext behind every seeded pending registration, so
+// tests can assert a linked row's hash still verifies against what the soldier
+// actually typed at signup.
+const pendingPassword = "password"
+
 func seedPending(t *testing.T, db *database.DB, id, username, name, rank, battery string) {
 	t.Helper()
-	hash, _ := bcrypt.GenerateFromPassword([]byte("password"), bcrypt.MinCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte(pendingPassword), bcrypt.MinCost)
 	_, err := db.Pool.Exec(context.Background(), `
 		INSERT INTO pending_registration (id, username, password_hash, claimed_name, claimed_rank, claimed_battery)
 		VALUES ($1,$2,$3,$4,$5,$6)
