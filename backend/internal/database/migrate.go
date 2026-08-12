@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -8,6 +9,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
 )
 
 // RunMigrations runs database migrations using Goose
@@ -49,6 +52,10 @@ func RunMigrations(databaseURL, migrationsDir string) error {
 	if err := goose.Up(db, absPath); err != nil {
 		log.Printf("Migration error: %v", err)
 		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	if err := deeplink.BackfillActiveSessionCodes(context.Background(), db); err != nil {
+		return fmt.Errorf("deeplink backfill failed: %w", err)
 	}
 
 	log.Println("Database migrations completed successfully")

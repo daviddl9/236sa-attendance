@@ -9,6 +9,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
 )
 
 func main() {
@@ -53,5 +55,9 @@ func main() {
 	ctx := context.Background()
 	if err := goose.RunContext(ctx, command, db, dir, args[2:]...); err != nil {
 		log.Fatalf("Migration failed: %v", err)
+	}
+
+	if err := deeplink.BackfillActiveSessionCodes(ctx, db); err != nil {
+		log.Fatalf("Deep-link backfill failed: %v", err)
 	}
 }

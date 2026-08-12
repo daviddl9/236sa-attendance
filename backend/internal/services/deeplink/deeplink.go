@@ -2,8 +2,11 @@
 package deeplink
 
 import (
+	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
+	"fmt"
 )
 
 const codeBytes = 16
@@ -15,4 +18,83 @@ func GenerateCode() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+// BackfillActiveSessionCodes assigns codes only to active sessions that do not
+// have one yet. It is safe to run after every migration pass.
+func BackfillActiveSessionCodes(ctx context.Context, db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("database is nil")
+	}
+	columnExists, err := deeplinkColumnExists(ctx, db)
+	if err != nil {
+		return fmt.Errorf("check deeplink column: %w", err)
+	}
+	if !columnExists {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin deeplink backfill: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id
+		FROM attendance_session
+		WHERE status = 'active' AND deeplink_code IS NULL
+		FOR UPDATE
+	`)
+	if err != nil {
+		return fmt.Errorf("find active sessions without deeplink codes: %w", err)
+	}
+	var sessionIDs []string
+	for rows.Next() {
+		var sessionID string
+		if err := rows.Scan(&sessionID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read active session for deeplink backfill: %w", err)
+		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate active sessions for deeplink backfill: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close active sessions for deeplink backfill: %w", err)
+	}
+
+	for _, sessionID := range sessionIDs {
+		code, err := GenerateCode()
+		if err != nil {
+			return fmt.Errorf("generate deeplink code: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE attendance_session
+			SET deeplink_code = $1
+			WHERE id = $2 AND status = 'active' AND deeplink_code IS NULL
+		`, code, sessionID); err != nil {
+			return fmt.Errorf("write deeplink code for session %s: %w", sessionID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit deeplink backfill: %w", err)
+	}
+	return nil
+}
+
+func deeplinkColumnExists(ctx context.Context, db *sql.DB) (bool, error) {
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+			  AND table_name = 'attendance_session'
+			  AND column_name = 'deeplink_code'
+		)
+	`).Scan(&exists)
+	return exists, err
 }
