@@ -51,7 +51,7 @@ func TestTelegramWebhookAuthenticity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			handler, sink := newTelegramTestHandler(false)
-			req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(`{}`))
+			req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(`{"message":{"from":{"id":99},"chat":{"id":99,"type":"private"},"text":"hello"}}`))
 			if tc.header != "" {
 				req.Header.Set(telegramSecretHeader, tc.header)
 			}
@@ -64,7 +64,11 @@ func TestTelegramWebhookAuthenticity(t *testing.T) {
 			} else if rec.Code == http.StatusOK {
 				t.Fatalf("status = 200 for rejected request")
 			}
-			if len(sink.actions) != 0 {
+			if tc.wantOK {
+				if len(sink.actions) != 1 {
+					t.Fatalf("accepted request queued %d actions, want 1", len(sink.actions))
+				}
+			} else if len(sink.actions) != 0 {
 				t.Fatalf("rejected request queued actions: %#v", sink.actions)
 			}
 		})

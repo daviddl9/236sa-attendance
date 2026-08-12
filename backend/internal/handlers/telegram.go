@@ -74,7 +74,7 @@ func (h *TelegramHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TelegramHandler) authenticated(r *http.Request) bool {
-	if h.secret == "" {
+	if len(h.secret) == 0 {
 		return false
 	}
 	provided := r.Header.Get(telegramSecretHeader)
