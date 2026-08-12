@@ -331,8 +331,8 @@ func waitForAdvisoryContention(db *database.DB, telegramID int64, targetID strin
 }
 
 func TestTelegramPairingActionsRequireUnitCommander(t *testing.T) {
-	db, _, telegramID := openTelegramPairingDB(t)
-	h := NewAdminHandler(db)
+	const telegramID int64 = 970000000999
+	h := NewAdminHandler(nil)
 	actors := []struct {
 		name   string
 		actor  *models.User
