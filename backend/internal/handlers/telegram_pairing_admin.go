@@ -35,6 +35,7 @@ type TelegramPairingAttemptRecord struct {
 type TelegramPairingRequestRecord struct {
 	TelegramID  int64                   `json:"telegramId"`
 	DisplayName string                  `json:"displayName"`
+	AttemptID   string                  `json:"attemptId"`
 	CreatedAt   string                  `json:"createdAt"`
 	Candidates  []RegistrationCandidate `json:"candidates"`
 }
@@ -79,10 +80,13 @@ func (h *AdminHandler) ListTelegramPairings(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var record TelegramPairingRecord
 		var createdAt time.Time
-		if err := rows.Scan(&record.TelegramID, &record.UserID, &record.FullName, &record.SelfConfirmed, &record.ConfirmedBy, &createdAt); err == nil {
-			record.CreatedAt = createdAt.Format(time.RFC3339)
-			pairings = append(pairings, record)
+		if err := rows.Scan(&record.TelegramID, &record.UserID, &record.FullName, &record.SelfConfirmed, &record.ConfirmedBy, &createdAt); err != nil {
+			rows.Close()
+			http.Error(w, "Failed to read Telegram pairings", http.StatusInternalServerError)
+			return
 		}
+		record.CreatedAt = createdAt.Format(time.RFC3339)
+		pairings = append(pairings, record)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -104,10 +108,13 @@ func (h *AdminHandler) ListTelegramPairings(w http.ResponseWriter, r *http.Reque
 	for rows.Next() {
 		var record TelegramPairingAttemptRecord
 		var createdAt time.Time
-		if err := rows.Scan(&record.TelegramID, &record.Outcome, &record.UserID, &record.FullName, &createdAt); err == nil {
-			record.CreatedAt = createdAt.Format(time.RFC3339)
-			attempts = append(attempts, record)
+		if err := rows.Scan(&record.TelegramID, &record.Outcome, &record.UserID, &record.FullName, &createdAt); err != nil {
+			rows.Close()
+			http.Error(w, "Failed to read Telegram pairing attempts", http.StatusInternalServerError)
+			return
 		}
+		record.CreatedAt = createdAt.Format(time.RFC3339)
+		attempts = append(attempts, record)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -158,7 +165,10 @@ func (h *AdminHandler) listTelegramPairingRequests(ctx context.Context) ([]Teleg
 	}
 	heldRows.Close()
 
-	rows, err := h.db.Pool.Query(ctx, `SELECT telegram_id, display_name, "createdAt" FROM telegram_pairing_request ORDER BY "createdAt" DESC`)
+	rows, err := h.db.Pool.Query(ctx, `
+		SELECT telegram_id, display_name, COALESCE(attempt_id, ''), "createdAt"
+		FROM telegram_pairing_request ORDER BY "createdAt" DESC
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +177,7 @@ func (h *AdminHandler) listTelegramPairingRequests(ctx context.Context) ([]Teleg
 	for rows.Next() {
 		var request TelegramPairingRequestRecord
 		var createdAt time.Time
-		if err := rows.Scan(&request.TelegramID, &request.DisplayName, &createdAt); err != nil {
+		if err := rows.Scan(&request.TelegramID, &request.DisplayName, &request.AttemptID, &createdAt); err != nil {
 			return nil, err
 		}
 		request.CreatedAt = createdAt.Format(time.RFC3339)
@@ -247,16 +257,25 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Telegram account or roster row is already paired", http.StatusConflict)
 		return
 	}
-	_, err = tx.Exec(ctx, `
-		WITH latest AS (
-			SELECT id FROM telegram_pairing_attempt WHERE telegram_id = $1 AND outcome = 'no_match'
-			ORDER BY "createdAt" DESC LIMIT 1
-		)
+	var attemptID string
+	if err := tx.QueryRow(ctx, `SELECT attempt_id FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&attemptID); err != nil {
+		http.Error(w, "Failed to fetch pairing attempt", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(attemptID) == "" {
+		http.Error(w, "Pairing attempt not found", http.StatusNotFound)
+		return
+	}
+	result, err = tx.Exec(ctx, `
 		UPDATE telegram_pairing_attempt SET outcome = 'confirmed', user_id = $2
-		WHERE id IN (SELECT id FROM latest)
-	`, telegramID, req.UserID)
+		WHERE id = $1 AND telegram_id = $3 AND outcome = 'no_match'
+	`, attemptID, req.UserID, telegramID)
 	if err != nil {
 		http.Error(w, "Failed to record pairing", http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected() != 1 {
+		http.Error(w, "Pairing attempt not found", http.StatusNotFound)
 		return
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID); err != nil {
@@ -282,13 +301,44 @@ func (h *AdminHandler) UnpairTelegramAccount(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Invalid Telegram account", http.StatusBadRequest)
 		return
 	}
-	result, err := h.db.Pool.Exec(r.Context(), `DELETE FROM telegram_pairing WHERE telegram_id = $1`, telegramID)
+	tx, err := h.db.Pool.Begin(r.Context())
+	if err != nil {
+		http.Error(w, "Failed to unpair Telegram account", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var userID string
+	if err := tx.QueryRow(r.Context(), `SELECT user_id FROM telegram_pairing WHERE telegram_id = $1 FOR UPDATE`, telegramID).Scan(&userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Pairing not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to fetch Telegram pairing", http.StatusInternalServerError)
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, userID); err != nil {
+		http.Error(w, "Failed to lock Telegram pairing", http.StatusInternalServerError)
+		return
+	}
+	result, err := tx.Exec(r.Context(), `DELETE FROM telegram_pairing WHERE telegram_id = $1`, telegramID)
 	if err != nil {
 		http.Error(w, "Failed to unpair Telegram account", http.StatusInternalServerError)
 		return
 	}
 	if result.RowsAffected() == 0 {
 		http.Error(w, "Pairing not found", http.StatusNotFound)
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `
+		UPDATE telegram_pairing_attempt
+		SET user_id = NULL
+		WHERE user_id = $1 AND outcome = 'proposed'
+	`, userID); err != nil {
+		http.Error(w, "Failed to invalidate Telegram proposals", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		http.Error(w, "Failed to unpair Telegram account", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

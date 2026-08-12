@@ -222,6 +222,7 @@ export interface TelegramPairingAttemptRecord {
 export interface TelegramPairingRequestRecord {
   telegramId: number;
   displayName: string;
+  attemptId: string;
   createdAt: string;
   candidates: RegistrationCandidate[];
 }

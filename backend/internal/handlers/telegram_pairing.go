@@ -14,6 +14,7 @@ import (
 const (
 	pairingProposalLimit  = 5
 	pairingProposalWindow = 10 * time.Minute
+	pairingProposalExpiry = 5 * time.Minute
 )
 
 // ProposePairing ranks a soldier's name, records exactly one attempt, and
@@ -61,10 +62,11 @@ func (s *TelegramPairingStore) ProposePairing(ctx context.Context, telegramID in
 	}
 	candidates := matching.RankCandidates(matching.Registration{Name: name}, roster)
 	if !matching.Unambiguous(candidates) {
-		if err := insertPairingAttempt(ctx, tx, generateID(), telegramID, "no_match", nil); err != nil {
+		attemptID := generateID()
+		if err := insertPairingAttempt(ctx, tx, attemptID, telegramID, "no_match", nil); err != nil {
 			return telegram.PairingProposal{}, err
 		}
-		if err := upsertPairingRequest(ctx, tx, telegramID, name); err != nil {
+		if err := upsertPairingRequest(ctx, tx, telegramID, name, attemptID); err != nil {
 			return telegram.PairingProposal{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -115,13 +117,40 @@ func (s *TelegramPairingStore) ConfirmPairing(ctx context.Context, telegramID in
 		return telegram.PairingConfirmation{}, err
 	}
 	if attemptOutcome != "proposed" || targetID == "" {
-		outcome := telegram.PairingConflict
-		if targetID == "" {
-			outcome = telegram.PairingStale
+		return pairingConfirmationState(telegramID, targetID), nil
+	}
+
+	// Unpairing and confirming a proposal for the same roster row use this
+	// lock. The second attempt read below observes whichever action committed
+	// first instead of reviving a proposal made while the row was held.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, targetID); err != nil {
+		return telegram.PairingConfirmation{}, err
+	}
+
+	var current bool
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(user_id, ''), outcome,
+		       "createdAt" >= NOW() - ($3 * INTERVAL '1 second')
+		FROM telegram_pairing_attempt
+		WHERE id = $1 AND telegram_id = $2 FOR UPDATE
+	`, attemptID, telegramID, int64(pairingProposalExpiry/time.Second)).Scan(&targetID, &attemptOutcome, &current)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return telegram.PairingConfirmation{Outcome: telegram.PairingStale}, nil
+	}
+	if err != nil {
+		return telegram.PairingConfirmation{}, err
+	}
+	if attemptOutcome != "proposed" || targetID == "" {
+		return pairingConfirmationState(telegramID, targetID), nil
+	}
+	if !current {
+		if _, err := tx.Exec(ctx, `UPDATE telegram_pairing_attempt SET user_id = NULL WHERE id = $1 AND outcome = 'proposed'`, attemptID); err != nil {
+			return telegram.PairingConfirmation{}, err
 		}
-		return telegram.PairingConfirmation{Outcome: outcome, Pairing: telegram.Pairing{
-			TelegramID: telegramID, UserID: targetID,
-		}}, nil
+		if err := tx.Commit(ctx); err != nil {
+			return telegram.PairingConfirmation{}, err
+		}
+		return telegram.PairingConfirmation{Outcome: telegram.PairingStale}, nil
 	}
 
 	result, err := tx.Exec(ctx, `
@@ -175,6 +204,16 @@ func (s *TelegramPairingStore) DiscardPairing(ctx context.Context, telegramID in
 	return err
 }
 
+func pairingConfirmationState(telegramID int64, targetID string) telegram.PairingConfirmation {
+	outcome := telegram.PairingConflict
+	if targetID == "" {
+		outcome = telegram.PairingStale
+	}
+	return telegram.PairingConfirmation{Outcome: outcome, Pairing: telegram.Pairing{
+		TelegramID: telegramID, UserID: targetID,
+	}}
+}
+
 func insertPairingAttempt(ctx context.Context, tx pgx.Tx, id string, telegramID int64, outcome string, userID *string) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO telegram_pairing_attempt (id, telegram_id, outcome, user_id)
@@ -188,12 +227,12 @@ func markPairingAttempt(ctx context.Context, tx pgx.Tx, id, outcome string) erro
 	return err
 }
 
-func upsertPairingRequest(ctx context.Context, tx pgx.Tx, telegramID int64, name string) error {
+func upsertPairingRequest(ctx context.Context, tx pgx.Tx, telegramID int64, name, attemptID string) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO telegram_pairing_request (id, telegram_id, display_name)
-		VALUES ($1, $2, $3) ON CONFLICT (telegram_id) DO UPDATE
-		SET display_name = EXCLUDED.display_name, "createdAt" = NOW()
-	`, generateID(), telegramID, name)
+		INSERT INTO telegram_pairing_request (id, telegram_id, display_name, attempt_id)
+		VALUES ($1, $2, $3, $4) ON CONFLICT (telegram_id) DO UPDATE
+		SET display_name = EXCLUDED.display_name, attempt_id = EXCLUDED.attempt_id, "createdAt" = NOW()
+	`, generateID(), telegramID, name, attemptID)
 	return err
 }
 
