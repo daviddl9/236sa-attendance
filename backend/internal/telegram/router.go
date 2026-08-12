@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -116,7 +117,8 @@ type Dispatcher struct {
 	queue  chan Action
 	done   chan struct{}
 
-	closed chan struct{}
+	mu     sync.RWMutex
+	closed bool
 }
 
 const (
@@ -132,7 +134,6 @@ func NewDispatcher(sender Sender, queueSize int) *Dispatcher {
 		sender: sender,
 		queue:  make(chan Action, queueSize),
 		done:   make(chan struct{}),
-		closed: make(chan struct{}),
 	}
 	go d.run()
 	return d
@@ -142,10 +143,10 @@ func (d *Dispatcher) Enqueue(actions []Action) {
 	if len(actions) == 0 {
 		return
 	}
-	select {
-	case <-d.closed:
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.closed {
 		return
-	default:
 	}
 	for _, action := range actions {
 		select {
@@ -178,14 +179,15 @@ func (d *Dispatcher) run() {
 }
 
 func (d *Dispatcher) Close() {
-	select {
-	case <-d.closed:
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
 		return
-	default:
-		close(d.closed)
-		close(d.queue)
-		<-d.done
 	}
+	d.closed = true
+	close(d.queue)
+	d.mu.Unlock()
+	<-d.done
 }
 
 func logDeliveryError(operation string, _ error) {
