@@ -16,8 +16,9 @@ import (
 type MarkRequest struct {
 	SessionID string
 	UserID    string
-	Method    string  // qr_scan | manual (telegram_scan arrives in a later task)
-	MarkedBy  *string // set for manual marks
+	Method    string     // qr_scan | manual (telegram_scan arrives in a later task)
+	MarkedBy  *string    // set for manual marks
+	MarkedAt  *time.Time // set when a caller needs one timestamp for a batch
 }
 
 // MarkOutcome is the result of evaluating a mark request.
@@ -53,14 +54,17 @@ func Mark(ctx context.Context, tx pgx.Tx, req MarkRequest) (MarkOutcome, error) 
 	if err != nil {
 		return Marked, fmt.Errorf("generate attendance record ID: %w", err)
 	}
-	now := time.Now()
+	markedAt := time.Now()
+	if req.MarkedAt != nil {
+		markedAt = *req.MarkedAt
+	}
 	result, err := tx.Exec(ctx, `
 		INSERT INTO attendance_record (
 			id, session_id, user_id, marked_at, marking_method, marked_by, "createdAt", "updatedAt"
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (session_id, user_id) DO NOTHING
-	`, recordID, req.SessionID, req.UserID, now, req.Method, req.MarkedBy, now, now)
+	`, recordID, req.SessionID, req.UserID, markedAt, req.Method, req.MarkedBy, markedAt, markedAt)
 	if err != nil {
 		return Marked, fmt.Errorf("insert attendance record: %w", err)
 	}

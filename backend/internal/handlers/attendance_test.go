@@ -11,6 +11,7 @@ import (
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestMarkAttendanceMapsClosedSessionOutcome(t *testing.T) {
@@ -44,5 +45,53 @@ func TestMarkAttendanceMapsClosedSessionOutcome(t *testing.T) {
 	}
 	if records != 0 {
 		t.Fatalf("closed-session records = %d, want 0", records)
+	}
+}
+
+func TestManualMarkAttendanceUsesOneBatchTimestamp(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	commanderID := prefix + "-commander"
+	firstUserID := prefix + "-first-user"
+	secondUserID := prefix + "-second-user"
+	sessionID := prefix + "-manual-session"
+	seedUser(t, db, commanderID, "COMMANDER", "3SG", "HQ", "commander", true)
+	seedUser(t, db, firstUserID, "FIRST USER", "PTE", "Alpha", "first-user", true)
+	seedUser(t, db, secondUserID, "SECOND USER", "PTE", "Bravo", "second-user", true)
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time)
+		VALUES ($1, 'Manual session', $2, $3, 'unit_wide', '{}', 'active', $4, NOW())
+	`, sessionID, sessionID+"-qr", sessionID+"-secret", commanderID)
+	if err != nil {
+		t.Fatalf("seed manual session: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"userIds":[%q,%q]}`, firstUserID, secondUserID)
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/attendance/manual", strings.NewReader(body))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("id", sessionID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: commanderID, IsSuperadmin: true}))
+	rec := httptest.NewRecorder()
+	NewAttendanceHandler(db, nil).ManualMarkAttendance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manual response = (%d, %q), want 200", rec.Code, rec.Body.String())
+	}
+	var firstMarkedAt, secondMarkedAt time.Time
+	for _, userID := range []string{firstUserID, secondUserID} {
+		var markedAt time.Time
+		if err := db.Pool.QueryRow(context.Background(), `
+			SELECT marked_at FROM attendance_record WHERE session_id = $1 AND user_id = $2
+		`, sessionID, userID).Scan(&markedAt); err != nil {
+			t.Fatalf("read mark for %s: %v", userID, err)
+		}
+		if userID == firstUserID {
+			firstMarkedAt = markedAt
+		} else {
+			secondMarkedAt = markedAt
+		}
+	}
+	if !firstMarkedAt.Equal(secondMarkedAt) {
+		t.Fatalf("manual timestamps = (%s, %s), want one batch timestamp", firstMarkedAt, secondMarkedAt)
 	}
 }

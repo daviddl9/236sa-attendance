@@ -336,6 +336,7 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 		}
 	}
 
+	batchMarkedAt := time.Now()
 	var successCount int
 	var errors []string
 
@@ -364,6 +365,7 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 			UserID:    targetUserID,
 			Method:    models.MarkingMethodManual,
 			MarkedBy:  &markedBy,
+			MarkedAt:  &batchMarkedAt,
 		})
 		if err != nil {
 			_ = tx.Rollback(ctx)
