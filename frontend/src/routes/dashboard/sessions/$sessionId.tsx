@@ -191,13 +191,11 @@ function SessionDetailPage() {
   // Keep the existing web scanner as a fallback for disabled/legacy sessions.
   const qrCodeUrl = session
     ? session.telegramLink ||
-      (session.deeplinkCode && import.meta.env.VITE_TELEGRAM_BOT_USERNAME
-        ? `https://t.me/${String(import.meta.env.VITE_TELEGRAM_BOT_USERNAME).replace(/^@/, '')}?start=${session.deeplinkCode}`
-        : (() => {
-            const parts = session.qrCode.split(':');
-            const secret = parts.length >= 2 ? parts[1] : '';
-            return `${window.location.origin}/qr/${session.id}:${secret}`;
-          })())
+      (() => {
+        const parts = session.qrCode.split(':');
+        const secret = parts.length >= 2 ? parts[1] : '';
+        return `${window.location.origin}/qr/${session.id}:${secret}`;
+      })()
     : '';
 
   const handleDownloadQR = () => {
