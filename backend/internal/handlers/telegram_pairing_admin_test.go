@@ -338,6 +338,13 @@ func TestTelegramPairingReviewOnlyListsActiveWeakRequests(t *testing.T) {
 			t.Fatalf("strong proposed request was actionable: %+v", request)
 		}
 	}
+	var strongRequestCount int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1`, strongID).Scan(&strongRequestCount); err != nil {
+		t.Fatal(err)
+	}
+	if strongRequestCount != 1 {
+		t.Fatalf("strong proposed request count = %d, want 1 for auditability", strongRequestCount)
+	}
 }
 
 func TestTelegramPairingConfirmAndUnpairDoNotDeadlock(t *testing.T) {
