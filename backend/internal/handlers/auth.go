@@ -192,7 +192,14 @@ func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, 
 		return nil, err
 	}
 
-	attempts := []string{password, strings.ToUpper(password)}
+	// Try the value as typed, and uppercased only when that differs. bcrypt at the
+	// current cost is deliberately slow, so verifying the same string twice against
+	// every candidate would double sign-in latency and hand an attacker a cheap way
+	// to make the server do expensive work.
+	attempts := []string{password}
+	if upper := strings.ToUpper(password); upper != password {
+		attempts = append(attempts, upper)
+	}
 	var matched *userRow
 	for i := range candidates {
 		for _, attempt := range attempts {
