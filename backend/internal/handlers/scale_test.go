@@ -66,7 +66,7 @@ func TestBulkApproveRefusesStrongAndMigratedRows(t *testing.T) {
 	seedPending(t, db, newID, "newbulk", "BRAND NEW", "PTE", "Bravo")
 
 	ids := []string{prefix + "-match-pending", prefix + "-migrated-pending", newID}
-	body, _ := json.Marshal(map[string]any{"registrationIds": ids})
+	body, _ := json.Marshal(map[string]any{"registrationIds": ids, "acknowledgeStrongMatch": true})
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/registrations/bulk-approve", strings.NewReader(string(body)))
 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, IsSuperadmin: true}))
 	rec := httptest.NewRecorder()

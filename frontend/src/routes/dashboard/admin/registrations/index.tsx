@@ -53,6 +53,7 @@ function RegistrationsContent() {
   const [battery, setBattery] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkResults, setBulkResults] = useState<{ id: string; success: boolean; error?: string }[] | null>(null);
+  const [createConfirmation, setCreateConfirmation] = useState<{ id: string; candidate: RegistrationCandidate } | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['pending-registrations', battery],
@@ -95,15 +96,19 @@ function RegistrationsContent() {
   );
 
   const approveMutation = useMutation({
-    mutationFn: (input: { id: string; mode: 'link' | 'create'; userId?: string }) => {
+    mutationFn: (input: { id: string; mode: 'link' | 'create'; userId?: string; acknowledgeStrongMatch?: boolean }) => {
       if (input.mode === 'link') {
         if (!input.userId) throw new Error('Select a roster candidate');
         return apiClient.approveRegistration(input.id, { mode: 'link', userId: input.userId });
       }
-      return apiClient.approveRegistration(input.id, { mode: 'create' });
+      return apiClient.approveRegistration(input.id, {
+        mode: 'create',
+        acknowledgeStrongMatch: input.acknowledgeStrongMatch,
+      });
     },
     onSuccess: (_, { id }) => {
       toast.success('Registration approved');
+      setCreateConfirmation(null);
       setReviewId(null);
       setSelectedUserId('');
       setSelectedIds((current) => current.filter((value) => value !== id));
@@ -115,6 +120,15 @@ function RegistrationsContent() {
     },
     onError: () => toast.error('Failed to approve registration'),
   });
+
+  const requestCreate = (id: string) => {
+    const candidate = strongCandidates[0];
+    if (candidate) {
+      setCreateConfirmation({ id, candidate });
+      return;
+    }
+    approveMutation.mutate({ id, mode: 'create' });
+  };
 
   const rejectMutation = useMutation({
     mutationFn: (id: string) => apiClient.rejectRegistration(id),
@@ -282,8 +296,24 @@ function RegistrationsContent() {
                                   )}
                                 </>
                               )}
+                              {createConfirmation?.id === reg.id && (
+                                <div role="alert" className="rounded-md border border-amber-500/50 bg-amber-50 p-3 text-sm">
+                                  <p>
+                                    A close roster match was found: <strong>{createConfirmation.candidate.fullName}</strong> (score {createConfirmation.candidate.score}).
+                                    Only continue if this registration is a different person.
+                                  </p>
+                                  <div className="mt-3 flex justify-end gap-2">
+                                    <Button variant="outline" onClick={() => setCreateConfirmation(null)} disabled={approveMutation.isPending}>
+                                      Cancel
+                                    </Button>
+                                    <Button onClick={() => { approveMutation.mutate({ id: reg.id, mode: 'create', acknowledgeStrongMatch: true }); setCreateConfirmation(null); }} disabled={approveMutation.isPending}>
+                                      I confirm — create roster row
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                               <div className="flex justify-end gap-2">
-                                <Button variant="outline" onClick={() => approveMutation.mutate({ id: reg.id, mode: 'create' })} disabled={approveMutation.isPending || candidatesLoading}>
+                                <Button variant="outline" onClick={() => requestCreate(reg.id)} disabled={approveMutation.isPending || candidatesLoading}>
                                   Create new roster row
                                 </Button>
                                 <Button onClick={() => approveMutation.mutate({ id: reg.id, mode: 'link', userId: activeUserId })} disabled={!activeUserId || approveMutation.isPending}>

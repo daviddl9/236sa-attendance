@@ -878,7 +878,7 @@ export class APIClient {
 
   async approveRegistration(
     id: string,
-    data: { mode: 'link'; userId: string } | { mode: 'create' }
+    data: { mode: 'link'; userId: string } | { mode: 'create'; acknowledgeStrongMatch?: boolean }
   ): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/admin/registrations/${id}/approve`, {
       method: 'POST',

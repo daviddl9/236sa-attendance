@@ -669,9 +669,10 @@ func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.R
 }
 
 type approveRegistrationRequest struct {
-	Mode   string `json:"mode"`
-	UserID string `json:"userId"`
-	Bulk   bool   `json:"-"`
+	Mode                   string `json:"mode"`
+	UserID                 string `json:"userId"`
+	AcknowledgeStrongMatch bool   `json:"acknowledgeStrongMatch"`
+	Bulk                   bool   `json:"-"`
 }
 
 var (
@@ -679,12 +680,20 @@ var (
 	errBulkMigratedPending = errors.New("migrated_pending")
 )
 
+type strongMatchApprovalError struct {
+	Candidate matching.Candidate
+}
+
+func (e *strongMatchApprovalError) Error() string {
+	return "strong_match"
+}
+
 type pendingApproval struct {
 	ID, Username, PasswordHash, Name, Rank, Battery string
 }
 
 // ApproveRegistration links a pending signup to an explicit roster row or
-// creates a new row. No fuzzy match is ever applied by this endpoint.
+// creates a new row after handling any strong roster match.
 func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Request) {
 	var req approveRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -735,12 +744,21 @@ func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID s
 		if isMigratedPending(pending.Username) {
 			return errBulkMigratedPending
 		}
-		strongMatch, err := h.hasStrongCandidate(ctx, tx, pending)
+		strongMatch, err := h.strongCandidate(ctx, tx, pending)
 		if err != nil {
 			return err
 		}
-		if strongMatch {
+		if strongMatch != nil {
 			return errBulkNeedsLink
+		}
+	}
+	if req.Mode == "create" && !req.Bulk && !req.AcknowledgeStrongMatch && !isMigratedPending(pending.Username) {
+		strongMatch, err := h.strongCandidate(ctx, tx, pending)
+		if err != nil {
+			return err
+		}
+		if strongMatch != nil {
+			return &strongMatchApprovalError{Candidate: *strongMatch}
 		}
 	}
 	if isMigratedPending(pending.Username) {
@@ -777,13 +795,13 @@ func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID s
 	return tx.Commit(ctx)
 }
 
-func (h *AdminHandler) hasStrongCandidate(ctx context.Context, tx pgx.Tx, pending pendingApproval) (bool, error) {
+func (h *AdminHandler) strongCandidate(ctx context.Context, tx pgx.Tx, pending pendingApproval) (*matching.Candidate, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, COALESCE("full_name", ''), COALESCE(rank, ''), COALESCE(battery, ''), username
 		FROM "user"
 	`)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -791,22 +809,22 @@ func (h *AdminHandler) hasStrongCandidate(ctx context.Context, tx pgx.Tx, pendin
 	for rows.Next() {
 		var row matching.RosterRow
 		if err := rows.Scan(&row.ID, &row.Name, &row.Rank, &row.Battery, &row.Username); err != nil {
-			return false, err
+			return nil, err
 		}
 		roster = append(roster, row)
 	}
 	if err := rows.Err(); err != nil {
-		return false, err
+		return nil, err
 	}
 	candidates := matching.RankCandidates(matching.Registration{
 		Name: pending.Name, Rank: pending.Rank, Battery: pending.Battery,
 	}, roster)
 	for _, candidate := range candidates {
 		if candidate.Score >= matching.StrongCandidateScore {
-			return true, nil
+			return &candidate, nil
 		}
 	}
-	return false, nil
+	return nil, nil
 }
 
 type bulkApproveRequest struct {
@@ -899,6 +917,19 @@ func createApprovedRegistration(ctx context.Context, tx pgx.Tx, pending pendingA
 }
 
 func writeApprovalDBError(w http.ResponseWriter, err error) {
+	var strongMatchErr *strongMatchApprovalError
+	if errors.As(err, &strongMatchErr) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":           "strong_match",
+			"message":         fmt.Sprintf("A close roster match was found: %s. Confirm this is a different person before creating a new roster row.", strongMatchErr.Candidate.Name),
+			"matchedPerson":   strongMatchErr.Candidate.Name,
+			"matchedPersonId": strongMatchErr.Candidate.ID,
+			"score":           strongMatchErr.Candidate.Score,
+		})
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		if strings.Contains(strings.ToLower(err.Error()), "registration") {
 			http.Error(w, "Registration not found or already approved", http.StatusNotFound)
