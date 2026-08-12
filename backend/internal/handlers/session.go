@@ -13,6 +13,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 	"github.com/xuri/excelize/v2"
@@ -75,20 +76,25 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	sessionID := generateID()
 	qrSecret := generateSessionToken() // Use session token generator for QR secret
+	deeplinkCode, err := deeplink.GenerateCode()
+	if err != nil {
+		http.Error(w, "Failed to generate session deep-link code", http.StatusInternalServerError)
+		return
+	}
 	now := time.Now()
 
 	// Store QR secret for frontend to construct URL
 	qrCode := fmt.Sprintf("%s:%s", sessionID, qrSecret)
 
-	// Insert session into database (start_time defaults to NOW() in database)
-	_, err := h.db.Pool.Exec(ctx, `
+	// Insert session and its deep-link code atomically.
+	_, err = h.db.Pool.Exec(ctx, `
 		INSERT INTO attendance_session (
 			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, "createdAt", "updatedAt"
+			status, created_by, start_time, end_time, deeplink_code, "createdAt", "updatedAt"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12)
 	`, sessionID, req.Name, qrCode, qrSecret, req.Scope,
-		req.Batteries, models.SessionStatusActive, user.ID, req.EndTime, now, now)
+		req.Batteries, models.SessionStatusActive, user.ID, req.EndTime, deeplinkCode, now, now)
 
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -773,16 +779,21 @@ func (h *SessionHandler) CreateCustomSession(w http.ResponseWriter, r *http.Requ
 
 	sessionID := generateID()
 	qrSecret := generateSessionToken()
+	deeplinkCode, err := deeplink.GenerateCode()
+	if err != nil {
+		http.Error(w, "Failed to generate session deep-link code", http.StatusInternalServerError)
+		return
+	}
 	qrCode := fmt.Sprintf("%s:%s", sessionID, qrSecret)
 	now := time.Now()
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO attendance_session (
 			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, "createdAt", "updatedAt"
+			status, created_by, start_time, end_time, deeplink_code, "createdAt", "updatedAt"
 		)
-		VALUES ($1, $2, $3, $4, 'custom_list', '{}', 'active', $5, NOW(), $6, $7, $8)
-	`, sessionID, req.Name, qrCode, qrSecret, user.ID, req.EndTime, now, now)
+		VALUES ($1, $2, $3, $4, 'custom_list', '{}', 'active', $5, NOW(), $6, $7, $8, $9)
+	`, sessionID, req.Name, qrCode, qrSecret, user.ID, req.EndTime, deeplinkCode, now, now)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
