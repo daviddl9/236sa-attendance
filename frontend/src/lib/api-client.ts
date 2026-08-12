@@ -202,6 +202,36 @@ export interface RegistrationCandidatesResponse {
   candidates: RegistrationCandidate[];
 }
 
+export interface TelegramPairingRecord {
+  telegramId: number;
+  userId: string;
+  fullName: string;
+  selfConfirmed: boolean;
+  confirmedBy?: string;
+  createdAt: string;
+}
+
+export interface TelegramPairingAttemptRecord {
+  telegramId: number;
+  outcome: 'proposed' | 'confirmed' | 'refused_conflict' | 'no_match';
+  userId?: string;
+  fullName?: string;
+  createdAt: string;
+}
+
+export interface TelegramPairingRequestRecord {
+  telegramId: number;
+  displayName: string;
+  createdAt: string;
+  candidates: RegistrationCandidate[];
+}
+
+export interface TelegramPairingReviewResponse {
+  pairings: TelegramPairingRecord[];
+  attempts: TelegramPairingAttemptRecord[];
+  requests: TelegramPairingRequestRecord[];
+}
+
 // Custom participant session (Feature 004)
 export interface ParticipantMatch {
   userId: string;
@@ -889,6 +919,23 @@ export class APIClient {
   async rejectRegistration(id: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/admin/registrations/${id}/reject`, {
       method: 'POST',
+    });
+  }
+
+  async listTelegramPairings(): Promise<TelegramPairingReviewResponse> {
+    return this.request<TelegramPairingReviewResponse>('/api/admin/telegram/pairings');
+  }
+
+  async confirmTelegramPairing(telegramId: number, userId: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/admin/telegram/pairings/${telegramId}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  }
+
+  async unpairTelegramAccount(telegramId: number): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/admin/telegram/pairings/${telegramId}`, {
+      method: 'DELETE',
     });
   }
 

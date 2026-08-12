@@ -222,6 +222,9 @@ func main() {
 				r.Route("/admin", func(r chi.Router) {
 					r.Use(middleware.RequireSuperadmin(db))
 					adminHandler := handlers.NewAdminHandler(db)
+					r.Get("/telegram/pairings", adminHandler.ListTelegramPairings)
+					r.Post("/telegram/pairings/{telegramID}/confirm", adminHandler.ConfirmTelegramPairing)
+					r.Delete("/telegram/pairings/{telegramID}", adminHandler.UnpairTelegramAccount)
 					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
 					r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
 					r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)

@@ -29,6 +29,7 @@ import { Route as DashboardSessionsCreateRouteImport } from './routes/dashboard/
 import { Route as DashboardSessionsSessionIdRouteImport } from './routes/dashboard/sessions/$sessionId'
 import { Route as DashboardReportsBatteriesRouteImport } from './routes/dashboard/reports/batteries'
 import { Route as DashboardAttendanceScanRouteImport } from './routes/dashboard/attendance/scan'
+import { Route as DashboardAdminTelegramPairingsRouteImport } from './routes/dashboard/admin/telegram-pairings'
 import { Route as DashboardAdminRegistrationsIndexRouteImport } from './routes/dashboard/admin/registrations/index'
 import { Route as DashboardReportsSessionsSessionIdRouteImport } from './routes/dashboard/reports/sessions/$sessionId'
 
@@ -136,6 +137,12 @@ const DashboardAttendanceScanRoute = DashboardAttendanceScanRouteImport.update({
   path: '/dashboard/attendance/scan',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardAdminTelegramPairingsRoute =
+  DashboardAdminTelegramPairingsRouteImport.update({
+    id: '/dashboard/admin/telegram-pairings',
+    path: '/dashboard/admin/telegram-pairings',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DashboardAdminRegistrationsIndexRoute =
   DashboardAdminRegistrationsIndexRouteImport.update({
     id: '/dashboard/admin/registrations/',
@@ -159,6 +166,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/dashboard/admin/telegram-pairings': typeof DashboardAdminTelegramPairingsRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
   '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
@@ -183,6 +191,7 @@ export interface FileRoutesByTo {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/dashboard/admin/telegram-pairings': typeof DashboardAdminTelegramPairingsRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
   '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
@@ -208,6 +217,7 @@ export interface FileRoutesById {
   '/dashboard/settings': typeof DashboardSettingsRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/dashboard/admin/telegram-pairings': typeof DashboardAdminTelegramPairingsRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
   '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
@@ -234,6 +244,7 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/qr/$token'
     | '/dashboard'
+    | '/dashboard/admin/telegram-pairings'
     | '/dashboard/attendance/scan'
     | '/dashboard/reports/batteries'
     | '/dashboard/sessions/$sessionId'
@@ -258,6 +269,7 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/qr/$token'
     | '/dashboard'
+    | '/dashboard/admin/telegram-pairings'
     | '/dashboard/attendance/scan'
     | '/dashboard/reports/batteries'
     | '/dashboard/sessions/$sessionId'
@@ -282,6 +294,7 @@ export interface FileRouteTypes {
     | '/dashboard/settings'
     | '/qr/$token'
     | '/dashboard/'
+    | '/dashboard/admin/telegram-pairings'
     | '/dashboard/attendance/scan'
     | '/dashboard/reports/batteries'
     | '/dashboard/sessions/$sessionId'
@@ -307,6 +320,7 @@ export interface RootRouteChildren {
   DashboardSettingsRoute: typeof DashboardSettingsRoute
   QrTokenRoute: typeof QrTokenRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
+  DashboardAdminTelegramPairingsRoute: typeof DashboardAdminTelegramPairingsRoute
   DashboardAttendanceScanRoute: typeof DashboardAttendanceScanRoute
   DashboardReportsBatteriesRoute: typeof DashboardReportsBatteriesRoute
   DashboardSessionsSessionIdRoute: typeof DashboardSessionsSessionIdRoute
@@ -464,6 +478,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardAttendanceScanRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/admin/telegram-pairings': {
+      id: '/dashboard/admin/telegram-pairings'
+      path: '/dashboard/admin/telegram-pairings'
+      fullPath: '/dashboard/admin/telegram-pairings'
+      preLoaderRoute: typeof DashboardAdminTelegramPairingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/admin/registrations/': {
       id: '/dashboard/admin/registrations/'
       path: '/dashboard/admin/registrations'
@@ -491,6 +512,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardSettingsRoute: DashboardSettingsRoute,
   QrTokenRoute: QrTokenRoute,
   DashboardIndexRoute: DashboardIndexRoute,
+  DashboardAdminTelegramPairingsRoute: DashboardAdminTelegramPairingsRoute,
   DashboardAttendanceScanRoute: DashboardAttendanceScanRoute,
   DashboardReportsBatteriesRoute: DashboardReportsBatteriesRoute,
   DashboardSessionsSessionIdRoute: DashboardSessionsSessionIdRoute,
