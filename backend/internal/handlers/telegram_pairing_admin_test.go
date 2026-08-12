@@ -17,7 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestTelegramPairingReviewRequiresSuperadminAndLeaksNoName(t *testing.T) {
+func TestTelegramPairingReviewRequiresUnitCommanderAndLeaksNoName(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
 	seedUser(t, db, prefix+"-target", "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
 	h := NewAdminHandler(db)
@@ -29,12 +29,22 @@ func TestTelegramPairingReviewRequiresSuperadminAndLeaksNoName(t *testing.T) {
 		t.Fatalf("unauthenticated review = %d %q", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/admin/telegram/pairings", nil)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "soldier", IsSuperadmin: false}))
-	rec = httptest.NewRecorder()
-	h.ListTelegramPairings(rec, req)
-	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "PRIVATE ROSTER NAME") {
-		t.Fatalf("soldier review = %d %q", rec.Code, rec.Body.String())
+	for _, tc := range []struct {
+		name  string
+		actor *models.User
+	}{
+		{name: "enlisted", actor: &models.User{ID: "soldier", Rank: stringPtr("PTE")}},
+		{name: "battery NCO", actor: &models.User{ID: "battery-nco", Rank: stringPtr("3SG")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/admin/telegram/pairings", nil)
+			req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, tc.actor))
+			rec := httptest.NewRecorder()
+			h.ListTelegramPairings(rec, req)
+			if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "PRIVATE ROSTER NAME") {
+				t.Fatalf("%s review = %d %q", tc.name, rec.Code, rec.Body.String())
+			}
+		})
 	}
 	_ = telegramID
 }
@@ -67,7 +77,7 @@ func TestTelegramPairingReviewPutsConflictsBeforeRoutineAndUnpairAllowsRepair(t 
 
 	h := NewAdminHandler(db)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/telegram/pairings", nil)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "admin", IsSuperadmin: true}))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "commander", Rank: stringPtr("SSG")}))
 	rec := httptest.NewRecorder()
 	h.ListTelegramPairings(rec, req)
 	if rec.Code != http.StatusOK {
@@ -84,10 +94,10 @@ func TestTelegramPairingReviewPutsConflictsBeforeRoutineAndUnpairAllowsRepair(t 
 		t.Fatalf("pairings = %+v", response.Pairings)
 	}
 
-	// Unpair through the same superadmin boundary used by the API.
+	// Unpair through the same unit-commander boundary used by the API.
 	req = httptest.NewRequest(http.MethodDelete, "/api/admin/telegram/pairings/"+itoa(telegramID), nil)
 	req = withTelegramRoute(req, telegramID)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "admin", IsSuperadmin: true}))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "commander", Rank: stringPtr("SSG")}))
 	rec = httptest.NewRecorder()
 	h.UnpairTelegramAccount(rec, req)
 	if rec.Code != http.StatusOK {
@@ -144,8 +154,8 @@ func TestTelegramPairingUnpairInvalidatesPendingProposal(t *testing.T) {
 
 func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
-	actorID := prefix + "-admin"
-	seedUser(t, db, actorID, "TEST ADMIN", "CPT", "HQ", "", true)
+	actorID := prefix + "-commander"
+	seedUser(t, db, actorID, "TEST COMMANDER", "SSG", "HQ", "", true)
 	seedUser(t, db, prefix+"-target", "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
 	store := &TelegramPairingStore{db: db}
 	if _, err := store.ProposePairing(context.Background(), telegramID, "weak request"); err != nil {
@@ -166,7 +176,7 @@ func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	admin := NewAdminHandler(db)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"`+prefix+`-target"}`))
 	req = withTelegramRoute(req, telegramID)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, IsSuperadmin: true}))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, Rank: stringPtr("SSG")}))
 	rec := httptest.NewRecorder()
 	admin.ConfirmTelegramPairing(rec, req)
 	if rec.Code != http.StatusOK {
@@ -320,16 +330,72 @@ func waitForAdvisoryContention(db *database.DB, telegramID int64, targetID strin
 	return false
 }
 
-func TestConfirmTelegramPairingRequiresSuperadmin(t *testing.T) {
+func TestTelegramPairingActionsRequireUnitCommander(t *testing.T) {
 	db, _, telegramID := openTelegramPairingDB(t)
 	h := NewAdminHandler(db)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"target"}`))
-	req = withTelegramRoute(req, telegramID)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "soldier", IsSuperadmin: false}))
+	actors := []struct {
+		name   string
+		actor  *models.User
+		status int
+	}{
+		{name: "unauthenticated", status: http.StatusUnauthorized},
+		{name: "enlisted", actor: &models.User{ID: "soldier", Rank: stringPtr("PTE")}, status: http.StatusForbidden},
+		{name: "battery NCO", actor: &models.User{ID: "battery-nco", Rank: stringPtr("3SG")}, status: http.StatusForbidden},
+	}
+	for _, tc := range actors {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"target"}`))
+			req = withTelegramRoute(req, telegramID)
+			if tc.actor != nil {
+				req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, tc.actor))
+			}
+			rec := httptest.NewRecorder()
+			h.ConfirmTelegramPairing(rec, req)
+			if rec.Code != tc.status || strings.Contains(rec.Body.String(), "target") {
+				t.Fatalf("confirm = %d %q, want %d without target disclosure", rec.Code, rec.Body.String(), tc.status)
+			}
+		})
+	}
+}
+
+func TestTelegramPairingSuperadminStillCanReviewConfirmAndUnpair(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	actorID := prefix + "-superadmin"
+	targetID := prefix + "-target"
+	seedUser(t, db, actorID, "TEST SUPERADMIN", "CPT", "HQ", "", true)
+	seedUser(t, db, targetID, "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
+	store := &TelegramPairingStore{db: db}
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "unmatched request")
+	if err != nil || !proposal.NoMatch || proposal.AttemptID == "" {
+		t.Fatalf("proposal = %+v, err=%v", proposal, err)
+	}
+	actor := &models.User{ID: actorID, IsSuperadmin: true}
+	h := NewAdminHandler(db)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/telegram/pairings", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, actor))
 	rec := httptest.NewRecorder()
+	h.ListTelegramPairings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("superadmin review = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"`+targetID+`"}`))
+	req = withTelegramRoute(req, telegramID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, actor))
+	rec = httptest.NewRecorder()
 	h.ConfirmTelegramPairing(rec, req)
-	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "target") {
-		t.Fatalf("non-admin confirm = %d %q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("superadmin confirm = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/admin/telegram/pairings/"+itoa(telegramID), nil)
+	req = withTelegramRoute(req, telegramID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, actor))
+	rec = httptest.NewRecorder()
+	h.UnpairTelegramAccount(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("superadmin unpair = %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
