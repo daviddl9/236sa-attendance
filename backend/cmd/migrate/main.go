@@ -57,7 +57,18 @@ func main() {
 		log.Fatalf("Migration failed: %v", err)
 	}
 
-	if err := deeplink.BackfillActiveSessionCodes(ctx, db); err != nil {
-		log.Fatalf("Deep-link backfill failed: %v", err)
+	if isUpCommand(command) {
+		if err := deeplink.BackfillActiveSessionCodes(ctx, db); err != nil {
+			log.Fatalf("Deep-link backfill failed: %v", err)
+		}
+	}
+}
+
+func isUpCommand(command string) bool {
+	switch command {
+	case "up", "up-by-one", "up-to":
+		return true
+	default:
+		return false
 	}
 }
