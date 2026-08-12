@@ -98,8 +98,9 @@ func (h *TelegramHandler) serverError(w http.ResponseWriter) {
 // constrained by Telegram account ID, so the only name returned to a paired
 // soldier is that account's own name.
 type TelegramPairingStore struct {
-	db  *database.DB
-	hub *sse.Hub
+	db          *database.DB
+	hub         *sse.Hub
+	botUsername string
 }
 
 func NewTelegramPairingStore(db *database.DB) *TelegramPairingStore {
@@ -110,7 +111,8 @@ func NewTelegramPairingStore(db *database.DB) *TelegramPairingStore {
 // nil-hub constructor remains useful for tests and deployments that do not
 // expose SSE.
 func NewTelegramPairingStoreWithHub(db *database.DB, hub *sse.Hub) *TelegramPairingStore {
-	return &TelegramPairingStore{db: db, hub: hub}
+	config := telegram.LoadConfig()
+	return &TelegramPairingStore{db: db, hub: hub, botUsername: config.BotUsername}
 }
 
 func (s *TelegramPairingStore) FindPairing(ctx context.Context, telegramID int64) (telegram.Pairing, bool, error) {
