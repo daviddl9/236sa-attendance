@@ -51,8 +51,8 @@ func main() {
 	// Initialize SSE hub for real-time updates
 	sseHub := sse.NewHub()
 
-	// Initialize optional Telegram bot. A missing token disables only this
-	// integration; the rest of the API starts exactly as before.
+	// Initialize optional Telegram bot. An entirely empty configuration
+	// disables only this integration; partial configuration was rejected above.
 	telegramHandler, telegramDispatcher := newTelegramRuntime(db, telegramConfig, sseHub)
 	if telegramDispatcher != nil {
 		defer telegramDispatcher.Close()
@@ -312,7 +312,7 @@ func newAgentParser() agent.Parser {
 
 func newTelegramRuntime(db *database.DB, config telegram.Config, hub *sse.Hub) (*handlers.TelegramHandler, *telegram.Dispatcher) {
 	if !config.Enabled() {
-		log.Println("Telegram bot disabled: set TELEGRAM_BOT_TOKEN to enable")
+		log.Println("Telegram bot disabled: configure all four Telegram settings to enable")
 		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
 	}
 
