@@ -248,10 +248,13 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Failed to lock Telegram pairing", http.StatusInternalServerError)
 		return
 	}
+	// Read the request without taking its row lock. The account advisory lock
+	// serializes normal proposal mutations; the request row is locked only
+	// after the target user, matching account -> target -> request.
 	var displayName, attemptID string
 	if err := tx.QueryRow(ctx, `
 		SELECT display_name, COALESCE(attempt_id, '')
-		FROM telegram_pairing_request WHERE telegram_id = $1 FOR UPDATE
+		FROM telegram_pairing_request WHERE telegram_id = $1
 	`, telegramID).Scan(&displayName, &attemptID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Pairing request not found", http.StatusNotFound)
@@ -271,6 +274,22 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 	}
 	if !candidate {
 		http.Error(w, "Selected roster row is not a current verified candidate", http.StatusBadRequest)
+		return
+	}
+	var lockedDisplayName, lockedAttemptID string
+	if err := tx.QueryRow(ctx, `
+		SELECT display_name, COALESCE(attempt_id, '')
+		FROM telegram_pairing_request WHERE telegram_id = $1 FOR UPDATE
+	`, telegramID).Scan(&lockedDisplayName, &lockedAttemptID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Pairing request not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to lock pairing request", http.StatusInternalServerError)
+		return
+	}
+	if lockedDisplayName != displayName || lockedAttemptID != attemptID {
+		http.Error(w, "Pairing request is no longer current", http.StatusBadRequest)
 		return
 	}
 	result, err := tx.Exec(ctx, `
@@ -309,26 +328,11 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Telegram pairing confirmed"})
 }
 
-// currentVerifiedTelegramCandidate recomputes the same ranked roster slice used
-// by the review UI while the pairing request is locked. The target row is then
-// locked and rechecked so an unverified or concurrently removed row cannot be
-// inserted through this endpoint.
+// currentVerifiedTelegramCandidate locks the target before reading the
+// verified roster. This keeps the target's verified/full-name state stable
+// while the review ranking is recomputed, so a stale candidate cannot pass a
+// time-of-check/time-of-use window.
 func (h *AdminHandler) currentVerifiedTelegramCandidate(ctx context.Context, tx pgx.Tx, displayName, targetID string) (bool, error) {
-	roster, err := loadMatchingRoster(ctx, tx)
-	if err != nil {
-		return false, err
-	}
-	candidates := matching.RankCandidates(matching.Registration{Name: displayName}, roster)
-	found := false
-	for _, candidate := range candidates {
-		if candidate.ID == targetID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return false, nil
-	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, targetID); err != nil {
 		return false, err
 	}
@@ -339,7 +343,21 @@ func (h *AdminHandler) currentVerifiedTelegramCandidate(ctx context.Context, tx 
 		}
 		return false, err
 	}
-	return verified, nil
+	if !verified {
+		return false, nil
+	}
+
+	roster, err := loadMatchingRoster(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	candidates := matching.RankCandidates(matching.Registration{Name: displayName}, roster)
+	for _, candidate := range candidates {
+		if candidate.ID == targetID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // UnpairTelegramAccount removes only the Telegram relationship; attendance

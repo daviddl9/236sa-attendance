@@ -217,10 +217,11 @@ func (b *Bot) handleMessage(ctx context.Context, message *Message) ([]Action, er
 	}
 
 	name := pairingNameInput(message.Text)
-	if start.hasPayload {
+	if start.isStartCommand {
 		// The deep-link payload is an opaque capability, never identity input.
 		// Preserve the normal pairing flow by matching only Telegram's display
-		// name, while the account remains unable to mark until confirmed.
+		// name, while the account remains unable to mark until confirmed. This
+		// also covers a no-payload or malformed /start command.
 		name = pairingDisplayName(message.From)
 	}
 	if name == "" {
@@ -280,8 +281,9 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query *CallbackQuery) ([]
 }
 
 type startCommand struct {
-	hasPayload bool
-	payload    string
+	isStartCommand bool
+	hasPayload     bool
+	payload        string
 }
 
 func parseStartCommand(text string) startCommand {
@@ -297,12 +299,12 @@ func parseStartCommand(text string) startCommand {
 		return startCommand{}
 	}
 	if len(fields) == 1 {
-		return startCommand{}
+		return startCommand{isStartCommand: true}
 	}
 	if len(fields) != 2 {
-		return startCommand{hasPayload: true}
+		return startCommand{isStartCommand: true, hasPayload: true}
 	}
-	return startCommand{hasPayload: true, payload: fields[1]}
+	return startCommand{isStartCommand: true, hasPayload: true, payload: fields[1]}
 }
 
 func attendanceReply(result AttendanceResult) string {
