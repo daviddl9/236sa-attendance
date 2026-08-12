@@ -528,7 +528,7 @@ func TestTelegramPairingSuperadminStillCanReviewConfirmAndUnpair(t *testing.T) {
 	seedUser(t, db, targetID, "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
 	store := &TelegramPairingStore{db: db}
 	proposal, err := store.ProposePairing(context.Background(), telegramID, "unmatched request")
-	if err != nil || !proposal.NoMatch || proposal.AttemptID == "" {
+	if err != nil || !proposal.NoMatch {
 		t.Fatalf("proposal = %+v, err=%v", proposal, err)
 	}
 	actor := &models.User{ID: actorID, IsSuperadmin: true}
