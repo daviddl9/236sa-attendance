@@ -77,8 +77,8 @@ func TestTelegramPairingStrongMatchConfirmAndRecognition(t *testing.T) {
 
 func TestTelegramPairingAmbiguousStrongMatchesAreNotProposed(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
-	seedUser(t, db, prefix+"-min", "TAN WEI MIN", "", "", "", true)
-	seedUser(t, db, prefix+"-ming", "TAN WEI MING", "", "", "", true)
+	seedUser(t, db, prefix+"-min", "TAN WEI MIN", "PTE", "Alpha", "", true)
+	seedUser(t, db, prefix+"-ming", "TAN WEI MING", "PTE", "Alpha", "", true)
 	store := &TelegramPairingStore{db: db}
 
 	proposal, err := store.ProposePairing(context.Background(), telegramID, "TAN WEI MIN")
@@ -96,6 +96,24 @@ func TestTelegramPairingAmbiguousStrongMatchesAreNotProposed(t *testing.T) {
 	}
 	if outcome != "no_match" {
 		t.Fatalf("ambiguous attempt outcome = %q, want no_match", outcome)
+	}
+}
+
+func TestTelegramPairingExpiredProposalIsRefused(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	targetID := prefix + "-target"
+	seedUser(t, db, targetID, "TAN WEI MING", "CPL", "Bravo", "", true)
+	store := &TelegramPairingStore{db: db}
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "TAN WEI MING")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(context.Background(), `UPDATE telegram_pairing_attempt SET "createdAt" = NOW() - INTERVAL '6 minutes' WHERE id = $1`, proposal.AttemptID); err != nil {
+		t.Fatal(err)
+	}
+	confirmation, err := store.ConfirmPairing(context.Background(), telegramID, proposal.AttemptID)
+	if err != nil || confirmation.Outcome != telegram.PairingStale {
+		t.Fatalf("expired confirmation = %+v, err=%v", confirmation, err)
 	}
 }
 
