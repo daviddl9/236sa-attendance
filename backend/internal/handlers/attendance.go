@@ -338,6 +338,7 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 
 	batchMarkedAt := time.Now()
 	var successCount int
+	var closedCount int
 	var errors []string
 
 	// Mark attendance for each user. Each mark keeps the existing partial-success
@@ -380,6 +381,7 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 			continue
 		case attendance.SessionClosed:
 			_ = tx.Rollback(ctx)
+			closedCount++
 			errors = append(errors, "Session is not active")
 			continue
 		case attendance.OutOfScope:
@@ -404,6 +406,14 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 		// Broadcast SSE event for this user after the mark commits.
 		h.broadcastAttendanceMarked(ctx, sessionID, &targetUser, models.MarkingMethodManual, markedAt)
 		successCount++
+	}
+
+	// Preserve the legacy transport response when every requested target is
+	// rejected by the service because the session is closed. Mixed batches keep
+	// their per-target details in the JSON response below.
+	if closedCount == len(req.UserIDs) {
+		http.Error(w, "Session is not active", http.StatusBadRequest)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
