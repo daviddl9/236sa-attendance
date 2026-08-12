@@ -37,6 +37,16 @@ func (s *TelegramPairingStore) ProposePairing(ctx context.Context, telegramID in
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, telegramID); err != nil {
 		return telegram.PairingProposal{}, err
 	}
+	// A new name supersedes every still-live proposal for this account. Keep
+	// the attempts so the rolling-window limit still counts them, but clear the
+	// candidate so an older callback can only produce a stale outcome.
+	if _, err := tx.Exec(ctx, `
+		UPDATE telegram_pairing_attempt
+		SET user_id = NULL
+		WHERE telegram_id = $1 AND outcome = 'proposed' AND user_id IS NOT NULL
+	`, telegramID); err != nil {
+		return telegram.PairingProposal{}, err
+	}
 
 	var attempts int
 	if err := tx.QueryRow(ctx, `

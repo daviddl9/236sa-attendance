@@ -161,6 +161,51 @@ func TestTelegramPairingWeakMatchCreatesOneRequestAndNoNameReply(t *testing.T) {
 	}
 }
 
+func TestTelegramPairingNewProposalInvalidatesEarlierProposal(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	firstTargetID := prefix + "-first"
+	secondTargetID := prefix + "-second"
+	seedUser(t, db, firstTargetID, "FIRST PROPOSAL PERSON", "PTE", "Alpha", "", true)
+	seedUser(t, db, secondTargetID, "SECOND PROPOSAL PERSON", "PTE", "Alpha", "", true)
+	store := &TelegramPairingStore{db: db}
+
+	first, err := store.ProposePairing(context.Background(), telegramID, "FIRST PROPOSAL PERSON")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ProposePairing(context.Background(), telegramID, "SECOND PROPOSAL PERSON")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.AttemptID == "" || second.AttemptID == "" || first.AttemptID == second.AttemptID {
+		t.Fatalf("proposals = first %+v, second %+v", first, second)
+	}
+
+	stale, err := store.ConfirmPairing(context.Background(), telegramID, first.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Outcome != telegram.PairingStale {
+		t.Fatalf("old proposal confirmation = %+v, want stale", stale)
+	}
+
+	current, err := store.ConfirmPairing(context.Background(), telegramID, second.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Outcome != telegram.PairingConfirmed || current.Pairing.UserID != secondTargetID {
+		t.Fatalf("current proposal confirmation = %+v, want %q confirmed", current, secondTargetID)
+	}
+
+	var pairings int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, telegramID).Scan(&pairings); err != nil {
+		t.Fatal(err)
+	}
+	if pairings != 1 {
+		t.Fatalf("pairings = %d, want one current pairing", pairings)
+	}
+}
+
 func TestTelegramPairingConflictIsAnOutcome(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
 	targetID := prefix + "-target"
