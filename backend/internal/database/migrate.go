@@ -49,7 +49,9 @@ func RunMigrations(databaseURL, migrationsDir string) error {
 
 	log.Printf("Running database migrations from %s...", absPath)
 
-	if err := goose.Up(db, absPath); err != nil {
+	// Allow migrations added below an already-applied version to run before
+	// newer migrations while keeping every migration in Goose's version table.
+	if err := goose.Up(db, absPath, goose.WithAllowMissing()); err != nil {
 		log.Printf("Migration error: %v", err)
 		return fmt.Errorf("migration failed: %w", err)
 	}
