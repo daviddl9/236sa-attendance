@@ -42,6 +42,16 @@ go run ./cmd/migrate status ./migrations
 go run ./cmd/migrate down-to VERSION ./migrations
 ```
 
+## Migration order policy
+
+Migration files are immutable once released. The application startup runner
+uses Goose's `WithAllowMissing` mode so a newly introduced lower-version
+migration is applied before any later migrations still pending in the release;
+Goose still records every applied version normally. Add a new
+migration file rather than editing or reusing an applied version, and verify
+that any newly introduced migration is safe to run after the versions already
+on deployed databases.
+
 ## Telegram marking-method rollback safety
 
 The `20260814000000_telegram_scan_marking_method.sql` Down migration is
