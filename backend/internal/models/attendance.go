@@ -17,8 +17,9 @@ const (
 
 // Attendance marking methods
 const (
-	MarkingMethodQRScan = "qr_scan"
-	MarkingMethodManual = "manual"
+	MarkingMethodQRScan       = "qr_scan"
+	MarkingMethodTelegramScan = "telegram_scan"
+	MarkingMethodManual       = "manual"
 )
 
 type AttendanceSession struct {
@@ -33,6 +34,8 @@ type AttendanceSession struct {
 	StartTime        time.Time  `json:"startTime"`
 	EndTime          *time.Time `json:"endTime,omitempty"`
 	ClosedAt         *time.Time `json:"closedAt,omitempty"`
+	DeepLinkCode     string     `json:"deeplinkCode,omitempty"`
+	TelegramLink     string     `json:"telegramLink,omitempty"`
 	ParticipantCount *int       `json:"participantCount,omitempty"` // populated for custom_list
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`

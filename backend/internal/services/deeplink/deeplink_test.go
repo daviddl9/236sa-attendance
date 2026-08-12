@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestIsValidCode(t *testing.T) {
+	code, err := GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{code, "", "too-short", code + "x", "!!!!!!!!!!!!!!!!!!!!!!"} {
+		want := candidate == code
+		if got := IsValidCode(candidate); got != want {
+			t.Fatalf("IsValidCode(%q) = %v, want %v", candidate, got, want)
+		}
+	}
+}
+
 func TestGenerateCode(t *testing.T) {
 	seen := make(map[string]struct{}, 256)
 	for i := 0; i < 256; i++ {
