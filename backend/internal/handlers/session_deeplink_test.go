@@ -19,7 +19,7 @@ import (
 func TestCreateSessionGeneratesUniqueDeepLinkCodes(t *testing.T) {
 	db, prefix := openRegistrationDB(t)
 	creatorID := prefix + "-creator"
-	seedUser(t, db, creatorID, "SESSION CREATOR", "3SG", "HQ", "session-creator", true)
+	seedUser(t, db, creatorID, "SESSION CREATOR", "3SG", "HQ", prefix+"-creator", true)
 
 	handler := NewSessionHandler(db, nil)
 	firstID := createStandardSession(t, handler, creatorID, "same name")
@@ -36,8 +36,8 @@ func TestCreateCustomSessionGeneratesDeepLinkCode(t *testing.T) {
 	db, prefix := openRegistrationDB(t)
 	creatorID := prefix + "-creator"
 	participantID := prefix + "-participant"
-	seedUser(t, db, creatorID, "SESSION CREATOR", "3SG", "HQ", "session-creator", true)
-	seedUser(t, db, participantID, "SESSION PARTICIPANT", "PTE", "Alpha", "session-participant", true)
+	seedUser(t, db, creatorID, "SESSION CREATOR", "3SG", "HQ", prefix+"-creator", true)
+	seedUser(t, db, participantID, "SESSION PARTICIPANT", "PTE", "Alpha", prefix+"-participant", true)
 
 	handler := NewSessionHandler(db, nil)
 	body := fmt.Sprintf(`{"name":"same name","participantIds":[%q]}`, participantID)
