@@ -41,7 +41,7 @@ type SessionResponse struct {
 }
 
 func telegramSessionLink(code string) string {
-	if !deeplink.IsValidCode(code) {
+	if !deeplink.IsValidCode(code) || strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")) == "" {
 		return ""
 	}
 	username := strings.TrimPrefix(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_USERNAME")), "@")

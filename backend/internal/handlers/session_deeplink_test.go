@@ -34,6 +34,7 @@ func TestCreateSessionGeneratesUniqueDeepLinkCodes(t *testing.T) {
 }
 
 func TestCreateSessionExposesTelegramDeepLink(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
 	t.Setenv("TELEGRAM_BOT_USERNAME", "synthetic_attendance_bot")
 	db, prefix := openRegistrationDB(t)
 	creatorID := prefix + "-creator"
