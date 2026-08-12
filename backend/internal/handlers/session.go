@@ -233,6 +233,11 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 	for i := range sessions {
 		setSessionQRVisibility(&sessions[i], user)
 	}
+	// Preserve the dashboard's historical null JSON shape for an empty result.
+	// Telegram adapters may still consume the service's non-nil empty slice.
+	if len(sessions) == 0 {
+		sessions = nil
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(sessions); err != nil {

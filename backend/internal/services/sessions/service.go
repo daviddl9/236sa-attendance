@@ -162,6 +162,7 @@ func (s *Service) ListActive(ctx context.Context, actor *models.User) ([]models.
 					JOIN "user" participant ON participant.id = sp.user_id
 					WHERE sp.session_id = attendance_session.id
 					  AND participant.battery = $4
+					  AND participant.verified = true
 				))
 			)
 			`

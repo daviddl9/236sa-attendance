@@ -3,9 +3,11 @@ package sessions
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,6 +131,85 @@ func TestCloseEnforcesOwnershipAndOnlyClosesActiveRows(t *testing.T) {
 	}
 }
 
+func TestListActiveExcludesCustomSessionWithOnlyUnverifiedParticipant(t *testing.T) {
+	db, prefix := openSessionServiceDB(t)
+	creatorID := prefix + "-creator"
+	actorID := prefix + "-actor"
+	participantID := prefix + "-unverified"
+	sessionID := prefix + "-custom"
+	seedSessionUser(t, db, creatorID, models.RankSSG, models.BatteryHQ, false)
+	seedSessionUser(t, db, actorID, models.Rank3SG, models.BatteryAlpha, false)
+	seedSessionUserVerified(t, db, participantID, models.RankPTE, models.BatteryAlpha, false, false)
+	seedSessionRow(t, db, sessionID, models.SessionScopeCustomList, nil, models.SessionStatusActive, creatorID)
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO session_participants (session_id, user_id) VALUES ($1, $2)
+	`, sessionID, participantID); err != nil {
+		t.Fatalf("insert unverified participant: %v", err)
+	}
+
+	actor := &models.User{ID: actorID, Rank: stringPtr(models.Rank3SG), Battery: stringPtr(models.BatteryAlpha)}
+	active, err := NewService(db, "bot").ListActive(context.Background(), actor)
+	if err != nil {
+		t.Fatalf("ListActive() error = %v", err)
+	}
+	for _, session := range active {
+		if session.ID == sessionID {
+			t.Fatalf("custom session with only unverified participant was listed: %+v", session)
+		}
+	}
+}
+
+func TestCloseConcurrentOnlyOneCallClosesSession(t *testing.T) {
+	db, prefix := openSessionServiceDB(t)
+	creatorID := prefix + "-creator"
+	sessionID := prefix + "-session"
+	seedSessionUser(t, db, creatorID, models.RankSSG, models.BatteryHQ, false)
+	seedSessionRow(t, db, sessionID, models.SessionScopeUnitWide, nil, models.SessionStatusActive, creatorID)
+
+	svc := NewService(db, "bot")
+	actor := &models.User{ID: creatorID, Rank: stringPtr(models.RankSSG)}
+	const callers = 2
+	start := make(chan struct{})
+	results := make(chan error, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			defer wg.Done()
+			<-start
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			results <- svc.Close(ctx, sessionID, actor)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var successes, closed int
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrSessionClosed):
+			closed++
+		default:
+			t.Fatalf("concurrent Close() error = %v, want inactive/closed outcome", err)
+		}
+	}
+	if successes != 1 || closed != 1 {
+		t.Fatalf("concurrent Close() outcomes = (%d success, %d closed), want (1, 1)", successes, closed)
+	}
+
+	var status string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT status FROM attendance_session WHERE id = $1`, sessionID).Scan(&status); err != nil {
+		t.Fatalf("read concurrent close status: %v", err)
+	}
+	if status != models.SessionStatusClosed {
+		t.Fatalf("status = %q, want closed", status)
+	}
+}
+
 func openSessionServiceDB(t *testing.T) (*database.DB, string) {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -150,11 +231,15 @@ func openSessionServiceDB(t *testing.T) (*database.DB, string) {
 }
 
 func seedSessionUser(t *testing.T, db *database.DB, id, rank, battery string, superadmin bool) {
+	seedSessionUserVerified(t, db, id, rank, battery, superadmin, true)
+}
+
+func seedSessionUserVerified(t *testing.T, db *database.DB, id, rank, battery string, superadmin, verified bool) {
 	t.Helper()
 	_, err := db.Pool.Exec(context.Background(), `
 		INSERT INTO "user" (id, "full_name", rank, battery, password, extras, "is_superadmin", verified, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $4, 'test', '{}'::jsonb, $5, true, NOW(), NOW())
-	`, id, id+" name", rank, battery, superadmin)
+		VALUES ($1, $2, $3, $4, 'test', '{}'::jsonb, $5, $6, NOW(), NOW())
+	`, id, id+" name", rank, battery, superadmin, verified)
 	if err != nil {
 		t.Fatalf("insert user %s: %v", id, err)
 	}

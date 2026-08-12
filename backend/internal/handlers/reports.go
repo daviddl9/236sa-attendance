@@ -231,10 +231,6 @@ func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request)
 		}
 		page++
 	}
-	if missingUsers == nil {
-		missingUsers = []UserInfo{}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(missingUsers); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
