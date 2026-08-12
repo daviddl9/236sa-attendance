@@ -105,6 +105,9 @@ func (s *TelegramPairingStore) ConfirmPairing(ctx context.Context, telegramID in
 		return telegram.PairingConfirmation{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, telegramID); err != nil {
+		return telegram.PairingConfirmation{}, err
+	}
 	var targetID, attemptOutcome string
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(user_id, ''), outcome FROM telegram_pairing_attempt

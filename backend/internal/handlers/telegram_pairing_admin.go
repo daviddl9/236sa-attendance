@@ -236,6 +236,10 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, telegramID); err != nil {
+		http.Error(w, "Failed to lock Telegram pairing", http.StatusInternalServerError)
+		return
+	}
 	var displayName string
 	if err := tx.QueryRow(ctx, `SELECT display_name FROM telegram_pairing_request WHERE telegram_id = $1 FOR UPDATE`, telegramID).Scan(&displayName); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
