@@ -128,6 +128,73 @@ func TestTelegramWebhookAuthenticatedMalformedAndMissingUpdatesReturnOK(t *testi
 	}
 }
 
+func TestTelegramWebhookBodyLimitBoundary(t *testing.T) {
+	const base = `{"message":{"from":{"id":99},"chat":{"id":99,"type":"private"},"text":"hello"}}`
+	cases := []struct {
+		name        string
+		size        int
+		wantActions int
+	}{
+		{name: "at limit", size: maxTelegramUpdate, wantActions: 1},
+		{name: "beyond limit", size: maxTelegramUpdate + 1, wantActions: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, sink := newTelegramTestHandler(false)
+			body := strings.Repeat(" ", tc.size-len(base))
+			req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", strings.NewReader(base+body))
+			req.Header.Set(telegramSecretHeader, "header-secret")
+			rec := httptest.NewRecorder()
+			handler.Webhook(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if len(sink.actions) != tc.wantActions {
+				t.Fatalf("actions = %d, want %d", len(sink.actions), tc.wantActions)
+			}
+		})
+	}
+}
+
+func TestTelegramWebhookHandlesNullAndUnexpectedFieldTypes(t *testing.T) {
+	bodies := map[string]string{
+		"null update":           `null`,
+		"null message":          `{"message":null}`,
+		"null chat":             `{"message":{"chat":null}}`,
+		"null sender":           `{"message":{"from":null,"chat":{"id":99,"type":"private"}}}`,
+		"message array":         `{"message":[]}`,
+		"chat array":            `{"message":{"chat":[]}}`,
+		"sender array":          `{"message":{"from":[],"chat":{"id":99,"type":"private"}}}`,
+		"chat ID string":        `{"message":{"chat":{"id":"wrong","type":"private"}}}`,
+		"callback array":        `{"callback_query":[]}`,
+		"callback ID number":    `{"callback_query":{"id":7}}`,
+		"callback null message": `{"callback_query":{"id":"callback-1","message":null}}`,
+		"callback null chat":    `{"callback_query":{"id":"callback-1","message":{"chat":null}}}`,
+	}
+
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Fatalf("webhook panicked: %v", recovered)
+				}
+			}()
+			handler, sink := newTelegramTestHandler(false)
+			req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(body))
+			req.Header.Set(telegramSecretHeader, "header-secret")
+			rec := httptest.NewRecorder()
+			handler.Webhook(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if len(sink.actions) != 0 {
+				t.Fatalf("unexpected input queued actions: %#v", sink.actions)
+			}
+		})
+	}
+}
+
 func TestTelegramWebhookDisabledWithoutBotConfiguration(t *testing.T) {
 	handler := NewTelegramHandler(nil, "", nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(`{"message":{}}`))
