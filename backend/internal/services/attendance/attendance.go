@@ -16,8 +16,8 @@ import (
 type MarkRequest struct {
 	SessionID string
 	UserID    string
-	Method    string
-	MarkedBy  *string
+	Method    string  // qr_scan | manual (telegram_scan arrives in a later task)
+	MarkedBy  *string // set for manual marks
 }
 
 // MarkOutcome is the result of evaluating a mark request.
