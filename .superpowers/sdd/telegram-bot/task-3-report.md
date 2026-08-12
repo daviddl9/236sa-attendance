@@ -218,6 +218,39 @@ Exit status: 0. The build emitted the existing browser-data and chunk-size advis
 
 Exit status: 0.
 
+### `cd frontend && npm run build && npm run lint`
+
+```text
+> go-nextjs-frontend@0.1.0 build
+> tsc -b && vite build
+
+vite v7.2.4 building client environment for production...
+[baseline-browser-mapping] The data in this module is over two months old. To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+transforming...
+Browserslist: browsers data (caniuse-lite) is 9 months old. Please run:
+  npx update-browserslist-db@latest
+  Why? https://github.com/browserslist/update-db#readme
+✓ 3574 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                     0.52 kB │ gzip:   0.32 kB
+dist/assets/index-DIY95Nft.css     63.22 kB │ gzip:  11.20 kB
+dist/assets/index-XtLNV7bV.js   1,601.70 kB │ gzip: 493.10 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split your application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options.html#output-manualchunks
+- Adjust chunk size limit via build.chunkSizeWarningLimit.
+✓ built in 4.20s
+
+> go-nextjs-frontend@0.1.0 lint
+> eslint .
+
+[baseline-browser-mapping] The data in this module is over two months old. To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+```
+
+Exit status: 0.
+
 ### Additional checks
 
 - `go test -race ./backend/internal/telegram ./backend/internal/handlers` passed.
