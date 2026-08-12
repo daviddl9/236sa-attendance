@@ -172,6 +172,9 @@ func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 	assertTelegramRecord(t, db, prefix+"-scoped", outsideID, 0, "")
 }
 
+// These fixtures intentionally use generated row IDs, deterministic synthetic
+// names/Telegram IDs, and freshly generated test-only deep-link codes. The
+// webhook-to-database behavior does not depend on production-shaped data.
 func openTelegramAttendanceDB(t *testing.T) (*database.DB, string) {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
