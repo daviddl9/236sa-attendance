@@ -475,7 +475,27 @@ func TestBotConfirmationUsesCallbackAndDoesNotRevealConflict(t *testing.T) {
 	}
 }
 
-func TestBotUnpairedCommandAsksForName(t *testing.T) {
+func TestBotUnpairedStartWithoutPayloadUsesTelegramDisplayName(t *testing.T) {
+	flow := &fakePairingFlow{proposal: PairingProposal{
+		AttemptID: "attempt-start", UserID: "user-start", Name: "SYNTHETIC DISPLAY SOLDIER", Rank: "PTE", Battery: "Alpha", Score: 100,
+	}}
+	bot := NewBot(flow)
+	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
+		From: &User{ID: 42, FirstName: "Synthetic", LastName: "Display Soldier"},
+		Chat: Chat{ID: 42, Type: "private"}, Text: "/start",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.seenName != "Synthetic Display Soldier" {
+		t.Fatalf("pairing name = %q, want Telegram display name", flow.seenName)
+	}
+	if len(actions) != 1 || actions[0].Text != "Are you PTE SYNTHETIC DISPLAY SOLDIER, Alpha?" {
+		t.Fatalf("actions = %#v", actions)
+	}
+}
+
+func TestBotUnpairedStartWithEmptyDisplayNameAsksForName(t *testing.T) {
 	flow := &fakePairingFlow{}
 	bot := NewBot(flow)
 	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
@@ -486,6 +506,31 @@ func TestBotUnpairedCommandAsksForName(t *testing.T) {
 	}
 	if len(actions) != 1 || actions[0].Text != NamePromptReply {
 		t.Fatalf("prompt = %#v", actions)
+	}
+	if flow.seenName != "" {
+		t.Fatalf("pairing name = %q, want no pairing attempt", flow.seenName)
+	}
+}
+
+func TestParseStartCommandPreservesExplicitCommandState(t *testing.T) {
+	for _, tc := range []struct {
+		text       string
+		isStart    bool
+		hasPayload bool
+		payload    string
+	}{
+		{text: "/start", isStart: true},
+		{text: "/start opaque-code", isStart: true, hasPayload: true, payload: "opaque-code"},
+		{text: "/start opaque code", isStart: true, hasPayload: true},
+		{text: "/start@synthetic_bot", isStart: true},
+		{text: "hello", isStart: false},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			got := parseStartCommand(tc.text)
+			if got.isStartCommand != tc.isStart || got.hasPayload != tc.hasPayload || got.payload != tc.payload {
+				t.Fatalf("parseStartCommand(%q) = %+v, want isStart=%v hasPayload=%v payload=%q", tc.text, got, tc.isStart, tc.hasPayload, tc.payload)
+			}
+		})
 	}
 }
 

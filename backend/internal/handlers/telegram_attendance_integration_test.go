@@ -142,6 +142,71 @@ func TestTelegramWebhookUnpairedDeepLinkUsesDisplayNameProposalWithoutMark(t *te
 	assertTelegramRecord(t, db, prefix+"-session", targetID, 0, "")
 }
 
+func TestTelegramWebhookNoPayloadStartUsesDisplayNameAndEmptyPrompts(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	targetID := prefix + "-no-payload-target"
+	sessionID := prefix + "-no-payload-session"
+	seedUser(t, db, targetID, "SYNTHETIC DISPLAY SOLDIER", "PTE", "Alpha", prefix+"-no-payload-target", true)
+	seedTelegramSession(t, db, sessionID, "Synthetic no-payload parade", "unit_wide", nil, "active", targetID)
+	telegramID := int64(970000000141)
+	emptyNameTelegramID := telegramID + 1
+	handler, sink := newTelegramAttendanceHandler(db)
+
+	first := postTelegramUserMessage(t, handler, telegram.User{
+		ID: telegramID, FirstName: "Synthetic", LastName: "Display Soldier",
+	}, "/start")
+	if first.Code != http.StatusOK {
+		t.Fatalf("no-payload webhook status = %d, want 200", first.Code)
+	}
+	actions := sink.Actions()
+	if len(actions) != 1 || actions[0].Text != "Are you PTE SYNTHETIC DISPLAY SOLDIER, Alpha?" {
+		t.Fatalf("no-payload pairing actions = %#v", actions)
+	}
+	if actions[0].ReplyMarkup == nil {
+		t.Fatal("no-payload strong match did not require explicit confirmation")
+	}
+	assertTelegramRecord(t, db, sessionID, targetID, 0, "")
+
+	var requestCount int
+	var displayName, attemptID string
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*), COALESCE(MAX(display_name), ''), COALESCE(MAX(attempt_id), '')
+		FROM telegram_pairing_request WHERE telegram_id = $1
+	`, telegramID).Scan(&requestCount, &displayName, &attemptID); err != nil {
+		t.Fatalf("read no-payload pairing request: %v", err)
+	}
+	if requestCount != 1 || displayName != "Synthetic Display Soldier" || attemptID == "" {
+		t.Fatalf("no-payload pairing request = (%d, %q, %q), want persisted display name and attempt", requestCount, displayName, attemptID)
+	}
+	var outcome, proposedUserID string
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT outcome, COALESCE(user_id, '') FROM telegram_pairing_attempt WHERE id = $1
+	`, attemptID).Scan(&outcome, &proposedUserID); err != nil {
+		t.Fatalf("read no-payload pairing attempt: %v", err)
+	}
+	if outcome != "proposed" || proposedUserID != targetID {
+		t.Fatalf("no-payload pairing attempt = (%q, %q), want proposed target %q", outcome, proposedUserID, targetID)
+	}
+
+	sink.Reset()
+	empty := postTelegramUserMessage(t, handler, telegram.User{ID: emptyNameTelegramID}, "/start")
+	if empty.Code != http.StatusOK {
+		t.Fatalf("empty-display webhook status = %d, want 200", empty.Code)
+	}
+	if actions = sink.Actions(); len(actions) != 1 || actions[0].Text != telegram.NamePromptReply {
+		t.Fatalf("empty-display pairing actions = %#v, want name prompt", actions)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1
+	`, emptyNameTelegramID).Scan(&requestCount); err != nil {
+		t.Fatalf("read empty-display pairing request: %v", err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("empty-display pairing request count = %d, want 0", requestCount)
+	}
+	assertTelegramRecord(t, db, sessionID, targetID, 0, "")
+}
+
 func TestTelegramWebhookConcurrentDuplicateDeliveryCreatesOneRecord(t *testing.T) {
 	db, prefix := openTelegramAttendanceDB(t)
 	soldierID := prefix + "-concurrent-soldier"

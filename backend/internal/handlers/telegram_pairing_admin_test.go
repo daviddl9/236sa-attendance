@@ -296,6 +296,78 @@ func TestTelegramPairingAdminResolutionRejectsVerifiedUnrelatedTarget(t *testing
 	}
 }
 
+func TestTelegramPairingAdminResolutionRanksAfterTargetLock(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	actorID := prefix + "-commander"
+	targetID := prefix + "-aaa-target"
+	targetName := "LOCKED RANK TARGET"
+	for _, id := range []string{targetID, prefix + "-candidate-0", prefix + "-candidate-1", prefix + "-candidate-2", prefix + "-candidate-3", prefix + "-candidate-4"} {
+		seedUser(t, db, id, targetName, "PTE", "Alpha", "", true)
+	}
+	store := &TelegramPairingStore{db: db}
+	proposal, err := store.ProposePairing(context.Background(), telegramID, targetName)
+	if err != nil || !proposal.NoMatch {
+		t.Fatalf("proposal = %+v, err=%v", proposal, err)
+	}
+	var attemptID string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT attempt_id FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&attemptID); err != nil {
+		t.Fatal(err)
+	}
+
+	blocker, err := db.Pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err := blocker.Exec(context.Background(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, targetID); err != nil {
+		t.Fatal(err)
+	}
+
+	admin := NewAdminHandler(db)
+	statusCh := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"`+targetID+`"}`))
+		req = withTelegramRoute(req, telegramID)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, Rank: stringPtr("SSG")}))
+		rec := httptest.NewRecorder()
+		admin.ConfirmTelegramPairing(rec, req)
+		statusCh <- rec.Code
+	}()
+	if !waitForAdvisoryWaiters(db, telegramID, targetID, 1, 0, 2*time.Second) {
+		t.Fatal("admin resolution did not wait for the target advisory lock")
+	}
+	if _, err := blocker.Exec(context.Background(), `UPDATE "user" SET "full_name" = $1 WHERE id = $2`, "CHANGED AFTER TARGET LOCK", targetID); err != nil {
+		t.Fatal(err)
+	}
+	if err := blocker.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case status := <-statusCh:
+		if status != http.StatusBadRequest {
+			t.Fatalf("stale ranked target status = %d, want %d", status, http.StatusBadRequest)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("admin resolution timed out")
+	}
+
+	var pairings, requests int
+	var outcome string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, telegramID).Scan(&pairings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outcome FROM telegram_pairing_attempt WHERE id = $1`, attemptID).Scan(&outcome); err != nil {
+		t.Fatal(err)
+	}
+	if pairings != 0 || requests != 1 || outcome != "no_match" {
+		t.Fatalf("after target changed while locked: pairings=%d requests=%d outcome=%q", pairings, requests, outcome)
+	}
+}
+
 func TestTelegramPairingReviewOnlyListsActiveWeakRequests(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
 	targetID := prefix + "-target"
