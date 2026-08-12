@@ -15,6 +15,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/agent"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -44,6 +45,14 @@ func main() {
 
 	// Initialize SSE hub for real-time updates
 	sseHub := sse.NewHub()
+
+	// Initialize optional Telegram bot. A missing token disables only this
+	// integration; the rest of the API starts exactly as before.
+	telegramConfig := telegram.LoadConfig()
+	telegramHandler, telegramDispatcher := newTelegramRuntime(db, telegramConfig)
+	if telegramDispatcher != nil {
+		defer telegramDispatcher.Close()
+	}
 
 	// Initialize router
 	r := chi.NewRouter()
@@ -114,6 +123,10 @@ func main() {
 
 		// API routes
 		r.Route("/api", func(r chi.Router) {
+			// Telegram is public by design; its own secret-header check is the
+			// authentication boundary and it must stay outside protected routes.
+			r.Post("/telegram/webhook/"+telegramConfig.WebhookPathSegment(), telegramHandler.Webhook)
+
 			// Public QR scan route (must be before protected routes)
 			attendanceHandler := handlers.NewAttendanceHandler(db, sseHub)
 			r.Get("/qr/{token}", attendanceHandler.HandleQRScan)
@@ -288,4 +301,20 @@ func newAgentParser() agent.Parser {
 		return nil
 	}
 	return agent.NewParser(client)
+}
+
+func newTelegramRuntime(db *database.DB, config telegram.Config) (*handlers.TelegramHandler, *telegram.Dispatcher) {
+	if !config.Enabled() {
+		log.Println("Telegram bot disabled: set TELEGRAM_BOT_TOKEN to enable")
+		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
+	}
+
+	client, err := telegram.NewClient(config.BotToken)
+	if err != nil {
+		log.Println("Telegram bot disabled: client could not be initialized")
+		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
+	}
+	bot := telegram.NewBot(handlers.NewTelegramPairingStore(db))
+	dispatcher := telegram.NewDispatcher(client, 512)
+	return handlers.NewTelegramHandler(bot, config.WebhookSecret, dispatcher), dispatcher
 }
