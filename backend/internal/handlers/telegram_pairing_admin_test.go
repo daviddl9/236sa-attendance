@@ -192,6 +192,150 @@ func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	if intended != "confirmed" || later != "no_match" {
 		t.Fatalf("attempt outcomes = intended %q, later %q", intended, later)
 	}
+	var pairedUser string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT user_id FROM telegram_pairing WHERE telegram_id = $1`, telegramID).Scan(&pairedUser); err != nil {
+		t.Fatal(err)
+	}
+	if pairedUser != prefix+"-target" {
+		t.Fatalf("paired user = %q, want %q", pairedUser, prefix+"-target")
+	}
+}
+
+func TestTelegramPairingAdminResolutionRejectsUnverifiedTarget(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	actorID := prefix + "-commander"
+	targetID := prefix + "-unverified"
+	seedUser(t, db, actorID, "TEST COMMANDER", "SSG", "HQ", "", true)
+	seedUser(t, db, targetID, "UNVERIFIED TARGET", "PTE", "Alpha", "", false)
+	store := &TelegramPairingStore{db: db}
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "UNVERIFIED TARGET")
+	if err != nil || !proposal.NoMatch {
+		t.Fatalf("proposal = %+v, err=%v", proposal, err)
+	}
+	var attemptID string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT attempt_id FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if attemptID == "" {
+		t.Fatal("weak pairing request has no attempt")
+	}
+
+	admin := NewAdminHandler(db)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"`+targetID+`"}`))
+	req = withTelegramRoute(req, telegramID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, Rank: stringPtr("SSG")}))
+	rec := httptest.NewRecorder()
+	admin.ConfirmTelegramPairing(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("unverified target status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var pairings, requests int
+	var outcome, attemptUser string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, telegramID).Scan(&pairings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outcome, COALESCE(user_id, '') FROM telegram_pairing_attempt WHERE id = $1`, attemptID).Scan(&outcome, &attemptUser); err != nil {
+		t.Fatal(err)
+	}
+	if pairings != 0 || requests != 1 || outcome != "no_match" || attemptUser != "" {
+		t.Fatalf("after rejected unverified target: pairings=%d requests=%d outcome=%q attempt user=%q", pairings, requests, outcome, attemptUser)
+	}
+}
+
+func TestTelegramPairingAdminResolutionRejectsVerifiedUnrelatedTarget(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	actorID := prefix + "-commander"
+	seedUser(t, db, actorID, "TEST COMMANDER", "SSG", "HQ", "", true)
+	for i := 0; i < 5; i++ {
+		seedUser(t, db, fmt.Sprintf("%s-candidate-%d", prefix, i), "MATCH TARGET", "PTE", "Alpha", "", true)
+	}
+	unrelatedID := prefix + "-unrelated"
+	seedUser(t, db, unrelatedID, "UNRELATED PERSON", "PTE", "Alpha", "", true)
+	store := &TelegramPairingStore{db: db}
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "MATCH TARGET")
+	if err != nil || !proposal.NoMatch {
+		t.Fatalf("proposal = %+v, err=%v", proposal, err)
+	}
+	var attemptID string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT attempt_id FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&attemptID); err != nil {
+		t.Fatal(err)
+	}
+	if attemptID == "" {
+		t.Fatal("weak pairing request has no attempt")
+	}
+
+	admin := NewAdminHandler(db)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"`+unrelatedID+`"}`))
+	req = withTelegramRoute(req, telegramID)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, Rank: stringPtr("SSG")}))
+	rec := httptest.NewRecorder()
+	admin.ConfirmTelegramPairing(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("verified unrelated target status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var pairings, requests int
+	var outcome string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, telegramID).Scan(&pairings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `SELECT outcome FROM telegram_pairing_attempt WHERE id = $1`, attemptID).Scan(&outcome); err != nil {
+		t.Fatal(err)
+	}
+	if pairings != 0 || requests != 1 || outcome != "no_match" {
+		t.Fatalf("after rejected unrelated target: pairings=%d requests=%d outcome=%q", pairings, requests, outcome)
+	}
+}
+
+func TestTelegramPairingReviewOnlyListsActiveWeakRequests(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	targetID := prefix + "-target"
+	seedUser(t, db, targetID, "STRONG REQUEST PERSON", "PTE", "Alpha", "", true)
+	store := &TelegramPairingStore{db: db}
+	weakID := telegramID
+	weak, err := store.ProposePairing(context.Background(), weakID, "UNRELATED REQUEST")
+	if err != nil || !weak.NoMatch {
+		t.Fatalf("weak proposal = %+v, err=%v", weak, err)
+	}
+	var weakAttemptID string
+	if err := db.Pool.QueryRow(context.Background(), `SELECT attempt_id FROM telegram_pairing_request WHERE telegram_id = $1`, weakID).Scan(&weakAttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if weakAttemptID == "" {
+		t.Fatal("weak pairing request has no attempt")
+	}
+	strongID := telegramID + 1
+	strong, err := store.ProposePairing(context.Background(), strongID, "STRONG REQUEST PERSON")
+	if err != nil || strong.NoMatch || strong.AttemptID == "" {
+		t.Fatalf("strong proposal = %+v, err=%v", strong, err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/telegram/pairings", nil)
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: prefix + "-commander", Rank: stringPtr("SSG")}))
+	rec := httptest.NewRecorder()
+	NewAdminHandler(db).ListTelegramPairings(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("review status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var response TelegramPairingReviewResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Requests) != 1 || response.Requests[0].TelegramID != weakID || response.Requests[0].AttemptID != weakAttemptID {
+		t.Fatalf("active requests = %+v, want weak request only", response.Requests)
+	}
+	for _, request := range response.Requests {
+		if request.TelegramID == strongID {
+			t.Fatalf("strong proposed request was actionable: %+v", request)
+		}
+	}
 }
 
 func TestTelegramPairingConfirmAndUnpairDoNotDeadlock(t *testing.T) {
