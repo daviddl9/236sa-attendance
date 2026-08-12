@@ -90,18 +90,6 @@ func normalizeNRICLast5(value string) (string, bool) {
 	return strings.ToUpper(value), true
 }
 
-func prepareSignInCredential(identifier string, password string) (string, *string, bool) {
-	if strings.EqualFold(identifier, "admin") {
-		return password, nil, true
-	}
-
-	normalizedPassword, ok := normalizeNRICLast5(password)
-	if !ok {
-		return "", nil, false
-	}
-	return normalizedPassword, &normalizedPassword, true
-}
-
 func isValidNRICLast5(value string) bool {
 	if len(value) != 5 {
 		return false
