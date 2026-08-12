@@ -176,6 +176,20 @@ Authority comes from the paired roster row's existing tier, so `middleware/rbac.
 - **No roster leakage**: a soldier's replies contain only their own name. Search is commander-only and battery-scoped.
 - **Config**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME` from the environment, never committed. The bot stays disabled when the token is absent, so local and test runs are unaffected.
 
+## Pairing model: soldier confirms, commander reviews by exception
+
+The soldier types their name. The bot ranks the roster with the 008 matcher and, **only if there is a strong match**, proposes exactly one person: *"Are you CPL TAN WEI MING, Bravo?"* On confirmation the pairing is live and they can mark attendance immediately. No commander is in the path.
+
+Three properties keep that safe, and all three must hold:
+
+1. **The system proposes; the soldier confirms.** Never a list to pick from, so the roster is never enumerated, and never a silent system decision.
+2. **Strong matches only.** Below `StrongCandidateScore` the bot proposes nobody and sends them to a commander. That bounds how wrong an automatic pairing can be.
+3. **One account per roster row.** A second account claiming a held row is refused and raised as a conflict, so impersonation is loud rather than silent.
+
+Why this is acceptable here when it was not on the web: a Telegram claim is bound to a real, traceable, bannable account, whereas the web form was anonymous. The residual risk is a soldier deliberately claiming a mate's identity — which is what already happens today with a shared NRIC, except now it leaves a trail and collides visibly.
+
+Rate-limit proposals per Telegram account: because the bot answers "are you X?", an unbounded attacker could use it to test which names are on the roster.
+
 ## Reusing the 008 pairing UI
 
 Feature 008's approval screen already does exactly what pairing needs: take a request carrying a claimed name, rank roster candidates by fuzzy score, show mismatch chips, and require an explicit confirmation.
@@ -189,7 +203,7 @@ The only change is the intake channel. A pairing request carries a Telegram disp
 | **1** | Extract `services/attendance`; rewire `HandleQRScan`; no behaviour change | Medium — regression risk, so it ships alone with tests first |
 | **2** | Migration: pairing tables, `deeplink_code`, backfill | Low |
 | **3** | Telegram client + webhook endpoint + auth; bot replies to a DM but does not mark | Low |
-| **4** | Pairing request intake and the commander confirm/unpair UI | Medium |
+| **4** | Pairing: soldier self-confirms a proposed match; commander review-by-exception and unpair | Medium |
 | **5** | Marking from `/start <code>`; session QR generates the `t.me` link | **Highest** |
 | **6** | Commander manual marking from the bot: missing list, tap to mark, search, undo, session context | Medium |
 

@@ -130,9 +130,13 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 
 - **FR-001**: The system MUST identify a soldier by their Telegram account identifier, never by a name, national identifier, or password.
 - **FR-002**: The system MUST record a pairing request the first time an unrecognised Telegram account contacts the bot, capturing the Telegram identifier and display name.
-- **FR-003**: The system MUST require a commander to confirm every pairing before that account can mark attendance.
+- **FR-003**: A soldier MUST be able to complete pairing themselves by confirming who they are, without waiting for a commander. Commanders review pairings afterwards rather than gating every one.
 - **FR-004**: The system MUST rank candidate roster rows for a pairing request by name similarity, tolerating misspellings and a wrong rank, reusing the ranking already built for 008.
-- **FR-005**: The system MUST NOT pair automatically, however close the match.
+- **FR-005**: The system MUST NOT pair without the soldier explicitly confirming a specific person the system proposed. It MUST NOT pair on a system decision alone, and MUST NOT present a list of people to choose from.
+- **FR-005a**: The system MUST propose a person only when the match is strong. When no strong match exists, it MUST NOT propose anyone and MUST direct the soldier to a commander.
+- **FR-005b**: The system MUST limit how many identity proposals one Telegram account can request, so the bot cannot be used to test which names are on the roster.
+- **FR-005c**: A pairing attempt against a roster row already held by another Telegram account MUST be refused, and MUST be surfaced to commanders as a conflict rather than recorded silently.
+- **FR-005d**: Commanders MUST be able to see recent pairings, with conflicts and refusals shown prominently ahead of routine ones.
 - **FR-006**: The system MUST enforce one Telegram account per roster row and one roster row per Telegram account.
 - **FR-007**: Commanders MUST be able to see existing pairings and remove one, so a wrong pairing or a changed Telegram account can be corrected.
 - **FR-008**: Confirming a pairing MUST preserve that soldier's existing attendance history.
@@ -194,7 +198,9 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 - **SC-002**: Soldiers hold no password for this system, and no password reset is ever needed for a soldier.
 - **SC-003**: The whole unit, about 431 people, can mark attendance within 5 minutes of a parade starting without failures.
 - **SC-004**: No unauthenticated request and no non-commander Telegram account can obtain any personnel name.
-- **SC-005**: A commander confirms a pairing in under 15 seconds, with the correct roster row offered first for a name containing a single typo.
+- **SC-005**: A soldier completes pairing in under 30 seconds without a commander present, for a name containing a single typo.
+- **SC-005a**: Commander effort for pairing scales with conflicts and weak matches, not with unit size: no routine pairing requires a commander action.
+- **SC-005b**: A second Telegram account attempting to claim a roster row that is already held never succeeds silently.
 - **SC-006**: Attendance history is unchanged by pairing.
 - **SC-007**: Commanders can still record attendance for the whole unit when Telegram is unavailable.
 - **SC-008**: Repeated delivery of the same scan produces exactly one attendance record.
