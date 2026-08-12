@@ -12,6 +12,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/attendance"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/go-chi/chi/v5"
 )
@@ -44,20 +45,15 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 	sessionID := parts[0]
 	secret := parts[1]
 
-	// Verify session exists and is active
+	// Verify the session exists and authorize the QR secret. The attendance
+	// service owns the session-validity decision below.
 	var qrSecret string
-	var status string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code_secret, status FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrSecret, &status)
+		SELECT qr_code_secret FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret)
 
 	if err != nil {
 		http.Error(w, "Invalid session", http.StatusNotFound)
-		return
-	}
-
-	if status != models.SessionStatusActive {
-		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
 
@@ -110,35 +106,51 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// User is authenticated - check if already marked
-	var existingID string
-	err = h.db.Pool.QueryRow(ctx, `
-		SELECT id FROM attendance_record WHERE session_id = $1 AND user_id = $2
-	`, sessionID, userID).Scan(&existingID)
-
-	if err == nil {
-		// Already marked - redirect to success page
-		http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
-		return
-	}
-
-	// Mark attendance
-	recordID := generateID()
-	now := time.Now()
-	_, err = h.db.Pool.Exec(ctx, `
-		INSERT INTO attendance_record (
-			id, session_id, user_id, marked_at, marking_method, "createdAt", "updatedAt"
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, recordID, sessionID, userID, now, models.MarkingMethodQRScan, now, now)
-
+	// Mark attendance in a caller-owned transaction.
+	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
 		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
 		return
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Broadcast SSE event for live updates
-	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, now)
+	outcome, err := attendance.Mark(ctx, tx, attendance.MarkRequest{
+		SessionID: sessionID,
+		UserID:    userID,
+		Method:    models.MarkingMethodQRScan,
+	})
+	if err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+	switch outcome {
+	case attendance.AlreadyMarked:
+		// Already marked - redirect to success page.
+		http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
+		return
+	case attendance.SessionClosed:
+		http.Error(w, "Session is not active", http.StatusBadRequest)
+		return
+	case attendance.OutOfScope:
+		http.Error(w, "User is outside session scope", http.StatusForbidden)
+		return
+	}
+
+	var markedAt time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT marked_at FROM attendance_record WHERE session_id = $1 AND user_id = $2
+	`, sessionID, userID).Scan(&markedAt)
+	if err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast SSE event for live updates after the mark commits.
+	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, markedAt)
 
 	// Redirect to success page
 	http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
@@ -189,20 +201,15 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify session exists and is active
+	// Verify the session exists and authorize the QR secret. The attendance
+	// service owns the session-validity decision below.
 	var qrSecret string
-	var status string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code_secret, status FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrSecret, &status)
+		SELECT qr_code_secret FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret)
 
 	if err != nil {
 		http.Error(w, "Invalid session", http.StatusNotFound)
-		return
-	}
-
-	if status != models.SessionStatusActive {
-		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
 
@@ -212,34 +219,50 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check if already marked
-	var existingID string
-	err = h.db.Pool.QueryRow(ctx, `
-		SELECT id FROM attendance_record WHERE session_id = $1 AND user_id = $2
-	`, sessionID, user.ID).Scan(&existingID)
-
-	if err == nil {
-		http.Error(w, "Attendance already marked for this session", http.StatusConflict)
-		return
-	}
-
-	// Create attendance record
-	recordID := generateID()
-	now := time.Now()
-	_, err = h.db.Pool.Exec(ctx, `
-		INSERT INTO attendance_record (
-			id, session_id, user_id, marked_at, marking_method, "createdAt", "updatedAt"
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, recordID, sessionID, user.ID, now, models.MarkingMethodQRScan, now, now)
-
+	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
 		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
 		return
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Broadcast SSE event for live updates
-	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, now)
+	outcome, err := attendance.Mark(ctx, tx, attendance.MarkRequest{
+		SessionID: sessionID,
+		UserID:    user.ID,
+		Method:    models.MarkingMethodQRScan,
+	})
+	if err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+	switch outcome {
+	case attendance.AlreadyMarked:
+		http.Error(w, "Attendance already marked for this session", http.StatusConflict)
+		return
+	case attendance.SessionClosed:
+		http.Error(w, "Session is not active", http.StatusBadRequest)
+		return
+	case attendance.OutOfScope:
+		http.Error(w, "User is outside session scope", http.StatusForbidden)
+		return
+	}
+
+	var recordID string
+	var markedAt time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT id, marked_at FROM attendance_record WHERE session_id = $1 AND user_id = $2
+	`, sessionID, user.ID).Scan(&recordID, &markedAt)
+	if err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Failed to mark attendance", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast SSE event for live updates after the mark commits.
+	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, markedAt)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{
@@ -264,19 +287,15 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Verify session exists
+	// Verify the session exists for the commander's transport authorization.
+	// The attendance service owns the session-validity decision below.
 	var session models.AttendanceSession
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT id, scope, batteries, status FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&session.ID, &session.Scope, &session.Batteries, &session.Status)
+		SELECT id, scope, batteries FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&session.ID, &session.Scope, &session.Batteries)
 
 	if err != nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-
-	if session.Status != models.SessionStatusActive {
-		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
 
@@ -317,26 +336,17 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 		}
 	}
 
-	now := time.Now()
+	batchMarkedAt := time.Now()
 	var successCount int
+	var closedCount int
 	var errors []string
 
-	// Mark attendance for each user
+	// Mark attendance for each user. Each mark keeps the existing partial-success
+	// behaviour while giving the service a caller-owned transaction.
 	for _, targetUserID := range req.UserIDs {
-		// Check if already marked
-		var existingID string
-		err := h.db.Pool.QueryRow(ctx, `
-			SELECT id FROM attendance_record WHERE session_id = $1 AND user_id = $2
-		`, sessionID, targetUserID).Scan(&existingID)
-
-		if err == nil {
-			errors = append(errors, fmt.Sprintf("User %s already marked", targetUserID))
-			continue
-		}
-
-		// Get target user details for broadcast
+		// Get target user details for broadcast.
 		var targetUser models.User
-		err = h.db.Pool.QueryRow(ctx, `
+		err := h.db.Pool.QueryRow(ctx, `
 			SELECT id, "full_name", rank, battery FROM "user" WHERE id = $1
 		`, targetUserID).Scan(&targetUser.ID, &targetUser.FullName, &targetUser.Rank, &targetUser.Battery)
 		if err != nil {
@@ -344,25 +354,66 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 			continue
 		}
 
-		// Create attendance record
-		recordID := generateID()
-		markedBy := user.ID
-		_, err = h.db.Pool.Exec(ctx, `
-			INSERT INTO attendance_record (
-				id, session_id, user_id, marked_at, marking_method, marked_by, "createdAt", "updatedAt"
-			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, recordID, sessionID, targetUserID, now, models.MarkingMethodManual, markedBy, now, now)
-
+		tx, err := h.db.Pool.Begin(ctx)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("Failed to mark user %s: %v", targetUserID, err))
 			continue
 		}
 
-		// Broadcast SSE event for this user
-		h.broadcastAttendanceMarked(ctx, sessionID, &targetUser, models.MarkingMethodManual, now)
+		markedBy := user.ID
+		outcome, err := attendance.Mark(ctx, tx, attendance.MarkRequest{
+			SessionID: sessionID,
+			UserID:    targetUserID,
+			Method:    models.MarkingMethodManual,
+			MarkedBy:  &markedBy,
+			MarkedAt:  &batchMarkedAt,
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			errors = append(errors, fmt.Sprintf("Failed to mark user %s: %v", targetUserID, err))
+			continue
+		}
 
+		switch outcome {
+		case attendance.AlreadyMarked:
+			_ = tx.Rollback(ctx)
+			errors = append(errors, fmt.Sprintf("User %s already marked", targetUserID))
+			continue
+		case attendance.SessionClosed:
+			_ = tx.Rollback(ctx)
+			closedCount++
+			errors = append(errors, "Session is not active")
+			continue
+		case attendance.OutOfScope:
+			_ = tx.Rollback(ctx)
+			errors = append(errors, fmt.Sprintf("User %s is outside session scope", targetUserID))
+			continue
+		}
+
+		var markedAt time.Time
+		if err := tx.QueryRow(ctx, `
+			SELECT marked_at FROM attendance_record WHERE session_id = $1 AND user_id = $2
+		`, sessionID, targetUserID).Scan(&markedAt); err != nil {
+			_ = tx.Rollback(ctx)
+			errors = append(errors, fmt.Sprintf("Failed to mark user %s: %v", targetUserID, err))
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to mark user %s: %v", targetUserID, err))
+			continue
+		}
+
+		// Broadcast SSE event for this user after the mark commits.
+		h.broadcastAttendanceMarked(ctx, sessionID, &targetUser, models.MarkingMethodManual, markedAt)
 		successCount++
+	}
+
+	// Preserve the legacy transport response when every requested target is
+	// rejected by the service because the session is closed. Mixed batches keep
+	// their per-target details in the JSON response below.
+	if closedCount == len(req.UserIDs) {
+		http.Error(w, "Session is not active", http.StatusBadRequest)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

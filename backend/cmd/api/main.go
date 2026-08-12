@@ -15,6 +15,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/agent"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -27,6 +28,11 @@ func main() {
 	// so Docker Compose env vars will take precedence
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
+	}
+
+	telegramConfig := telegram.LoadConfig()
+	if err := telegramConfig.Validate(); err != nil {
+		log.Fatalf("Invalid Telegram configuration: %v", err)
 	}
 
 	// Initialize database connection
@@ -44,6 +50,13 @@ func main() {
 
 	// Initialize SSE hub for real-time updates
 	sseHub := sse.NewHub()
+
+	// Initialize optional Telegram bot. An entirely empty configuration
+	// disables only this integration; partial configuration was rejected above.
+	telegramHandler, telegramDispatcher := newTelegramRuntime(db, telegramConfig, sseHub)
+	if telegramDispatcher != nil {
+		defer telegramDispatcher.Close()
+	}
 
 	// Initialize router
 	r := chi.NewRouter()
@@ -114,6 +127,10 @@ func main() {
 
 		// API routes
 		r.Route("/api", func(r chi.Router) {
+			// Telegram is public by design; its own secret-header check is the
+			// authentication boundary and it must stay outside protected routes.
+			r.Post("/telegram/webhook/"+telegramConfig.WebhookPathSegment(), telegramHandler.Webhook)
+
 			// Public QR scan route (must be before protected routes)
 			attendanceHandler := handlers.NewAttendanceHandler(db, sseHub)
 			r.Get("/qr/{token}", attendanceHandler.HandleQRScan)
@@ -201,19 +218,28 @@ func main() {
 					})
 				})
 
-				// Admin routes: superadmin only
+				// Telegram pairing review is available to unit commanders; all other
+				// admin operations remain superadmin-only.
 				r.Route("/admin", func(r chi.Router) {
-					r.Use(middleware.RequireSuperadmin(db))
 					adminHandler := handlers.NewAdminHandler(db)
-					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
-					r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
-					r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)
-					// Registration approval
-					r.Get("/registrations", adminHandler.ListPendingRegistrations)
-					r.Post("/registrations/bulk-approve", adminHandler.BulkApproveRegistrations)
-					r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
-					r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
-					r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)
+					r.Route("/telegram", func(r chi.Router) {
+						r.Use(middleware.RequireUnitCommander(db))
+						r.Get("/pairings", adminHandler.ListTelegramPairings)
+						r.Post("/pairings/{telegramID}/confirm", adminHandler.ConfirmTelegramPairing)
+						r.Delete("/pairings/{telegramID}", adminHandler.UnpairTelegramAccount)
+					})
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireSuperadmin(db))
+						r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
+						r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
+						r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)
+						// Registration approval
+						r.Get("/registrations", adminHandler.ListPendingRegistrations)
+						r.Post("/registrations/bulk-approve", adminHandler.BulkApproveRegistrations)
+						r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
+						r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
+						r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)
+					})
 				})
 
 				// Status routes: Tier 3+
@@ -288,4 +314,20 @@ func newAgentParser() agent.Parser {
 		return nil
 	}
 	return agent.NewParser(client)
+}
+
+func newTelegramRuntime(db *database.DB, config telegram.Config, hub *sse.Hub) (*handlers.TelegramHandler, *telegram.Dispatcher) {
+	if !config.Enabled() {
+		log.Println("Telegram bot disabled: configure all four Telegram settings to enable")
+		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
+	}
+
+	client, err := telegram.NewClient(config.BotToken)
+	if err != nil {
+		log.Println("Telegram bot disabled: client could not be initialized")
+		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
+	}
+	bot := telegram.NewBot(handlers.NewTelegramPairingStoreWithHub(db, hub))
+	dispatcher := telegram.NewDispatcher(client, 512)
+	return handlers.NewTelegramHandler(bot, config.WebhookSecret, dispatcher), dispatcher
 }

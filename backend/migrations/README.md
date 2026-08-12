@@ -42,6 +42,15 @@ go run ./cmd/migrate status ./migrations
 go run ./cmd/migrate down-to VERSION ./migrations
 ```
 
+## Telegram marking-method rollback safety
+
+The `20260814000000_telegram_scan_marking_method.sql` Down migration is
+non-destructive. It checks for existing `telegram_scan` attendance rows and
+raises a clear error before changing the constraint when any are present. A
+clean rollback is allowed only when no Telegram rows exist; operators must
+retain or explicitly migrate those rows before retrying. The migration never
+deletes or relabels attendance history.
+
 ## Creating New Migrations
 
 To create a new migration, add a single file following the naming pattern:

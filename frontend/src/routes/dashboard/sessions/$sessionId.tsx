@@ -129,8 +129,13 @@ function SessionDetailPage() {
       setMarkingUserId(userId);
       return apiClient.manualMarkAttendance(sessionId, { userIds: [userId] });
     },
-    onSuccess: () => {
-      toast.success('User marked as present');
+    onSuccess: (result) => {
+      const errors = result.errors ?? [];
+      if (result.successCount === 0 || errors.length > 0) {
+        toast.error(errors.join('; ') || 'Failed to mark attendance');
+      } else {
+        toast.success('User marked as present');
+      }
       setMarkingUserId(null);
       queryClient.invalidateQueries({ queryKey: ['session-analytics', sessionId] });
     },
@@ -181,16 +186,19 @@ function SessionDetailPage() {
   const canClose = user?.isSuperadmin || session?.createdBy === user?.id;
   const canDelete = isSuperadmin(user);
 
-  // Generate QR code URL from session data
-  // session.qrCode may contain "sessionID:secret" or "sessionID:secret:timestamp" format
-  // Extract secret (second part) and construct URL with session.id:secret
-  // Use frontend route for simpler URL that works with frontend domain
+  // Session QR codes are Telegram deep links. The backend supplies the
+  // configured link only to authorized QR viewers, so the browser never needs
+  // a bot token or the raw deep-link code. Keep the existing web scanner as a
+  // fallback for disabled/legacy sessions.
   const qrCodeUrl = session
-    ? (() => {
-        const parts = session.qrCode.split(':');
-        const secret = parts.length >= 2 ? parts[1] : '';
-        return `${window.location.origin}/qr/${session.id}:${secret}`;
-      })()
+    ? session.telegramLink ||
+      (session.qrCode
+        ? (() => {
+            const parts = session.qrCode.split(':');
+            const secret = parts.length >= 2 ? parts[1] : '';
+            return `${window.location.origin}/qr/${session.id}:${secret}`;
+          })()
+        : '')
     : '';
 
   const handleDownloadQR = () => {
@@ -411,8 +419,8 @@ function SessionDetailPage() {
           {isCommander && (
             <Card>
               <CardHeader>
-                <CardTitle>QR Code</CardTitle>
-                <CardDescription>Scan this QR code to mark attendance</CardDescription>
+                <CardTitle>Telegram QR Code</CardTitle>
+                <CardDescription>Scan this QR code in Telegram to mark attendance</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col items-center gap-4">
                 {session && qrCodeUrl ? (

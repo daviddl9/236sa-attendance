@@ -1,9 +1,9 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { Users, Calendar, ScanLine, BarChart3, Clock, UserCheck } from "lucide-react";
+import { Users, Calendar, ScanLine, BarChart3, Clock, UserCheck, Link2 } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
-import { isSuperadmin, getUserTier } from "../lib/user-utils";
+import { canManageUnit, isSuperadmin, getUserTier } from "../lib/user-utils";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/api-client";
 
@@ -53,6 +53,7 @@ export default function Sidebar() {
 
   const tier = getUserTier(user);
   const isAdmin = isSuperadmin(user);
+  const canManageTelegram = canManageUnit(user);
 
   // Poll pending registration count for superadmins.
   const { data: pendingData } = useQuery({
@@ -116,6 +117,21 @@ export default function Sidebar() {
                     {pendingCount}
                   </span>
                 )}
+              </div>
+            )}
+
+            {canManageTelegram && (
+              <div
+                onClick={() => navigate({ to: '/dashboard/admin/telegram-pairings' })}
+                className={clsx(
+                  "flex items-center gap-2 w-full rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:cursor-pointer",
+                  location.pathname.startsWith('/dashboard/admin/telegram-pairings')
+                    ? "bg-primary/10 text-primary hover:bg-primary/20"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                )}
+              >
+                <Link2 className="h-4 w-4" />
+                <span>Telegram pairings</span>
               </div>
             )}
           </div>

@@ -27,6 +27,10 @@ type RosterRow struct {
 // StrongCandidateScore is the minimum score for a close roster match.
 const StrongCandidateScore = 80
 
+// CandidateAmbiguityMargin is the minimum lead the top candidate needs over
+// the runner-up before an automatic proposal is safe.
+const CandidateAmbiguityMargin = 10
+
 // Candidate is a ranked roster row. Preselected is only a UI suggestion; the
 // approval endpoint still requires the commander to send an explicit user ID.
 type Candidate struct {
@@ -89,6 +93,18 @@ func RankCandidates(registration Registration, roster []RosterRow) []Candidate {
 		candidates = candidates[:5]
 	}
 	return MarkPreselection(candidates)
+}
+
+// Unambiguous reports whether the top candidate is strong and sufficiently
+// ahead of the runner-up for an automatic proposal.
+func Unambiguous(candidates []Candidate) bool {
+	if len(candidates) == 0 || candidates[0].Score < StrongCandidateScore {
+		return false
+	}
+	if len(candidates) == 1 {
+		return true
+	}
+	return candidates[0].Score-candidates[1].Score >= CandidateAmbiguityMargin
 }
 
 // MarkPreselection marks an unambiguous high-scoring candidate as a UI hint.
