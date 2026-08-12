@@ -129,8 +129,13 @@ function SessionDetailPage() {
       setMarkingUserId(userId);
       return apiClient.manualMarkAttendance(sessionId, { userIds: [userId] });
     },
-    onSuccess: () => {
-      toast.success('User marked as present');
+    onSuccess: (result) => {
+      const errors = result.errors ?? [];
+      if (result.successCount === 0 || errors.length > 0) {
+        toast.error(errors.join('; ') || 'Failed to mark attendance');
+      } else {
+        toast.success('User marked as present');
+      }
       setMarkingUserId(null);
       queryClient.invalidateQueries({ queryKey: ['session-analytics', sessionId] });
     },
