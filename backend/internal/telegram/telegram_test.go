@@ -512,6 +512,23 @@ func TestBotUnpairedStartWithEmptyDisplayNameAsksForName(t *testing.T) {
 	}
 }
 
+func TestBotUnpairedMalformedStartUsesTelegramDisplayName(t *testing.T) {
+	flow := &fakePairingFlow{proposal: PairingProposal{
+		AttemptID: "attempt-malformed", UserID: "user-malformed", Name: "SYNTHETIC DISPLAY SOLDIER", Rank: "PTE", Battery: "Alpha",
+	}}
+	bot := NewBot(flow)
+	_, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
+		From: &User{ID: 42, FirstName: "Synthetic", LastName: "Display Soldier"},
+		Chat: Chat{ID: 42, Type: "private"}, Text: "/start opaque payload",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.seenName != "Synthetic Display Soldier" {
+		t.Fatalf("pairing name = %q, want Telegram display name for malformed /start", flow.seenName)
+	}
+}
+
 func TestParseStartCommandPreservesExplicitCommandState(t *testing.T) {
 	for _, tc := range []struct {
 		text       string
