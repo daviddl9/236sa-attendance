@@ -309,8 +309,16 @@ func (h *AdminHandler) UnpairTelegramAccount(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
+	// Keep the same order as self-confirmation: Telegram account, roster
+	// user, pairing row, then pairing attempts. In particular, take the
+	// account lock before reading the row so an unpair cannot hold the row
+	// while a confirmation waits for the account or roster lock.
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock($1)`, telegramID); err != nil {
+		http.Error(w, "Failed to lock Telegram pairing", http.StatusInternalServerError)
+		return
+	}
 	var userID string
-	if err := tx.QueryRow(r.Context(), `SELECT user_id FROM telegram_pairing WHERE telegram_id = $1 FOR UPDATE`, telegramID).Scan(&userID); err != nil {
+	if err := tx.QueryRow(r.Context(), `SELECT user_id FROM telegram_pairing WHERE telegram_id = $1`, telegramID).Scan(&userID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Pairing not found", http.StatusNotFound)
 			return
@@ -320,6 +328,14 @@ func (h *AdminHandler) UnpairTelegramAccount(w http.ResponseWriter, r *http.Requ
 	}
 	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, userID); err != nil {
 		http.Error(w, "Failed to lock Telegram pairing", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.QueryRow(r.Context(), `SELECT user_id FROM telegram_pairing WHERE telegram_id = $1 FOR UPDATE`, telegramID).Scan(&userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Pairing not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to lock Telegram pairing row", http.StatusInternalServerError)
 		return
 	}
 	result, err := tx.Exec(r.Context(), `DELETE FROM telegram_pairing WHERE telegram_id = $1`, telegramID)

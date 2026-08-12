@@ -119,9 +119,12 @@ func (s *TelegramPairingStore) ConfirmPairing(ctx context.Context, telegramID in
 		return telegram.PairingConfirmation{}, err
 	}
 	var targetID, attemptOutcome string
+	// Lock order for pairing mutations is Telegram account, roster user,
+	// pairing row, then attempt row. Read the target before taking the roster
+	// lock, then re-read the attempt after all earlier locks are held.
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(user_id, ''), outcome FROM telegram_pairing_attempt
-		WHERE id = $1 AND telegram_id = $2 FOR UPDATE
+		WHERE id = $1 AND telegram_id = $2
 	`, attemptID, telegramID).Scan(&targetID, &attemptOutcome)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return telegram.PairingConfirmation{Outcome: telegram.PairingStale}, nil
@@ -133,10 +136,19 @@ func (s *TelegramPairingStore) ConfirmPairing(ctx context.Context, telegramID in
 		return pairingConfirmationState(telegramID, targetID), nil
 	}
 
-	// Unpairing and confirming a proposal for the same roster row use this
-	// lock. The second attempt read below observes whichever action committed
-	// first instead of reviving a proposal made while the row was held.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, targetID); err != nil {
+		return telegram.PairingConfirmation{}, err
+	}
+	// Lock the existing account row before the attempt row. There may be no
+	// row for a first pairing, but a successful lock here serializes unpairing
+	// and confirmation whenever the account is already paired.
+	var pairedUserID string
+	err = tx.QueryRow(ctx, `
+		SELECT user_id FROM telegram_pairing WHERE telegram_id = $1 FOR UPDATE
+	`, telegramID).Scan(&pairedUserID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		pairedUserID = ""
+	} else if err != nil {
 		return telegram.PairingConfirmation{}, err
 	}
 
