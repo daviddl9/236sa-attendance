@@ -270,6 +270,8 @@ export interface AttendanceSession {
   startTime: string;
   endTime?: string | null;
   closedAt?: string | null;
+  deeplinkCode?: string;
+  telegramLink?: string;
   createdAt: string;
   updatedAt: string;
 }

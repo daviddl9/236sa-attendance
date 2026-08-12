@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -37,6 +38,24 @@ type CreateSessionRequest struct {
 
 type SessionResponse struct {
 	models.AttendanceSession
+}
+
+func telegramSessionLink(code string) string {
+	if !deeplink.IsValidCode(code) {
+		return ""
+	}
+	username := strings.TrimPrefix(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_USERNAME")), "@")
+	if username == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://t.me/%s?start=%s", username, code)
+}
+
+func setTelegramSessionLink(session *models.AttendanceSession) {
+	if session == nil {
+		return
+	}
+	session.TelegramLink = telegramSessionLink(session.DeepLinkCode)
 }
 
 // CreateSession creates a new attendance session with QR code
@@ -120,6 +139,8 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		CreatedBy:    user.ID,
 		StartTime:    startTime,
 		EndTime:      req.EndTime,
+		DeepLinkCode: deeplinkCode,
+		TelegramLink: telegramSessionLink(deeplinkCode),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -147,7 +168,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	query := `
 		SELECT 
 			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, closed_at,
+			status, created_by, start_time, end_time, closed_at, deeplink_code,
 			"createdAt", "updatedAt"
 		FROM attendance_session
 		WHERE 1=1
@@ -188,6 +209,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var session models.AttendanceSession
 		var closedAt *time.Time
+		var deeplinkCode *string
 
 		err := rows.Scan(
 			&session.ID,
@@ -201,6 +223,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			&session.StartTime,
 			&session.EndTime,
 			&closedAt,
+			&deeplinkCode,
 			&session.CreatedAt,
 			&session.UpdatedAt,
 		)
@@ -209,6 +232,10 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		session.ClosedAt = closedAt
+		if deeplinkCode != nil {
+			session.DeepLinkCode = *deeplinkCode
+		}
+		setTelegramSessionLink(&session)
 		sessions = append(sessions, session)
 	}
 
@@ -225,11 +252,12 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 
 	var session models.AttendanceSession
 	var closedAt *time.Time
+	var deeplinkCode *string
 
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT 
 			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, closed_at,
+			status, created_by, start_time, end_time, closed_at, deeplink_code,
 			"createdAt", "updatedAt"
 		FROM attendance_session
 		WHERE id = $1
@@ -245,6 +273,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		&session.StartTime,
 		&session.EndTime,
 		&closedAt,
+		&deeplinkCode,
 		&session.CreatedAt,
 		&session.UpdatedAt,
 	)
@@ -255,6 +284,10 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	session.ClosedAt = closedAt
+	if deeplinkCode != nil {
+		session.DeepLinkCode = *deeplinkCode
+	}
+	setTelegramSessionLink(&session)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(session); err != nil {
@@ -269,7 +302,7 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT 
 			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, closed_at,
+			status, created_by, start_time, end_time, closed_at, deeplink_code,
 			"createdAt", "updatedAt"
 		FROM attendance_session
 		WHERE status = 'active'
@@ -285,6 +318,7 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 	for rows.Next() {
 		var session models.AttendanceSession
 		var closedAt *time.Time
+		var deeplinkCode *string
 
 		err := rows.Scan(
 			&session.ID,
@@ -298,6 +332,7 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 			&session.StartTime,
 			&session.EndTime,
 			&closedAt,
+			&deeplinkCode,
 			&session.CreatedAt,
 			&session.UpdatedAt,
 		)
@@ -306,6 +341,10 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 		}
 
 		session.ClosedAt = closedAt
+		if deeplinkCode != nil {
+			session.DeepLinkCode = *deeplinkCode
+		}
+		setTelegramSessionLink(&session)
 		sessions = append(sessions, session)
 	}
 
@@ -611,10 +650,10 @@ type participantMatch struct {
 }
 
 type unmatchedRow struct {
-	RowNum   int    `json:"rowNum"`
-	FullName string `json:"fullName"`
+	RowNum    int    `json:"rowNum"`
+	FullName  string `json:"fullName"`
 	NRICLast5 string `json:"nricLast5,omitempty"`
-	Reason   string `json:"reason"`
+	Reason    string `json:"reason"`
 }
 
 type CustomSessionPreviewResponse struct {
@@ -623,8 +662,8 @@ type CustomSessionPreviewResponse struct {
 }
 
 type CreateCustomSessionRequest struct {
-	Name           string   `json:"name"`
-	ParticipantIDs []string `json:"participantIds"`
+	Name           string     `json:"name"`
+	ParticipantIDs []string   `json:"participantIds"`
 	EndTime        *time.Time `json:"endTime,omitempty"`
 }
 
@@ -824,6 +863,8 @@ func (h *SessionHandler) CreateCustomSession(w http.ResponseWriter, r *http.Requ
 		Status:           models.SessionStatusActive,
 		CreatedBy:        user.ID,
 		EndTime:          req.EndTime,
+		DeepLinkCode:     deeplinkCode,
+		TelegramLink:     telegramSessionLink(deeplinkCode),
 		ParticipantCount: &count,
 		CreatedAt:        now,
 		UpdatedAt:        now,

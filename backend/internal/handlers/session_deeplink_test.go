@@ -14,6 +14,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestCreateSessionGeneratesUniqueDeepLinkCodes(t *testing.T) {
@@ -29,6 +30,41 @@ func TestCreateSessionGeneratesUniqueDeepLinkCodes(t *testing.T) {
 	secondCode := assertSessionDeepLinkCode(t, db, secondID)
 	if firstCode == secondCode {
 		t.Fatalf("two sessions created in the same request cycle received the same code: %q", firstCode)
+	}
+}
+
+func TestCreateSessionExposesTelegramDeepLink(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_USERNAME", "synthetic_attendance_bot")
+	db, prefix := openRegistrationDB(t)
+	creatorID := prefix + "-creator"
+	seedUser(t, db, creatorID, "SESSION CREATOR", "3SG", "HQ", prefix+"-creator", true)
+
+	handler := NewSessionHandler(db, nil)
+	sessionID := createStandardSession(t, handler, creatorID, "same name")
+	code := assertSessionDeepLinkCode(t, db, sessionID)
+
+	// The response itself is checked by createStandardSession's helper in the
+	// companion assertion below, while the persisted value remains the source
+	// of truth for the URL.
+	var response SessionResponse
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID, nil)
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("id", sessionID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rec := httptest.NewRecorder()
+	handler.GetSession(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get session status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.DeepLinkCode != code {
+		t.Fatalf("response deep-link code = %q, want %q", response.DeepLinkCode, code)
+	}
+	wantLink := "https://t.me/synthetic_attendance_bot?start=" + code
+	if response.TelegramLink != wantLink {
+		t.Fatalf("response Telegram link = %q, want %q", response.TelegramLink, wantLink)
 	}
 }
 
