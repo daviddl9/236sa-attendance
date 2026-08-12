@@ -25,7 +25,7 @@ const (
 type AttendanceSession struct {
 	ID               string     `json:"id"`
 	Name             string     `json:"name"`
-	QRCode           string     `json:"qrCode"`
+	QRCode           string     `json:"qrCode,omitempty"`
 	QRCodeSecret     string     `json:"-"` // Never serialize secret
 	Scope            string     `json:"scope"`
 	Batteries        []string   `json:"batteries"`
@@ -34,7 +34,7 @@ type AttendanceSession struct {
 	StartTime        time.Time  `json:"startTime"`
 	EndTime          *time.Time `json:"endTime,omitempty"`
 	ClosedAt         *time.Time `json:"closedAt,omitempty"`
-	DeepLinkCode     string     `json:"deeplinkCode,omitempty"`
+	DeepLinkCode     string     `json:"-"` // Internal pairing capability; never serialize
 	TelegramLink     string     `json:"telegramLink,omitempty"`
 	ParticipantCount *int       `json:"participantCount,omitempty"` // populated for custom_list
 	CreatedAt        time.Time  `json:"createdAt"`

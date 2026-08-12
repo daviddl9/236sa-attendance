@@ -187,15 +187,18 @@ function SessionDetailPage() {
   const canDelete = isSuperadmin(user);
 
   // Session QR codes are Telegram deep links. The backend supplies the
-  // persisted code and bot username so the browser never needs a bot token.
-  // Keep the existing web scanner as a fallback for disabled/legacy sessions.
+  // configured link only to authorized QR viewers, so the browser never needs
+  // a bot token or the raw deep-link code. Keep the existing web scanner as a
+  // fallback for disabled/legacy sessions.
   const qrCodeUrl = session
     ? session.telegramLink ||
-      (() => {
-        const parts = session.qrCode.split(':');
-        const secret = parts.length >= 2 ? parts[1] : '';
-        return `${window.location.origin}/qr/${session.id}:${secret}`;
-      })()
+      (session.qrCode
+        ? (() => {
+            const parts = session.qrCode.split(':');
+            const secret = parts.length >= 2 ? parts[1] : '';
+            return `${window.location.origin}/qr/${session.id}:${secret}`;
+          })()
+        : '')
     : '';
 
   const handleDownloadQR = () => {

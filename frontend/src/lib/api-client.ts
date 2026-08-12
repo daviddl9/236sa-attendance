@@ -262,7 +262,7 @@ export interface CreateCustomSessionRequest {
 export interface AttendanceSession {
   id: string;
   name: string;
-  qrCode: string;
+  qrCode?: string;
   scope: string;
   batteries: string[];
   status: string;
@@ -270,7 +270,6 @@ export interface AttendanceSession {
   startTime: string;
   endTime?: string | null;
   closedAt?: string | null;
-  deeplinkCode?: string;
   telegramLink?: string;
   createdAt: string;
   updatedAt: string;

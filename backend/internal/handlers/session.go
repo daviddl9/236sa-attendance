@@ -52,8 +52,17 @@ func telegramSessionLink(code string) string {
 	return fmt.Sprintf("https://t.me/%s?start=%s", username, code)
 }
 
-func setTelegramSessionLink(session *models.AttendanceSession) {
+// setSessionQRVisibility keeps both QR bearer capabilities behind the same
+// commander threshold used by RequireBatteryNCO and the frontend's
+// canAccessCommanderFeatures helper. DeepLinkCode remains internal even for
+// authorized callers because AttendanceSession never serializes it.
+func setSessionQRVisibility(session *models.AttendanceSession, user *models.User) {
 	if session == nil {
+		return
+	}
+	if user == nil || !user.IsCommander() {
+		session.QRCode = ""
+		session.TelegramLink = ""
 		return
 	}
 	session.TelegramLink = telegramSessionLink(session.DeepLinkCode)
@@ -141,11 +150,11 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		StartTime:    startTime,
 		EndTime:      req.EndTime,
 		DeepLinkCode: deeplinkCode,
-		TelegramLink: telegramSessionLink(deeplinkCode),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
+	setSessionQRVisibility(&session, user)
 	response := SessionResponse{
 		AttendanceSession: session,
 	}
@@ -160,6 +169,7 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 // ListSessions retrieves sessions with optional filters
 func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
+	user, _ := middleware.GetUserFromContext(r.Context())
 
 	status := r.URL.Query().Get("status")
 	battery := r.URL.Query().Get("battery")
@@ -236,7 +246,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		if deeplinkCode != nil {
 			session.DeepLinkCode = *deeplinkCode
 		}
-		setTelegramSessionLink(&session)
+		setSessionQRVisibility(&session, user)
 		sessions = append(sessions, session)
 	}
 
@@ -249,6 +259,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 // GetSession retrieves a single session by ID
 func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
+	user, _ := middleware.GetUserFromContext(r.Context())
 	sessionID := chi.URLParam(r, "id")
 
 	var session models.AttendanceSession
@@ -288,7 +299,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	if deeplinkCode != nil {
 		session.DeepLinkCode = *deeplinkCode
 	}
-	setTelegramSessionLink(&session)
+	setSessionQRVisibility(&session, user)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(session); err != nil {
@@ -299,6 +310,7 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 // GetActiveSessions retrieves all active sessions
 func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
+	user, _ := middleware.GetUserFromContext(r.Context())
 
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT 
@@ -345,7 +357,7 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 		if deeplinkCode != nil {
 			session.DeepLinkCode = *deeplinkCode
 		}
-		setTelegramSessionLink(&session)
+		setSessionQRVisibility(&session, user)
 		sessions = append(sessions, session)
 	}
 
@@ -865,12 +877,12 @@ func (h *SessionHandler) CreateCustomSession(w http.ResponseWriter, r *http.Requ
 		CreatedBy:        user.ID,
 		EndTime:          req.EndTime,
 		DeepLinkCode:     deeplinkCode,
-		TelegramLink:     telegramSessionLink(deeplinkCode),
 		ParticipantCount: &count,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
 
+	setSessionQRVisibility(&session, user)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(session)
