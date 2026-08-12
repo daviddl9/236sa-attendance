@@ -208,6 +208,9 @@ func (b *Bot) handleMessage(ctx context.Context, message *Message) ([]Action, er
 	}
 	if b.flow == nil {
 		if start.hasPayload {
+			if b.attendance == nil {
+				return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnlinkedReply}}, nil
+			}
 			return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnpairedAttendanceReply}}, nil
 		}
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnlinkedReply}}, nil
