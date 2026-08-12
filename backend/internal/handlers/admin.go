@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/matching"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/xuri/excelize/v2"
@@ -620,13 +622,31 @@ type PendingRegistration struct {
 
 // ListPendingRegistrations returns self-registered accounts awaiting approval.
 func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	battery := strings.TrimSpace(r.URL.Query().Get("battery"))
+	if battery != "" && !isValidBattery(battery) {
+		http.Error(w, "Invalid battery (must be HQ, Alpha, or Bravo)", http.StatusBadRequest)
+		return
+	}
+	if currentUser, ok := middleware.GetUserFromContext(r.Context()); ok && currentUser.GetTier() == models.TierBatteryNCO {
+		if currentUser.Battery == nil {
+			http.Error(w, "Battery scope is not configured", http.StatusForbidden)
+			return
+		}
+		if battery != "" && battery != *currentUser.Battery {
+			http.Error(w, "Insufficient permissions", http.StatusForbidden)
+			return
+		}
+		battery = *currentUser.Battery
+	}
 
-	rows, err := h.db.Pool.Query(ctx, `
-		SELECT id, username, claimed_name, claimed_rank, claimed_battery, "createdAt"
-		FROM pending_registration
-		ORDER BY "createdAt" ASC
-	`)
+	query := `SELECT id, username, claimed_name, claimed_rank, claimed_battery, "createdAt" FROM pending_registration`
+	args := []interface{}{}
+	if battery != "" {
+		query += ` WHERE claimed_battery = $1`
+		args = append(args, battery)
+	}
+	query += ` ORDER BY "createdAt" ASC`
+	rows, err := h.db.Pool.Query(r.Context(), query, args...)
 	if err != nil {
 		http.Error(w, "Failed to fetch pending registrations", http.StatusInternalServerError)
 		return
@@ -645,15 +665,27 @@ func (h *AdminHandler) ListPendingRegistrations(w http.ResponseWriter, r *http.R
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"registrations": pending,
-		"total":         len(pending),
-	})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"registrations": pending, "total": len(pending)})
 }
 
 type approveRegistrationRequest struct {
-	Mode   string `json:"mode"`
-	UserID string `json:"userId"`
+	Mode                   string `json:"mode"`
+	UserID                 string `json:"userId"`
+	AcknowledgeStrongMatch bool   `json:"acknowledgeStrongMatch"`
+	Bulk                   bool   `json:"-"`
+}
+
+var (
+	errBulkNeedsLink       = errors.New("needs_link")
+	errBulkMigratedPending = errors.New("migrated_pending")
+)
+
+type strongMatchApprovalError struct {
+	Candidate matching.Candidate
+}
+
+func (e *strongMatchApprovalError) Error() string {
+	return "strong_match"
 }
 
 type pendingApproval struct {
@@ -661,7 +693,7 @@ type pendingApproval struct {
 }
 
 // ApproveRegistration links a pending signup to an explicit roster row or
-// creates a new row. No fuzzy match is ever applied by this endpoint.
+// creates a new row after handling any strong roster match.
 func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Request) {
 	var req approveRegistrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -677,13 +709,26 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "userId is only valid for link mode", http.StatusBadRequest)
 		return
 	}
+	actorID := ""
+	if actor, ok := middleware.GetUserFromContext(r.Context()); ok {
+		actorID = actor.ID
+	}
+	if err := h.approveRegistration(r.Context(), chi.URLParam(r, "id"), req, actorID); err != nil {
+		writeApprovalDBError(w, err)
+		return
+	}
+	message := "Registration approved"
+	if req.Mode == "link" {
+		message = "Registration linked"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+}
 
-	ctx := r.Context()
-	registrationID := chi.URLParam(r, "id")
+func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID string, req approveRegistrationRequest, actorID string) error {
 	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
-		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
-		return
+		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -693,55 +738,153 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 		FROM pending_registration WHERE id = $1 FOR UPDATE
 	`, registrationID).Scan(&pending.ID, &pending.Username, &pending.PasswordHash, &pending.Name, &pending.Rank, &pending.Battery)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "Registration not found or already approved", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
-		return
+		return fmt.Errorf("registration not found or already approved: %w", err)
 	}
-
+	if req.Bulk && req.Mode == "create" {
+		if isMigratedPending(pending.Username) {
+			return errBulkMigratedPending
+		}
+		strongMatch, err := h.strongCandidate(ctx, tx, pending)
+		if err != nil {
+			return err
+		}
+		if strongMatch != nil {
+			return errBulkNeedsLink
+		}
+	}
+	if req.Mode == "create" && !req.Bulk && !req.AcknowledgeStrongMatch && !isMigratedPending(pending.Username) {
+		strongMatch, err := h.strongCandidate(ctx, tx, pending)
+		if err != nil {
+			return err
+		}
+		if strongMatch != nil {
+			return &strongMatchApprovalError{Candidate: *strongMatch}
+		}
+	}
 	if isMigratedPending(pending.Username) {
 		if req.Mode == "create" {
-			http.Error(w, "Carried-over registrations must be linked", http.StatusBadRequest)
-			return
+			return fmt.Errorf("carried-over registrations must be linked")
 		}
 		if req.UserID == "" {
 			req.UserID = pending.ID
 		}
 		if req.UserID != pending.ID {
-			http.Error(w, "Carried-over registration can only link to its existing row", http.StatusBadRequest)
-			return
+			return fmt.Errorf("carried-over registration can only link to its existing row")
 		}
 	}
 	if req.Mode == "link" {
 		if req.UserID == "" {
-			http.Error(w, "userId is required for link mode", http.StatusBadRequest)
-			return
+			return fmt.Errorf("userId is required for link mode")
 		}
 		if err := linkPendingRegistration(ctx, tx, pending, req.UserID); err != nil {
-			writeApprovalDBError(w, err)
-			return
+			return err
 		}
 	} else if err := createApprovedRegistration(ctx, tx, pending); err != nil {
-		writeApprovalDBError(w, err)
-		return
+		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM pending_registration WHERE id = $1`, pending.ID); err != nil {
-		writeApprovalDBError(w, err)
-		return
+		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		http.Error(w, "Failed to approve registration", http.StatusInternalServerError)
-		return
-	}
-
-	message := "Registration approved"
+	targetID := pending.ID
 	if req.Mode == "link" {
-		message = "Registration linked"
+		targetID = req.UserID
+	}
+	if err := recordAdminAction(ctx, tx, actorID, targetID, "approval"); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (h *AdminHandler) strongCandidate(ctx context.Context, tx pgx.Tx, pending pendingApproval) (*matching.Candidate, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, COALESCE("full_name", ''), COALESCE(rank, ''), COALESCE(battery, ''), username
+		FROM "user"
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	roster := make([]matching.RosterRow, 0)
+	for rows.Next() {
+		var row matching.RosterRow
+		if err := rows.Scan(&row.ID, &row.Name, &row.Rank, &row.Battery, &row.Username); err != nil {
+			return nil, err
+		}
+		roster = append(roster, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	candidates := matching.RankCandidates(matching.Registration{
+		Name: pending.Name, Rank: pending.Rank, Battery: pending.Battery,
+	}, roster)
+	for _, candidate := range candidates {
+		if candidate.Score >= matching.StrongCandidateScore {
+			return &candidate, nil
+		}
+	}
+	return nil, nil
+}
+
+type bulkApproveRequest struct {
+	RegistrationIDs []string `json:"registrationIds"`
+}
+
+type bulkApprovalResult struct {
+	ID      string `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// BulkApproveRegistrations creates only registrations without a strong roster
+// match. Likely matches and carried-over rows need an individual link decision.
+func (h *AdminHandler) BulkApproveRegistrations(w http.ResponseWriter, r *http.Request) {
+	var req bulkApproveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.RegistrationIDs) == 0 {
+		http.Error(w, "registrationIds must be a non-empty array", http.StatusBadRequest)
+		return
+	}
+	actorID := ""
+	if actor, ok := middleware.GetUserFromContext(r.Context()); ok {
+		actorID = actor.ID
+	}
+	results := make([]bulkApprovalResult, 0, len(req.RegistrationIDs))
+	approved := 0
+	for _, id := range req.RegistrationIDs {
+		result := bulkApprovalResult{ID: id}
+		if strings.TrimSpace(id) == "" {
+			result.Error = "Registration id is required"
+		} else if err := h.approveRegistration(r.Context(), id, approveRegistrationRequest{Mode: "create", Bulk: true}, actorID); err != nil {
+			result.Error = approvalErrorMessage(err)
+		} else {
+			result.Success = true
+			approved++
+		}
+		results = append(results, result)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"results": results, "approved": approved, "failed": len(results) - approved,
+	})
+}
+
+func approvalErrorMessage(err error) string {
+	if errors.Is(err, errBulkNeedsLink) || errors.Is(err, errBulkMigratedPending) {
+		return err.Error()
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "Registration not found or already approved"
+	}
+	message := err.Error()
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "unique") || strings.Contains(lower, "duplicate") {
+		return "Roster row or username is already claimed"
+	}
+	if strings.Contains(lower, "carried-over") || strings.Contains(lower, "userid") {
+		return message
+	}
+	return "Failed to approve registration"
 }
 
 func linkPendingRegistration(ctx context.Context, tx pgx.Tx, pending pendingApproval, userID string) error {
@@ -774,11 +917,33 @@ func createApprovedRegistration(ctx context.Context, tx pgx.Tx, pending pendingA
 }
 
 func writeApprovalDBError(w http.ResponseWriter, err error) {
+	var strongMatchErr *strongMatchApprovalError
+	if errors.As(err, &strongMatchErr) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":           "strong_match",
+			"message":         fmt.Sprintf("A close roster match was found: %s. Confirm this is a different person before creating a new roster row.", strongMatchErr.Candidate.Name),
+			"matchedPerson":   strongMatchErr.Candidate.Name,
+			"matchedPersonId": strongMatchErr.Candidate.ID,
+			"score":           strongMatchErr.Candidate.Score,
+		})
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
+		if strings.Contains(strings.ToLower(err.Error()), "registration") {
+			http.Error(w, "Registration not found or already approved", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Roster row not found", http.StatusNotFound)
 		return
 	}
-	if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "carried-over") || strings.Contains(lower, "userid is required") {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(lower, "unique") || strings.Contains(lower, "duplicate") {
 		http.Error(w, "Roster row or username is already claimed", http.StatusConflict)
 		return
 	}

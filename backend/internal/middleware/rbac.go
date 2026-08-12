@@ -73,6 +73,24 @@ func GetUserFromContext(ctx context.Context) (*models.User, bool) {
 	return user, ok
 }
 
+// RequirePasswordChange blocks authenticated application requests while a
+// temporary credential is active. The change-password endpoint is the sole
+// application route allowed through this guard.
+func RequirePasswordChange(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := GetUserFromContext(r.Context())
+		if !ok {
+			http.Error(w, "Not authenticated", http.StatusUnauthorized)
+			return
+		}
+		if user.PasswordChangeRequired && !(r.Method == http.MethodPost && r.URL.Path == "/api/auth/change-password") {
+			http.Error(w, "Password change required", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // LoadUser middleware loads the full user object into context.
 func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -94,14 +112,14 @@ func LoadUser(db *database.DB) func(http.Handler) http.Handler {
 				SELECT
 					id, "full_name",
 					rank, battery, "nric_last5", dob, "is_superadmin",
-					tier_override, verified,
+					tier_override, verified, password_change_required,
 					"createdAt", "updatedAt"
 				FROM "user"
 				WHERE id = $1
 			`, userID).Scan(
 				&user.ID, &fullName,
 				&rank, &battery, &nricLast5, &dob, &user.IsSuperadmin,
-				&tierOverride, &user.Verified,
+				&tierOverride, &user.Verified, &user.PasswordChangeRequired,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 

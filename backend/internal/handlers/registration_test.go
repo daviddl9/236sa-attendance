@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -84,13 +85,64 @@ func TestApproveRegistrationCreateInsertsOneUser(t *testing.T) {
 	}
 }
 
+func TestApproveRegistrationStrongMatchRequiresExplicitAcknowledgement(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	rosterID := prefix + "-roster"
+	pendingID := prefix + "-pending"
+	seedUser(t, db, rosterID, "TAN WEI MING", "CPL", "Alpha", "", false)
+	seedPending(t, db, pendingID, "tanwm", "TAN WEI MIMG", "LCP", "Alpha")
+
+	rec := approve(t, NewAdminHandler(db), pendingID, `{"mode":"create"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("unacknowledged create status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Error         string `json:"error"`
+		MatchedPerson string `json:"matchedPerson"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error != "strong_match" || response.MatchedPerson != "TAN WEI MING" {
+		t.Fatalf("strong-match response = %+v, want machine-readable error naming the roster person", response)
+	}
+
+	ctx := context.Background()
+	var created, pending int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM "user" WHERE id = $1`, pendingID).Scan(&created); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM pending_registration WHERE id = $1`, pendingID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if created != 0 || pending != 1 {
+		t.Fatalf("after refusal, created=%d pending=%d, want 0 and 1", created, pending)
+	}
+
+	rec = approve(t, NewAdminHandler(db), pendingID, `{"mode":"create","acknowledgeStrongMatch":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("acknowledged create status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM "user" WHERE id = $1`, pendingID).Scan(&created); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM pending_registration WHERE id = $1`, pendingID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if created != 1 || pending != 0 {
+		t.Fatalf("after acknowledgement, created=%d pending=%d, want 1 and 0", created, pending)
+	}
+}
+
 func TestMigratedPendingMustLinkAndCannotCreate(t *testing.T) {
 	db, prefix := openRegistrationDB(t)
 	migratedID := prefix + "-migrated"
 	seedUser(t, db, migratedID, "CARRIED PERSON", "PTE", "HQ", "", false)
 	seedPending(t, db, migratedID, migratedPendingUsernamePrefix+migratedID, "CARRIED PERSON", "PTE", "HQ")
-	if rec := approve(t, NewAdminHandler(db), migratedID, `{"mode":"create"}`); rec.Code != http.StatusBadRequest {
-		t.Fatalf("create status = %d, want 400", rec.Code)
+	for _, body := range []string{`{"mode":"create"}`, `{"mode":"create","acknowledgeStrongMatch":true}`} {
+		if rec := approve(t, NewAdminHandler(db), migratedID, body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("create status = %d, want 400 regardless of acknowledgement", rec.Code)
+		}
 	}
 	if rec := approve(t, NewAdminHandler(db), migratedID, `{"mode":"link"}`); rec.Code != http.StatusOK {
 		t.Fatalf("default link status = %d, want 200: %s", rec.Code, rec.Body.String())

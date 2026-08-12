@@ -50,10 +50,14 @@ function RegistrationsContent() {
   const queryClient = useQueryClient();
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [battery, setBattery] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkResults, setBulkResults] = useState<{ id: string; success: boolean; error?: string }[] | null>(null);
+  const [createConfirmation, setCreateConfirmation] = useState<{ id: string; candidate: RegistrationCandidate } | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['pending-registrations'],
-    queryFn: () => apiClient.listPendingRegistrations(),
+    queryKey: ['pending-registrations', battery],
+    queryFn: () => apiClient.listPendingRegistrations(battery || undefined),
     refetchInterval: 30_000,
   });
 
@@ -92,18 +96,23 @@ function RegistrationsContent() {
   );
 
   const approveMutation = useMutation({
-    mutationFn: (input: { id: string; mode: 'link' | 'create'; userId?: string }) => {
+    mutationFn: (input: { id: string; mode: 'link' | 'create'; userId?: string; acknowledgeStrongMatch?: boolean }) => {
       if (input.mode === 'link') {
         if (!input.userId) throw new Error('Select a roster candidate');
         return apiClient.approveRegistration(input.id, { mode: 'link', userId: input.userId });
       }
-      return apiClient.approveRegistration(input.id, { mode: 'create' });
+      return apiClient.approveRegistration(input.id, {
+        mode: 'create',
+        acknowledgeStrongMatch: input.acknowledgeStrongMatch,
+      });
     },
     onSuccess: (_, { id }) => {
       toast.success('Registration approved');
+      setCreateConfirmation(null);
       setReviewId(null);
       setSelectedUserId('');
-      queryClient.setQueryData(['pending-registrations'], (old: { registrations: PendingRegistration[]; total: number } | undefined) => {
+      setSelectedIds((current) => current.filter((value) => value !== id));
+      queryClient.setQueryData(['pending-registrations', battery], (old: { registrations: PendingRegistration[]; total: number } | undefined) => {
         if (!old) return old;
         const registrations = old.registrations.filter((r) => r.id !== id);
         return { registrations, total: registrations.length };
@@ -112,11 +121,21 @@ function RegistrationsContent() {
     onError: () => toast.error('Failed to approve registration'),
   });
 
+  const requestCreate = (id: string) => {
+    const candidate = strongCandidates[0];
+    if (candidate) {
+      setCreateConfirmation({ id, candidate });
+      return;
+    }
+    approveMutation.mutate({ id, mode: 'create' });
+  };
+
   const rejectMutation = useMutation({
     mutationFn: (id: string) => apiClient.rejectRegistration(id),
     onSuccess: (_, id) => {
       toast.success('Registration rejected');
-      queryClient.setQueryData(['pending-registrations'], (old: { registrations: PendingRegistration[]; total: number } | undefined) => {
+      setSelectedIds((current) => current.filter((value) => value !== id));
+      queryClient.setQueryData(['pending-registrations', battery], (old: { registrations: PendingRegistration[]; total: number } | undefined) => {
         if (!old) return old;
         const registrations = old.registrations.filter((r) => r.id !== id);
         return { registrations, total: registrations.length };
@@ -126,6 +145,25 @@ function RegistrationsContent() {
   });
 
   const registrations = data?.registrations ?? [];
+  const allSelected = registrations.length > 0 && registrations.every((registration) => selectedIds.includes(registration.id));
+  const toggleSelected = (id: string) => {
+    setSelectedIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  };
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? [] : registrations.map((registration) => registration.id));
+  };
+
+  const bulkApproveMutation = useMutation({
+    mutationFn: () => apiClient.bulkApproveRegistrations(selectedIds),
+    onSuccess: (result) => {
+      setBulkResults(result.results);
+      const approvedIds = new Set(result.results.filter((item) => item.success).map((item) => item.id));
+      setSelectedIds((current) => current.filter((id) => !approvedIds.has(id)));
+      queryClient.invalidateQueries({ queryKey: ['pending-registrations'] });
+      toast.success(`${result.approved} approved; ${result.failed} failed`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Bulk approval failed'),
+  });
 
   return (
     <DashboardLayout>
@@ -151,8 +189,37 @@ function RegistrationsContent() {
             <CardDescription>
               These users registered themselves and are not on the pre-loaded personnel list.
             </CardDescription>
+            <div className="flex flex-wrap items-center gap-3 pt-3">
+              <label className="text-sm font-medium" htmlFor="battery-filter">Battery</label>
+              <select id="battery-filter" className="rounded-md border bg-background px-3 py-2 text-sm" value={battery} onChange={(event) => { setBattery(event.target.value); setSelectedIds([]); }}>
+                <option value="">All batteries</option>
+                <option value="HQ">HQ</option>
+                <option value="Alpha">Alpha</option>
+                <option value="Bravo">Bravo</option>
+              </select>
+              {selectedIds.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => bulkApproveMutation.mutate()} disabled={bulkApproveMutation.isPending}>
+                    {bulkApproveMutation.isPending ? 'Approving...' : `Bulk approve (${selectedIds.length})`}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">Bulk approve only creates new people. Likely matches are refused and must be reviewed individually to link them.</span>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
+            {bulkResults && (
+              <div className="mb-4 rounded-md border p-3 text-sm">
+                <p className="font-medium">Bulk approval results</p>
+                <ul className="mt-2 space-y-1">
+                  {bulkResults.map((result) => (
+                    <li key={result.id} className={result.success ? 'text-green-700' : 'text-destructive'}>
+                      {result.success ? 'Approved' : `Failed: ${result.error || 'Unknown error'}`} — {result.id}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {isLoading ? (
               <p className="text-sm text-muted-foreground py-4 text-center">Loading...</p>
             ) : registrations.length === 0 ? (
@@ -163,6 +230,9 @@ function RegistrationsContent() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead>
+                      <input type="checkbox" aria-label="Select all registrations" checked={allSelected} onChange={toggleAll} />
+                    </TableHead>
                     <TableHead>Full Name</TableHead>
                     <TableHead>Rank</TableHead>
                     <TableHead>Battery</TableHead>
@@ -174,6 +244,9 @@ function RegistrationsContent() {
                   {registrations.map((reg) => (
                     <Fragment key={reg.id}>
                       <TableRow>
+                        <TableCell>
+                          <input type="checkbox" aria-label={`Select ${reg.fullName}`} checked={selectedIds.includes(reg.id)} onChange={() => toggleSelected(reg.id)} />
+                        </TableCell>
                         <TableCell className="font-medium">{reg.fullName ?? '—'}</TableCell>
                         <TableCell>{reg.rank ?? '—'}</TableCell>
                         <TableCell>{reg.battery ?? '—'}</TableCell>
@@ -206,7 +279,7 @@ function RegistrationsContent() {
                       </TableRow>
                       {reviewId === reg.id && (
                         <TableRow>
-                          <TableCell colSpan={5}>
+                          <TableCell colSpan={6}>
                             <div className="grid gap-3 rounded-md bg-muted/40 p-4">
                               <p className="font-medium">Roster candidates</p>
                               {candidatesLoading ? <p className="text-sm text-muted-foreground">Finding matches...</p> : (
@@ -223,8 +296,24 @@ function RegistrationsContent() {
                                   )}
                                 </>
                               )}
+                              {createConfirmation?.id === reg.id && (
+                                <div role="alert" className="rounded-md border border-amber-500/50 bg-amber-50 p-3 text-sm">
+                                  <p>
+                                    A close roster match was found: <strong>{createConfirmation.candidate.fullName}</strong> (score {createConfirmation.candidate.score}).
+                                    Only continue if this registration is a different person.
+                                  </p>
+                                  <div className="mt-3 flex justify-end gap-2">
+                                    <Button variant="outline" onClick={() => setCreateConfirmation(null)} disabled={approveMutation.isPending}>
+                                      Cancel
+                                    </Button>
+                                    <Button onClick={() => { approveMutation.mutate({ id: reg.id, mode: 'create', acknowledgeStrongMatch: true }); setCreateConfirmation(null); }} disabled={approveMutation.isPending}>
+                                      I confirm — create roster row
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
                               <div className="flex justify-end gap-2">
-                                <Button variant="outline" onClick={() => approveMutation.mutate({ id: reg.id, mode: 'create' })} disabled={approveMutation.isPending || candidatesLoading}>
+                                <Button variant="outline" onClick={() => requestCreate(reg.id)} disabled={approveMutation.isPending || candidatesLoading}>
                                   Create new roster row
                                 </Button>
                                 <Button onClick={() => approveMutation.mutate({ id: reg.id, mode: 'link', userId: activeUserId })} disabled={!activeUserId || approveMutation.isPending}>

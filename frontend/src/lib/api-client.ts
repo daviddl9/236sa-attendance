@@ -15,6 +15,7 @@ export interface User {
   extras?: Record<string, string> | null;
   tierOverride?: 2 | 3 | null;
   verified: boolean;
+  passwordChangeRequired?: boolean;
   isSuperadmin: boolean;
   tier: AccessTier; // computed by server
   createdAt: string;
@@ -72,6 +73,7 @@ export interface SignOutResponse {
 }
 
 export interface UserProfile extends User {
+  username?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -163,6 +165,23 @@ export interface PendingRegistration {
 export interface PendingRegistrationsResponse {
   registrations: PendingRegistration[];
   total: number;
+}
+
+export interface BulkApprovalResult {
+  id: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface BulkApprovalResponse {
+  results: BulkApprovalResult[];
+  approved: number;
+  failed: number;
+}
+
+export interface ProvisionCredentialsResponse {
+  username: string;
+  temporaryPassword: string;
 }
 
 export interface RegistrationCandidate {
@@ -515,6 +534,13 @@ export class APIClient {
     });
   }
 
+  async changePassword(data: { password: string; confirmPassword: string }): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async registerUser(data: RegisterUserRequest): Promise<RegisterUserResponse> {
     return this.request<RegisterUserResponse>('/api/users/register', {
       method: 'POST',
@@ -834,8 +860,16 @@ export class APIClient {
   }
 
   // Registration approval (superadmin only)
-  async listPendingRegistrations(): Promise<PendingRegistrationsResponse> {
-    return this.request<PendingRegistrationsResponse>('/api/admin/registrations');
+  async listPendingRegistrations(battery?: string): Promise<PendingRegistrationsResponse> {
+    const query = battery ? `?battery=${encodeURIComponent(battery)}` : '';
+    return this.request<PendingRegistrationsResponse>(`/api/admin/registrations${query}`);
+  }
+
+  async bulkApproveRegistrations(registrationIds: string[]): Promise<BulkApprovalResponse> {
+    return this.request<BulkApprovalResponse>('/api/admin/registrations/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify({ registrationIds }),
+    });
   }
 
   async listRegistrationCandidates(id: string): Promise<RegistrationCandidatesResponse> {
@@ -844,7 +878,7 @@ export class APIClient {
 
   async approveRegistration(
     id: string,
-    data: { mode: 'link'; userId: string } | { mode: 'create' }
+    data: { mode: 'link'; userId: string } | { mode: 'create'; acknowledgeStrongMatch?: boolean }
   ): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/admin/registrations/${id}/approve`, {
       method: 'POST',
@@ -855,6 +889,13 @@ export class APIClient {
   async rejectRegistration(id: string): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/admin/registrations/${id}/reject`, {
       method: 'POST',
+    });
+  }
+
+  async provisionUserCredentials(id: string, username: string): Promise<ProvisionCredentialsResponse> {
+    return this.request<ProvisionCredentialsResponse>(`/api/admin/users/${id}/credentials`, {
+      method: 'POST',
+      body: JSON.stringify({ username }),
     });
   }
 

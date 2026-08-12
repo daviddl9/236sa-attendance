@@ -31,6 +31,7 @@ func NewUserHandler(db *database.DB) *UserHandler {
 
 type UserProfile struct {
 	ID           string            `json:"id"`
+	Username     *string           `json:"username,omitempty"`
 	FullName     *string           `json:"fullName,omitempty"`
 	Rank         *string           `json:"rank,omitempty"`
 	Battery      *string           `json:"battery,omitempty"`
@@ -70,19 +71,19 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(middleware.UserIDKey).(string)
 
 	var profile UserProfile
-	var fullName, rank, battery, nricLast5, dob *string
+	var username, fullName, rank, battery, nricLast5, dob *string
 	var tierOverride *int16
 	var createdAt, updatedAt time.Time
 
 	err := h.db.Pool.QueryRow(
 		context.Background(),
 		`SELECT
-			id, "full_name", rank, battery, "nric_last5", dob, extras, tier_override, verified, "is_superadmin",
-			"createdAt", "updatedAt"
+			id, username, "full_name", rank, battery, "nric_last5", dob, extras, tier_override,
+			verified, "is_superadmin", "createdAt", "updatedAt"
 		 FROM "user" WHERE id = $1`,
 		userID,
 	).Scan(
-		&profile.ID, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
+		&profile.ID, &username, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
 		&tierOverride, &profile.Verified, &profile.IsSuperadmin, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -90,6 +91,7 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	profile.Username = username
 	profile.FullName = fullName
 	profile.Rank = rank
 	profile.Battery = battery
@@ -163,8 +165,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := fmt.Sprintf(`SELECT
-		id, "full_name", rank, battery, "nric_last5", dob, extras, tier_override, verified, "is_superadmin",
-		"createdAt", "updatedAt"
+		id, username, "full_name", rank, battery, "nric_last5", dob, extras, tier_override,
+		verified, "is_superadmin", "createdAt", "updatedAt"
 	FROM "user"
 	%s ORDER BY "createdAt" DESC LIMIT $%d OFFSET $%d`, whereClause, argIndex, argIndex+1)
 	args = append(args, limit, offset)
@@ -179,17 +181,18 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	users := make([]UserProfile, 0)
 	for rows.Next() {
 		var profile UserProfile
-		var fullName, rank, battery, nricLast5, dob *string
+		var username, fullName, rank, battery, nricLast5, dob *string
 		var tierOverride *int16
 		var createdAt, updatedAt time.Time
 
 		if err := rows.Scan(
-			&profile.ID, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
+			&profile.ID, &username, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
 			&tierOverride, &profile.Verified, &profile.IsSuperadmin, &createdAt, &updatedAt,
 		); err != nil {
 			continue
 		}
 
+		profile.Username = username
 		profile.FullName = fullName
 		profile.Rank = rank
 		profile.Battery = battery
@@ -224,18 +227,18 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var profile UserProfile
-	var fullName, rank, battery, nricLast5, dob *string
+	var username, fullName, rank, battery, nricLast5, dob *string
 	var tierOverride *int16
 	var createdAt, updatedAt time.Time
 
 	err := h.db.Pool.QueryRow(ctx, `
 		SELECT
-			id, "full_name", rank, battery, "nric_last5", dob, extras, tier_override, verified, "is_superadmin",
-			"createdAt", "updatedAt"
+			id, username, "full_name", rank, battery, "nric_last5", dob, extras, tier_override,
+			verified, "is_superadmin", "createdAt", "updatedAt"
 		FROM "user"
 		WHERE id = $1
 	`, userID).Scan(
-		&profile.ID, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
+		&profile.ID, &username, &fullName, &rank, &battery, &nricLast5, &dob, &profile.Extras,
 		&tierOverride, &profile.Verified, &profile.IsSuperadmin, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -251,6 +254,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	profile.Username = username
 	profile.FullName = fullName
 	profile.Rank = rank
 	profile.Battery = battery

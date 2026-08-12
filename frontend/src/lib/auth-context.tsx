@@ -9,7 +9,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   signOut: () => Promise<void>;
-  refetch: () => void;
+  refetch: () => Promise<unknown>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -56,9 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         isAuthenticated: !!user,
         signOut,
-        refetch: () => {
-          refetch();
-        },
+        refetch: () => refetch(),
       }}
     >
       {children}

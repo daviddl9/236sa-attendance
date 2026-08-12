@@ -20,11 +20,10 @@ import {
   CardTitle,
 } from '../../../components/ui/card';
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, KeyRound, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
 import { Link } from '@tanstack/react-router';
-import { isValidNricLast5, normalizeNricLast5, NRIC_LAST5_FIELD_MESSAGE } from '../../../lib/nric-password';
 
 export const Route = createFileRoute('/dashboard/users/$userId')({
   component: UserDetailPage,
@@ -41,9 +40,10 @@ function UserDetailPage() {
   });
 
   const [fullName, setFullName] = useState('');
+  const [username, setUsername] = useState('');
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
   const [rank, setRank] = useState('');
   const [battery, setBattery] = useState('');
-  const [nricLast5, setNricLast5] = useState('');
   const [tierOverride, setTierOverride] = useState<'none' | '2' | '3'>('none');
 
   const isSuperadmin = currentUser?.isSuperadmin || false;
@@ -53,16 +53,27 @@ function UserDetailPage() {
     if (user) {
       /* eslint-disable react-hooks/set-state-in-effect */
       setFullName(user.fullName || '');
+      setUsername(user.username || '');
       setRank(user.rank || '');
       setBattery(user.battery || '');
-      setNricLast5(user.nricLast5 || '');
       setTierOverride(user.tierOverride ? String(user.tierOverride) as '2' | '3' : 'none');
       /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [user]);
 
+  const provisionMutation = useMutation({
+    mutationFn: () => apiClient.provisionUserCredentials(userId, username),
+    onSuccess: (result) => {
+      setTemporaryPassword(result.temporaryPassword);
+      setUsername(result.username);
+      queryClient.invalidateQueries({ queryKey: ['user', userId] });
+      toast.success('Credentials provisioned. Share the temporary password now.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to provision credentials'),
+  });
+
   const updateMutation = useMutation({
-    mutationFn: (data: { fullName?: string; rank?: string; battery?: string; nricLast5?: string; tierOverride?: 2 | 3 | null }) =>
+    mutationFn: (data: { fullName?: string; rank?: string; battery?: string; tierOverride?: 2 | 3 | null }) =>
       apiClient.updateUser(userId, data),
     onSuccess: () => {
       toast.success('User updated successfully');
@@ -80,17 +91,10 @@ function UserDetailPage() {
       return;
     }
 
-    const updates: { fullName?: string; rank?: string; battery?: string; nricLast5?: string; tierOverride?: 2 | 3 | null } = {};
+    const updates: { fullName?: string; rank?: string; battery?: string; tierOverride?: 2 | 3 | null } = {};
     if (fullName !== user?.fullName) updates.fullName = fullName;
     if (rank !== user?.rank) updates.rank = rank;
     if (battery !== user?.battery) updates.battery = battery;
-    if (isSuperadmin && nricLast5 !== (user?.nricLast5 || '')) {
-      if (!isValidNricLast5(nricLast5)) {
-        toast.error(NRIC_LAST5_FIELD_MESSAGE);
-        return;
-      }
-      updates.nricLast5 = normalizeNricLast5(nricLast5);
-    }
     if (isSuperadmin) {
       const currentOverride = user?.tierOverride ?? null;
       const newOverride = tierOverride === 'none' ? null : (Number(tierOverride) as 2 | 3);
@@ -141,6 +145,31 @@ function UserDetailPage() {
             <p className="text-muted-foreground">View and edit user information</p>
           </div>
         </div>
+
+        {isSuperadmin && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5" />Provision credentials</CardTitle>
+              <CardDescription>Set a username and issue a one-time temporary password.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-2">
+                <Label htmlFor="username">Username</Label>
+                <Input id="username" value={username} onChange={(event) => setUsername(event.target.value)} disabled={provisionMutation.isPending} />
+              </div>
+              <Button onClick={() => provisionMutation.mutate()} disabled={provisionMutation.isPending || !username.trim()}>
+                {provisionMutation.isPending ? 'Provisioning...' : 'Issue temporary password'}
+              </Button>
+              {temporaryPassword && (
+                <div className="rounded-md border border-amber-500/50 bg-amber-50 p-3 text-sm">
+                  <p className="font-medium">Temporary password — share it now</p>
+                  <code className="mt-1 block select-all text-base">{temporaryPassword}</code>
+                  <p className="mt-1 text-xs text-muted-foreground">It will not be shown again after leaving this page.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
@@ -213,23 +242,6 @@ function UserDetailPage() {
                       <SelectItem value="Bravo">Bravo</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="nricLast5">NRIC Last 5</Label>
-                  <Input
-                    id="nricLast5"
-                    value={nricLast5}
-                    onChange={(e) =>
-                      setNricLast5(normalizeNricLast5(e.target.value).slice(0, 5))
-                    }
-                    placeholder="e.g., 1234A"
-                    maxLength={5}
-                    disabled={!canEdit}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Exactly 5 characters: 4 numbers and the final alphabet letter. Updating this also updates the user's password.
-                  </p>
                 </div>
 
                 <div className="grid gap-2">

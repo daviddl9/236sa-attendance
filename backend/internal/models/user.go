@@ -63,18 +63,19 @@ const (
 )
 
 type User struct {
-	ID           string            `json:"id"`
-	FullName     *string           `json:"fullName,omitempty"`
-	Rank         *string           `json:"rank,omitempty"`
-	Battery      *string           `json:"battery,omitempty"`
-	NRICLast5    *string           `json:"nricLast5,omitempty"`
-	DOB          *string           `json:"dob,omitempty"` // DDMMYY format
-	Extras       map[string]string `json:"extras"`
-	TierOverride *int16            `json:"tierOverride,omitempty"` // 2 or 3; nil = rank-derived
-	Verified     bool              `json:"verified"`
-	IsSuperadmin bool              `json:"isSuperadmin"`
-	CreatedAt    time.Time         `json:"createdAt"`
-	UpdatedAt    time.Time         `json:"updatedAt"`
+	ID                     string            `json:"id"`
+	FullName               *string           `json:"fullName,omitempty"`
+	Rank                   *string           `json:"rank,omitempty"`
+	Battery                *string           `json:"battery,omitempty"`
+	NRICLast5              *string           `json:"nricLast5,omitempty"`
+	DOB                    *string           `json:"dob,omitempty"` // DDMMYY format
+	Extras                 map[string]string `json:"extras"`
+	TierOverride           *int16            `json:"tierOverride,omitempty"` // 2 or 3; nil = rank-derived
+	Verified               bool              `json:"verified"`
+	PasswordChangeRequired bool              `json:"passwordChangeRequired"`
+	IsSuperadmin           bool              `json:"isSuperadmin"`
+	CreatedAt              time.Time         `json:"createdAt"`
+	UpdatedAt              time.Time         `json:"updatedAt"`
 }
 
 // GetTier returns the effective access tier for the user.
