@@ -194,11 +194,12 @@ type AdminContext struct {
 }
 
 type ActiveEvent struct {
-    ID        string
-    Name      string
-    Scope     string
-    Batteries []string
-    EndTime   *time.Time
+    ID           string
+    Name         string
+    Scope        string
+    Batteries    []string
+    EndTime      *time.Time
+    TelegramLink string
 }
 
 type AttendancePage struct {
@@ -231,7 +232,7 @@ type AdminStore interface {
     SaveContext(ctx context.Context, next AdminContext) error
     ClearContext(ctx context.Context, telegramID int64) error
     ActiveEvents(ctx context.Context, actor AdminActor) ([]ActiveEvent, error)
-    CreateEvent(ctx context.Context, actor AdminActor, draft AdminDraft) (ActiveEvent, string, error)
+    CreateEvent(ctx context.Context, actor AdminActor, draft AdminDraft) (ActiveEvent, error)
     CloseEvent(ctx context.Context, actor AdminActor, sessionID string) error
     Status(ctx context.Context, actor AdminActor, sessionID, query string, page int) (AttendancePage, error)
     MarkManual(ctx context.Context, actor AdminActor, sessionID, targetUserID string) error
@@ -383,6 +384,8 @@ type AdminRouter struct { /* AdminStore and bot username */ }
 func NewAdminRouter(store AdminStore) *AdminRouter
 ```
 
+`ActiveEvent.TelegramLink` is the authorized, opaque `https://t.me/...` link and is the only QR input returned to the router; the raw deep-link code and QR secret remain inside the service/store.
+
 The router must implement these behavior contracts:
 
 - `/menu` loads the actor and returns the role-specific menu.
@@ -393,7 +396,8 @@ The router must implement these behavior contracts:
 - `Create event` transitions through `creating_name`, `choosing_scope`, optional `choosing_battery`, `choosing_duration`, and `confirming_creation`.
 - Name input trims and rejects empty or over-80-character values.
 - Scope and duration callbacks accept only the exact button values in the design.
-- Creation confirmation calls `AdminStore.CreateEvent` once and emits a text link plus `SendPhoto` action using the returned Telegram link and QR PNG.
+- Creation confirmation calls `AdminStore.CreateEvent` once and emits a text link plus `SendPhoto` action using `ActiveEvent.TelegramLink` and QR PNG.
+- Selecting an existing active event uses its authorized `TelegramLink` for `Send QR + link` without loading or exposing a raw deep-link code.
 - Active-event selection persists the selected session and returns the selected-event menu.
 - Status pages render summary plus no more than 10 rows with deterministic `Prev`, `Next`, `Refresh`, and `Back` callbacks.
 - Search prompts for text, calls `AdminStore.Status` with the query, and renders no more than 10 matching authorized rows.
