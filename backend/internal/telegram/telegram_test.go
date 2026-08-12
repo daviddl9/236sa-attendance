@@ -335,6 +335,24 @@ func TestConfigStaysDisabledWhenNoTelegramValuesAreConfigured(t *testing.T) {
 	}
 }
 
+func TestConfigDoesNotSerializeSensitiveSettings(t *testing.T) {
+	config := Config{
+		BotToken:      "synthetic-bot-token",
+		WebhookSecret: "synthetic-webhook-secret",
+		BotUsername:   "synthetic_attendance_bot",
+		WebhookPath:   "synthetic-webhook-path",
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"synthetic-bot-token", "synthetic-webhook-secret", "synthetic-webhook-path"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("sensitive Telegram setting %q appeared in JSON: %s", secret, encoded)
+		}
+	}
+}
+
 func TestDispatcherDoesNotBlockOnSender(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})

@@ -15,10 +15,10 @@ const (
 
 // Config contains Telegram settings loaded from environment variables.
 type Config struct {
-	BotToken      string
-	WebhookSecret string
-	BotUsername   string
-	WebhookPath   string
+	BotToken      string `json:"-"`
+	WebhookSecret string `json:"-"`
+	BotUsername   string `json:"-"`
+	WebhookPath   string `json:"-"`
 }
 
 // LoadConfig reads Telegram settings without applying defaults that could
