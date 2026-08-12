@@ -165,9 +165,17 @@ func (h *AdminHandler) listTelegramPairingRequests(ctx context.Context) ([]Teleg
 	}
 	heldRows.Close()
 
+	// Strong self-confirmation proposals persist a request for FR-002 and
+	// auditability, but only a request linked to its current no-match attempt
+	// is actionable in the commander weak-match review list.
 	rows, err := h.db.Pool.Query(ctx, `
-		SELECT telegram_id, display_name, COALESCE(attempt_id, ''), "createdAt"
-		FROM telegram_pairing_request ORDER BY "createdAt" DESC
+		SELECT r.telegram_id, r.display_name, r.attempt_id, r."createdAt"
+		FROM telegram_pairing_request r
+		JOIN telegram_pairing_attempt a
+		  ON a.id = r.attempt_id
+		 AND a.telegram_id = r.telegram_id
+		 AND a.outcome = 'no_match'
+		ORDER BY r."createdAt" DESC
 	`)
 	if err != nil {
 		return nil, err
@@ -256,6 +264,15 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Pairing attempt not found", http.StatusNotFound)
 		return
 	}
+	candidate, err := h.currentVerifiedTelegramCandidate(ctx, tx, displayName, req.UserID)
+	if err != nil {
+		http.Error(w, "Failed to validate pairing candidate", http.StatusInternalServerError)
+		return
+	}
+	if !candidate {
+		http.Error(w, "Selected roster row is not a current verified candidate", http.StatusBadRequest)
+		return
+	}
 	result, err := tx.Exec(ctx, `
 		INSERT INTO telegram_pairing (id, telegram_id, user_id, display_name, confirmed_by, self_confirmed)
 		VALUES ($1, $2, $3, $4, $5, false) ON CONFLICT DO NOTHING
@@ -290,6 +307,39 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Telegram pairing confirmed"})
+}
+
+// currentVerifiedTelegramCandidate recomputes the same ranked roster slice used
+// by the review UI while the pairing request is locked. The target row is then
+// locked and rechecked so an unverified or concurrently removed row cannot be
+// inserted through this endpoint.
+func (h *AdminHandler) currentVerifiedTelegramCandidate(ctx context.Context, tx pgx.Tx, displayName, targetID string) (bool, error) {
+	roster, err := loadMatchingRoster(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	candidates := matching.RankCandidates(matching.Registration{Name: displayName}, roster)
+	found := false
+	for _, candidate := range candidates {
+		if candidate.ID == targetID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, targetID); err != nil {
+		return false, err
+	}
+	var verified bool
+	if err := tx.QueryRow(ctx, `SELECT verified FROM "user" WHERE id = $1 FOR UPDATE`, targetID).Scan(&verified); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return verified, nil
 }
 
 // UnpairTelegramAccount removes only the Telegram relationship; attendance

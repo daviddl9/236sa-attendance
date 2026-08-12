@@ -155,13 +155,15 @@ func TestTelegramPairingUnpairInvalidatesPendingProposal(t *testing.T) {
 func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
 	actorID := prefix + "-commander"
+	targetName := "REQUEST TARGET " + prefix
 	seedUser(t, db, actorID, "TEST COMMANDER", "SSG", "HQ", "", true)
-	seedUser(t, db, prefix+"-target", "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
+	seedUser(t, db, prefix+"-target", targetName, "PTE", "Alpha", "", true)
+	seedUser(t, db, prefix+"-target-copy", targetName, "PTE", "Alpha", "", true)
 	store := &TelegramPairingStore{db: db}
-	if _, err := store.ProposePairing(context.Background(), telegramID, "weak request"); err != nil {
+	if _, err := store.ProposePairing(context.Background(), telegramID, targetName); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.ProposePairing(context.Background(), telegramID, "another weak request"); err != nil {
+	if _, err := store.ProposePairing(context.Background(), telegramID, targetName+" UPDATED"); err != nil {
 		t.Fatal(err)
 	}
 	var requestAttempt string

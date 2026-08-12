@@ -87,12 +87,15 @@ CREATE TABLE telegram_pairing (
     "createdAt"   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Pairing attempts awaiting resolution: weak/ambiguous attempts await
--- commander review, while strong proposals await soldier confirmation.
+-- Pairing requests remain auditable for both weak review and strong
+-- self-confirmation. `attempt_id` points at the current attempt; the active
+-- commander review list filters it to an associated outcome='no_match' row,
+-- so strong outcome='proposed' requests are not actionable weak requests.
 CREATE TABLE telegram_pairing_request (
     id            TEXT PRIMARY KEY,
     telegram_id   BIGINT NOT NULL UNIQUE,
     display_name  TEXT NOT NULL,
+    attempt_id    TEXT REFERENCES telegram_pairing_attempt(id) ON DELETE SET NULL,
     "createdAt"   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
