@@ -45,20 +45,15 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 	sessionID := parts[0]
 	secret := parts[1]
 
-	// Verify session exists and is active
+	// Verify the session exists and authorize the QR secret. The attendance
+	// service owns the session-validity decision below.
 	var qrSecret string
-	var status string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code_secret, status FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrSecret, &status)
+		SELECT qr_code_secret FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret)
 
 	if err != nil {
 		http.Error(w, "Invalid session", http.StatusNotFound)
-		return
-	}
-
-	if status != models.SessionStatusActive {
-		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
 
@@ -206,20 +201,15 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify session exists and is active
+	// Verify the session exists and authorize the QR secret. The attendance
+	// service owns the session-validity decision below.
 	var qrSecret string
-	var status string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code_secret, status FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrSecret, &status)
+		SELECT qr_code_secret FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret)
 
 	if err != nil {
 		http.Error(w, "Invalid session", http.StatusNotFound)
-		return
-	}
-
-	if status != models.SessionStatusActive {
-		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
 
@@ -297,19 +287,15 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Verify session exists
+	// Verify the session exists for the commander's transport authorization.
+	// The attendance service owns the session-validity decision below.
 	var session models.AttendanceSession
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT id, scope, batteries, status FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&session.ID, &session.Scope, &session.Batteries, &session.Status)
+		SELECT id, scope, batteries FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&session.ID, &session.Scope, &session.Batteries)
 
 	if err != nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-
-	if session.Status != models.SessionStatusActive {
-		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
 	}
 
