@@ -142,6 +142,8 @@ func TestTelegramPairingUnpairInvalidatesPendingProposal(t *testing.T) {
 
 func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
+	actorID := prefix + "-admin"
+	seedUser(t, db, actorID, "TEST ADMIN", "CPT", "HQ", "", true)
 	seedUser(t, db, prefix+"-target", "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
 	store := &TelegramPairingStore{db: db}
 	if _, err := store.ProposePairing(context.Background(), telegramID, "weak request"); err != nil {
@@ -162,7 +164,7 @@ func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	admin := NewAdminHandler(db)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"`+prefix+`-target"}`))
 	req = withTelegramRoute(req, telegramID)
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: "admin", IsSuperadmin: true}))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: actorID, IsSuperadmin: true}))
 	rec := httptest.NewRecorder()
 	admin.ConfirmTelegramPairing(rec, req)
 	if rec.Code != http.StatusOK {

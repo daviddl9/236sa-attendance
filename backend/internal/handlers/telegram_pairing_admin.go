@@ -240,13 +240,20 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Failed to lock Telegram pairing", http.StatusInternalServerError)
 		return
 	}
-	var displayName string
-	if err := tx.QueryRow(ctx, `SELECT display_name FROM telegram_pairing_request WHERE telegram_id = $1 FOR UPDATE`, telegramID).Scan(&displayName); err != nil {
+	var displayName, attemptID string
+	if err := tx.QueryRow(ctx, `
+		SELECT display_name, COALESCE(attempt_id, '')
+		FROM telegram_pairing_request WHERE telegram_id = $1 FOR UPDATE
+	`, telegramID).Scan(&displayName, &attemptID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Pairing request not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, "Failed to fetch pairing request", http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(attemptID) == "" {
+		http.Error(w, "Pairing attempt not found", http.StatusNotFound)
 		return
 	}
 	result, err := tx.Exec(ctx, `
@@ -259,15 +266,6 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 	}
 	if result.RowsAffected() == 0 {
 		http.Error(w, "Telegram account or roster row is already paired", http.StatusConflict)
-		return
-	}
-	var attemptID string
-	if err := tx.QueryRow(ctx, `SELECT attempt_id FROM telegram_pairing_request WHERE telegram_id = $1`, telegramID).Scan(&attemptID); err != nil {
-		http.Error(w, "Failed to fetch pairing attempt", http.StatusInternalServerError)
-		return
-	}
-	if strings.TrimSpace(attemptID) == "" {
-		http.Error(w, "Pairing attempt not found", http.StatusNotFound)
 		return
 	}
 	result, err = tx.Exec(ctx, `
