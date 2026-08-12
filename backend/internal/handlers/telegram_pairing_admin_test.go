@@ -342,19 +342,35 @@ func TestTelegramPairingActionsRequireUnitCommander(t *testing.T) {
 		{name: "enlisted", actor: &models.User{ID: "soldier", Rank: stringPtr("PTE")}, status: http.StatusForbidden},
 		{name: "battery NCO", actor: &models.User{ID: "battery-nco", Rank: stringPtr("3SG")}, status: http.StatusForbidden},
 	}
-	for _, tc := range actors {
-		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/admin/telegram/pairings/"+itoa(telegramID)+"/confirm", strings.NewReader(`{"userId":"target"}`))
-			req = withTelegramRoute(req, telegramID)
-			if tc.actor != nil {
-				req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, tc.actor))
-			}
-			rec := httptest.NewRecorder()
-			h.ConfirmTelegramPairing(rec, req)
-			if rec.Code != tc.status || strings.Contains(rec.Body.String(), "target") {
-				t.Fatalf("confirm = %d %q, want %d without target disclosure", rec.Code, rec.Body.String(), tc.status)
-			}
-		})
+	actions := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		route  bool
+		call   func(http.ResponseWriter, *http.Request)
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/admin/telegram/pairings", call: h.ListTelegramPairings},
+		{name: "confirm", method: http.MethodPost, path: "/api/admin/telegram/pairings/" + itoa(telegramID) + "/confirm", body: `{"userId":"target"}`, route: true, call: h.ConfirmTelegramPairing},
+		{name: "unpair", method: http.MethodDelete, path: "/api/admin/telegram/pairings/" + itoa(telegramID), route: true, call: h.UnpairTelegramAccount},
+	}
+	for _, action := range actions {
+		for _, tc := range actors {
+			t.Run(action.name+"/"+tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(action.method, action.path, strings.NewReader(action.body))
+				if action.route {
+					req = withTelegramRoute(req, telegramID)
+				}
+				if tc.actor != nil {
+					req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, tc.actor))
+				}
+				rec := httptest.NewRecorder()
+				action.call(rec, req)
+				if rec.Code != tc.status || strings.Contains(rec.Body.String(), "target") {
+					t.Fatalf("%s = %d %q, want %d without target disclosure", action.name, rec.Code, rec.Body.String(), tc.status)
+				}
+			})
+		}
 	}
 }
 
