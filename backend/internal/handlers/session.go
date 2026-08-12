@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 	"github.com/go-chi/chi/v5"
 	"github.com/xuri/excelize/v2"
 )
@@ -41,10 +41,11 @@ type SessionResponse struct {
 }
 
 func telegramSessionLink(code string) string {
-	if !deeplink.IsValidCode(code) || strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")) == "" {
+	config := telegram.LoadConfig()
+	if !deeplink.IsValidCode(code) || !config.Enabled() || config.Validate() != nil {
 		return ""
 	}
-	username := strings.TrimPrefix(strings.TrimSpace(os.Getenv("TELEGRAM_BOT_USERNAME")), "@")
+	username := strings.TrimPrefix(strings.TrimSpace(config.BotUsername), "@")
 	if username == "" {
 		return ""
 	}

@@ -35,7 +35,9 @@ func TestCreateSessionGeneratesUniqueDeepLinkCodes(t *testing.T) {
 
 func TestCreateSessionExposesTelegramDeepLink(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
+	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "synthetic-webhook-secret")
 	t.Setenv("TELEGRAM_BOT_USERNAME", "synthetic_attendance_bot")
+	t.Setenv("TELEGRAM_WEBHOOK_PATH", "synthetic-webhook-path")
 	db, prefix := openRegistrationDB(t)
 	creatorID := prefix + "-creator"
 	seedUser(t, db, creatorID, "SESSION CREATOR", "3SG", "HQ", prefix+"-creator", true)
@@ -66,6 +68,33 @@ func TestCreateSessionExposesTelegramDeepLink(t *testing.T) {
 	wantLink := "https://t.me/synthetic_attendance_bot?start=" + code
 	if response.TelegramLink != wantLink {
 		t.Fatalf("response Telegram link = %q, want %q", response.TelegramLink, wantLink)
+	}
+}
+
+func TestTelegramSessionLinkRequiresCompleteConfiguration(t *testing.T) {
+	code := strings.Repeat("A", 22)
+	cases := []struct {
+		name     string
+		secret   string
+		username string
+		path     string
+		wantLink string
+	}{
+		{name: "missing secret", username: "synthetic_attendance_bot", path: "synthetic-webhook-path"},
+		{name: "missing username", secret: "synthetic-webhook-secret", path: "synthetic-webhook-path"},
+		{name: "missing path", secret: "synthetic-webhook-secret", username: "synthetic_attendance_bot"},
+		{name: "fully configured", secret: "synthetic-webhook-secret", username: "synthetic_attendance_bot", path: "synthetic-webhook-path", wantLink: "https://t.me/synthetic_attendance_bot?start=" + code},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
+			t.Setenv("TELEGRAM_WEBHOOK_SECRET", tc.secret)
+			t.Setenv("TELEGRAM_BOT_USERNAME", tc.username)
+			t.Setenv("TELEGRAM_WEBHOOK_PATH", tc.path)
+			if got := telegramSessionLink(code); got != tc.wantLink {
+				t.Fatalf("Telegram link = %q, want %q", got, tc.wantLink)
+			}
+		})
 	}
 }
 

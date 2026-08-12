@@ -32,19 +32,36 @@ func LoadConfig() Config {
 	}
 }
 
+// Enabled reports whether the environment contains any Telegram setting. An
+// empty configuration keeps Telegram disabled; a partial configuration is an
+// attempted enablement and is rejected by Validate rather than silently
+// running with a webhook that cannot authenticate or build links.
 func (c Config) Enabled() bool {
-	return strings.TrimSpace(c.BotToken) != ""
+	return strings.TrimSpace(c.BotToken) != "" ||
+		strings.TrimSpace(c.WebhookSecret) != "" ||
+		strings.TrimSpace(c.BotUsername) != "" ||
+		strings.TrimSpace(c.WebhookPath) != ""
 }
 
-// Validate checks configuration that is required only when the bot is enabled.
-// Telegram stays optional, but an enabled bot must have an independently
-// configured webhook path.
+// Validate checks the complete configuration required when Telegram is
+// enabled. Keeping this gate in one place prevents the runtime and dashboard
+// from disagreeing about whether the bot is usable.
 func (c Config) Validate() error {
 	if !c.Enabled() {
 		return nil
 	}
-	if strings.TrimSpace(c.WebhookPath) == "" {
-		return errors.New("TELEGRAM_WEBHOOK_PATH must be set when Telegram is enabled")
+	for _, required := range []struct {
+		name  string
+		value string
+	}{
+		{name: botTokenEnv, value: c.BotToken},
+		{name: webhookSecretEnv, value: c.WebhookSecret},
+		{name: botUsernameEnv, value: c.BotUsername},
+		{name: webhookPathEnv, value: c.WebhookPath},
+	} {
+		if strings.TrimSpace(required.value) == "" {
+			return errors.New(required.name + " must be set when Telegram is enabled")
+		}
 	}
 	return nil
 }

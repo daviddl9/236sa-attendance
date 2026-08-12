@@ -275,7 +275,7 @@ func TestSetWebhookAndCallbackMethodsUseExpectedAPI(t *testing.T) {
 }
 
 func TestConfigUsesIndependentWebhookPath(t *testing.T) {
-	config := Config{BotToken: "redacted-token", WebhookSecret: "header-secret", WebhookPath: "independent-path"}
+	config := Config{BotToken: "redacted-token", WebhookSecret: "header-secret", BotUsername: "synthetic_attendance_bot", WebhookPath: "independent-path"}
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -291,12 +291,47 @@ func TestConfigUsesIndependentWebhookPath(t *testing.T) {
 	}
 }
 
-func TestConfigRequiresWebhookPathWhenEnabled(t *testing.T) {
-	if err := (Config{}).Validate(); err != nil {
-		t.Fatalf("disabled config validation error = %v", err)
+func TestConfigRequiresAllTelegramValuesWhenPartiallyConfigured(t *testing.T) {
+	complete := Config{
+		BotToken:      "redacted-token",
+		WebhookSecret: "header-secret",
+		BotUsername:   "synthetic_attendance_bot",
+		WebhookPath:   "independent-path",
 	}
-	if err := (Config{BotToken: "redacted-token"}).Validate(); err == nil {
-		t.Fatal("enabled config without webhook path passed validation")
+	if !complete.Enabled() {
+		t.Fatal("complete configuration is disabled")
+	}
+	if err := complete.Validate(); err != nil {
+		t.Fatalf("complete config validation error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		config Config
+	}{
+		{name: "bot token", config: Config{WebhookSecret: complete.WebhookSecret, BotUsername: complete.BotUsername, WebhookPath: complete.WebhookPath}},
+		{name: "webhook secret", config: Config{BotToken: complete.BotToken, BotUsername: complete.BotUsername, WebhookPath: complete.WebhookPath}},
+		{name: "bot username", config: Config{BotToken: complete.BotToken, WebhookSecret: complete.WebhookSecret, WebhookPath: complete.WebhookPath}},
+		{name: "webhook path", config: Config{BotToken: complete.BotToken, WebhookSecret: complete.WebhookSecret, BotUsername: complete.BotUsername}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tc.config.Enabled() {
+				t.Fatal("partially configured Telegram settings were treated as disabled")
+			}
+			if err := tc.config.Validate(); err == nil {
+				t.Fatal("partially configured Telegram settings passed validation")
+			}
+		})
+	}
+}
+
+func TestConfigStaysDisabledWhenNoTelegramValuesAreConfigured(t *testing.T) {
+	config := Config{}
+	if config.Enabled() {
+		t.Fatal("empty Telegram configuration was enabled")
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatalf("disabled config validation error = %v", err)
 	}
 }
 
