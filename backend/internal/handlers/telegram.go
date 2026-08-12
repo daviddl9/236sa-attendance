@@ -19,8 +19,8 @@ const (
 	maxTelegramUpdate    = 1 << 20
 )
 
-// TelegramHandler authenticates and decodes Telegram webhook updates. It does
-// not perform attendance or pairing writes.
+// TelegramHandler authenticates and decodes Telegram webhook updates. Pairing
+// and attendance actions are delegated to the bot's service adapters.
 type TelegramHandler struct {
 	bot        *telegram.Bot
 	secret     string
@@ -93,14 +93,14 @@ func (h *TelegramHandler) serverError(w http.ResponseWriter) {
 	http.Error(w, "Internal server error", http.StatusInternalServerError)
 }
 
-// TelegramPairingStore is a read-only adapter over the pairing table. The
-// join is constrained by the Telegram account ID, so the only name returned
-// to the bot is the paired account's own name.
+// TelegramPairingStore adapts the pairing tables for the bot. The join is
+// constrained by Telegram account ID, so the only name returned to a paired
+// soldier is that account's own name.
 type TelegramPairingStore struct {
 	db *database.DB
 }
 
-func NewTelegramPairingStore(db *database.DB) telegram.PairingLookup {
+func NewTelegramPairingStore(db *database.DB) *TelegramPairingStore {
 	return &TelegramPairingStore{db: db}
 }
 

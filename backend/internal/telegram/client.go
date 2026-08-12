@@ -55,8 +55,9 @@ type apiResponse struct {
 }
 
 type sendMessageRequest struct {
-	ChatID int64  `json:"chat_id"`
-	Text   string `json:"text"`
+	ChatID      int64                 `json:"chat_id"`
+	Text        string                `json:"text"`
+	ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
 type answerCallbackQueryRequest struct {
@@ -71,7 +72,16 @@ type setWebhookRequest struct {
 // SendMessage sends plain text to a Telegram chat. No parse mode is supplied,
 // so user names containing formatting characters remain ordinary text.
 func (c *Client) SendMessage(ctx context.Context, chatID int64, text string) error {
-	return c.call(ctx, "sendMessage", sendMessageRequest{ChatID: chatID, Text: text}, nil)
+	return c.SendMessageWithMarkup(ctx, chatID, text, nil)
+}
+
+// SendMessageWithMarkup sends a message with an optional inline keyboard.
+// Dispatcher uses this optional interface so existing Sender fakes remain
+// source-compatible.
+func (c *Client) SendMessageWithMarkup(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup) error {
+	return c.call(ctx, "sendMessage", sendMessageRequest{
+		ChatID: chatID, Text: text, ReplyMarkup: replyMarkup,
+	}, nil)
 }
 
 // AnswerCallbackQuery acknowledges a callback query without sending a chat

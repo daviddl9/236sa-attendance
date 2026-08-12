@@ -337,3 +337,113 @@ func (s *blockingSender) AnswerCallbackQuery(context.Context, string) error { re
 func timeAfter() <-chan time.Time {
 	return time.After(100 * time.Millisecond)
 }
+
+type fakePairingFlow struct {
+	fakePairingLookup
+	proposal     PairingProposal
+	confirmation PairingConfirmation
+	seenName     string
+	seenAttempt  string
+	discarded    string
+}
+
+func (f *fakePairingFlow) ProposePairing(_ context.Context, _ int64, name string) (PairingProposal, error) {
+	f.seenName = name
+	return f.proposal, nil
+}
+
+func (f *fakePairingFlow) ConfirmPairing(_ context.Context, _ int64, attemptID string) (PairingConfirmation, error) {
+	f.seenAttempt = attemptID
+	return f.confirmation, nil
+}
+
+func (f *fakePairingFlow) DiscardPairing(_ context.Context, _ int64, attemptID string) error {
+	f.discarded = attemptID
+	return nil
+}
+
+func TestBotProposesExactlyOneStrongCandidateWithKeyboard(t *testing.T) {
+	flow := &fakePairingFlow{proposal: PairingProposal{
+		AttemptID: "attempt-1", UserID: "user-1", Name: "TAN WEI MING", Rank: "CPL", Battery: "Bravo", Score: 96,
+	}}
+	bot := NewBot(flow)
+	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
+		From: &User{ID: 42}, Chat: Chat{ID: 42, Type: "private"}, Text: "TAN WEI MIMG",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.seenName != "TAN WEI MIMG" || len(actions) != 1 {
+		t.Fatalf("name=%q actions=%#v", flow.seenName, actions)
+	}
+	if actions[0].Text != "Are you CPL TAN WEI MING, Bravo?" {
+		t.Fatalf("proposal text = %q", actions[0].Text)
+	}
+	if actions[0].ReplyMarkup == nil || len(actions[0].ReplyMarkup.InlineKeyboard) != 1 || len(actions[0].ReplyMarkup.InlineKeyboard[0]) != 2 {
+		t.Fatalf("keyboard = %#v", actions[0].ReplyMarkup)
+	}
+	if actions[0].ReplyMarkup.InlineKeyboard[0][0].CallbackData != "p:y:attempt-1" {
+		t.Fatalf("yes callback = %q", actions[0].ReplyMarkup.InlineKeyboard[0][0].CallbackData)
+	}
+}
+
+func TestBotWeakMatchNamesNobody(t *testing.T) {
+	flow := &fakePairingFlow{proposal: PairingProposal{NoMatch: true}}
+	bot := NewBot(flow)
+	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
+		From: &User{ID: 42}, Chat: Chat{ID: 42, Type: "private"}, Text: "unrelated",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || actions[0].Text != NoMatchReply || strings.Contains(actions[0].Text, "TAN WEI MING") {
+		t.Fatalf("weak-match reply = %#v", actions)
+	}
+}
+
+func TestBotConfirmationUsesCallbackAndDoesNotRevealConflict(t *testing.T) {
+	flow := &fakePairingFlow{confirmation: PairingConfirmation{
+		Outcome: PairingConflict,
+		Pairing: Pairing{FullName: "HELD PERSON"},
+	}}
+	bot := NewBot(flow)
+	actions, err := bot.HandleUpdate(context.Background(), Update{CallbackQuery: &CallbackQuery{
+		ID: "callback-1", From: &User{ID: 42}, Data: "p:y:attempt-1",
+		Message: &Message{Chat: Chat{ID: 42, Type: "private"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.seenAttempt != "attempt-1" || len(actions) != 2 {
+		t.Fatalf("attempt=%q actions=%#v", flow.seenAttempt, actions)
+	}
+	if actions[1].Text != PairingConflictReply || strings.Contains(actions[1].Text, "HELD PERSON") {
+		t.Fatalf("conflict reply = %q", actions[1].Text)
+	}
+}
+
+func TestBotUnpairedCommandAsksForName(t *testing.T) {
+	flow := &fakePairingFlow{}
+	bot := NewBot(flow)
+	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
+		From: &User{ID: 42}, Chat: Chat{ID: 42, Type: "private"}, Text: "/start",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 || actions[0].Text != NamePromptReply {
+		t.Fatalf("prompt = %#v", actions)
+	}
+}
+
+func TestBotDeclineDiscardsProposal(t *testing.T) {
+	flow := &fakePairingFlow{}
+	bot := NewBot(flow)
+	actions, err := bot.HandleUpdate(context.Background(), Update{CallbackQuery: &CallbackQuery{
+		ID: "callback-1", From: &User{ID: 42}, Data: "p:n:attempt-1",
+		Message: &Message{Chat: Chat{ID: 42, Type: "private"}},
+	}})
+	if err != nil || flow.discarded != "attempt-1" || len(actions) != 2 || actions[1].Text != PairingDeclinedReply {
+		t.Fatalf("discarded=%q actions=%#v err=%v", flow.discarded, actions, err)
+	}
+}
