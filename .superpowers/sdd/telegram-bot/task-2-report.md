@@ -151,3 +151,20 @@ Lint exited 0. Frontend warnings are dependency freshness/bundle-size warnings o
 - The integration tests require `TEST_DATABASE_URL`; without PostgreSQL they skip, but the required Docker PostgreSQL run was completed successfully.
 
 No disagreements with the brief. No Telegram behavior or production attendance rules were widened.
+
+## Round 1 review fix
+
+`CreateSession` and `CreateCustomSession` now call the existing `deeplink.GenerateCode` generator and include the resulting 16-random-byte, unpadded-base64url code in the same `attendance_session` INSERT. The standard and custom-list insert paths therefore never create a session with a null code. The generated code remains storage-only in this task; no Telegram or endpoint behavior was added.
+
+### Covering tests
+
+- `backend/internal/handlers/session_deeplink_test.go` verifies that a newly created standard session has an immediate non-null 22-character base64url code, that two same-name sessions created sequentially receive different codes, and that the custom-list insert path also creates an immediate valid code.
+- `backend/internal/services/deeplink/deeplink_integration_test.go` continues to verify that the backfill does not alter an existing code, including on a repeated run.
+
+### Backfill lifetime decision
+
+The backfill still runs after every API boot and after upward migration commands. This is deliberate: it is cheap, idempotent, and continues to repair active sessions created before the migration without requiring a separate one-time marker. It only targets active rows whose code is null and never regenerates an existing code.
+
+### Backfill concurrency and partial-failure decision
+
+The backfill remains transaction-bound. Its `SELECT ... FOR UPDATE` locks each null active candidate; a concurrent backfill waits for the lock and rechecks the null predicate under PostgreSQL's default `READ COMMITTED` behavior, so only one writer fills a row. Any generation or write failure rolls back the transaction's earlier backfill writes. The partial unique index also rejects an accidental duplicate code. The deployment currently runs a single API container, but the row-locking and retry behavior make concurrent backfill runs safe if that changes. Because every application insert now writes the code atomically, a session created after the backfill's candidate scan cannot reintroduce the reported post-boot gap.
