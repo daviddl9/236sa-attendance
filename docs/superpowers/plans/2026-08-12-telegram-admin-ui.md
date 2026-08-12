@@ -231,6 +231,7 @@ type AdminStore interface {
     LoadContext(ctx context.Context, telegramID int64) (AdminContext, error)
     SaveContext(ctx context.Context, next AdminContext) error
     ClearContext(ctx context.Context, telegramID int64) error
+    ClearContextForSession(ctx context.Context, telegramID int64, sessionID string) error
     ActiveEvents(ctx context.Context, actor AdminActor) ([]ActiveEvent, error)
     CreateEvent(ctx context.Context, actor AdminActor, draft AdminDraft) (ActiveEvent, error)
     CloseEvent(ctx context.Context, actor AdminActor, sessionID string) error
@@ -247,7 +248,9 @@ The production implementation must:
 - reload tier, battery, and superadmin state from PostgreSQL for each operation;
 - call the shared session/report/attendance services rather than duplicating their decisions;
 - enforce Tier 2 battery scope and creator-only close ownership;
-- use an optimistic `version` update for context writes;
+- use an optimistic `version` update for context writes, including an insert-vs-insert conflict for a missing row;
+- clear contexts by resetting a versioned tombstone rather than deleting the row, so stale callbacks cannot recreate old state;
+- clear a selected context after close only when its stored session still matches the session that was closed;
 - treat expired drafts as idle and closed/expired selected sessions as unavailable;
 - broadcast committed mark, undo, and close changes through the existing SSE hub after the database transaction commits;
 - return unavailable-style errors that do not disclose unauthorized session/person existence.
@@ -277,7 +280,7 @@ go test ./internal/handlers -run 'TelegramAdmin|TelegramPairing' -count=1
 
 Expected: FAIL on missing migration/store behavior; tests must skip only when `TEST_DATABASE_URL` is absent.
 
-- [ ] **Step 3: Add the migration and implement `TelegramAdminStore`** using explicit transactions for event creation and manual undo.
+- [ ] **Step 3: Add the migration and implement `TelegramAdminStore`** using explicit transactions for event creation, manual marking, undo, status reads, and close. The transaction must reload the paired actor and target/session scope before mutation; `ClearContextForSession` must use the selected session ID and expected context version so concurrent drafts or another selected event are not erased.
 - [ ] **Step 4: Run focused integration tests and migration up/down checks**.
 
 Expected: PASS; a fresh database contains the new context columns, seeded pairings reload after a new store instance, and no production database is accessed.
