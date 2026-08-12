@@ -197,7 +197,7 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 - **SC-001**: A paired soldier marks attendance in under 10 seconds from raising their phone, with no typing.
 - **SC-002**: Soldiers hold no password for this system, and no password reset is ever needed for a soldier.
 - **SC-003**: The whole unit, about 431 people, can mark attendance within 5 minutes of a parade starting without failures.
-- **SC-004**: No unauthenticated request and no non-commander Telegram account can obtain any personnel name.
+- **SC-004**: No unauthenticated request and no non-commander Telegram account can perform an arbitrary roster search or obtain an unrelated personnel name; the only non-commander name disclosure is the single strong candidate proposed for that account's own explicit pairing confirmation.
 - **SC-005**: A soldier completes pairing in under 30 seconds without a commander present, for a name containing a single typo.
 - **SC-005a**: Commander effort for pairing scales with conflicts and weak matches, not with unit size: no routine pairing requires a commander action.
 - **SC-005b**: A second Telegram account attempting to claim a roster row that is already held never succeeds silently.
