@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -104,9 +105,9 @@ type Sender interface {
 }
 
 // ActionSink accepts outbound actions without making the webhook wait for the
-// Telegram API.
+// Telegram API. It returns false when the action cannot be accepted.
 type ActionSink interface {
-	Enqueue(actions []Action)
+	Enqueue(actions []Action) bool
 }
 
 // Dispatcher sends actions from a bounded background queue. Enqueue is
@@ -117,8 +118,9 @@ type Dispatcher struct {
 	queue  chan Action
 	done   chan struct{}
 
-	mu     sync.RWMutex
-	closed bool
+	mu              sync.Mutex
+	closed          bool
+	saturationCount uint64
 }
 
 const (
@@ -139,23 +141,24 @@ func NewDispatcher(sender Sender, queueSize int) *Dispatcher {
 	return d
 }
 
-func (d *Dispatcher) Enqueue(actions []Action) {
+func (d *Dispatcher) Enqueue(actions []Action) bool {
 	if len(actions) == 0 {
-		return
+		return true
 	}
-	d.mu.RLock()
-	defer d.mu.RUnlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.closed {
-		return
+		return false
+	}
+	if len(actions) > cap(d.queue)-len(d.queue) {
+		count := atomic.AddUint64(&d.saturationCount, 1)
+		log.Printf("Telegram reply queue saturated; rejecting update (count=%d)", count)
+		return false
 	}
 	for _, action := range actions {
-		select {
-		case d.queue <- action:
-		default:
-			// Dropping an outbound reply is preferable to holding a webhook
-			// request open. The update has already been acknowledged.
-		}
+		d.queue <- action
 	}
+	return true
 }
 
 func (d *Dispatcher) run() {

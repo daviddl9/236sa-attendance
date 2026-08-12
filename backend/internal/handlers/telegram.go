@@ -69,7 +69,10 @@ func (h *TelegramHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w)
 		return
 	}
-	h.actionSink.Enqueue(actions)
+	if !h.actionSink.Enqueue(actions) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
