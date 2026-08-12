@@ -194,6 +194,26 @@ func TestRankCandidatesReturnsTopFiveDescending(t *testing.T) {
 	}
 }
 
+func TestUnambiguousRequiresStrongLead(t *testing.T) {
+	tests := []struct {
+		name       string
+		candidates []Candidate
+		want       bool
+	}{
+		{name: "single strong candidate", candidates: []Candidate{{Score: 91}}, want: true},
+		{name: "close strong candidates", candidates: []Candidate{{Score: 91}, {Score: 89}}, want: false},
+		{name: "weak top candidate", candidates: []Candidate{{Score: 79}}, want: false},
+		{name: "strong lead", candidates: []Candidate{{Score: 91}, {Score: 80}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Unambiguous(tt.candidates); got != tt.want {
+				t.Fatalf("Unambiguous() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRankCandidatesAmbiguousTopTwoAreNotPreselected(t *testing.T) {
 	candidates := []Candidate{
 		{ID: "top", Score: 96, Selectable: true},

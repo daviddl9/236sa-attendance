@@ -60,7 +60,7 @@ func (s *TelegramPairingStore) ProposePairing(ctx context.Context, telegramID in
 		return telegram.PairingProposal{}, err
 	}
 	candidates := matching.RankCandidates(matching.Registration{Name: name}, roster)
-	if len(candidates) == 0 || candidates[0].Score < matching.StrongCandidateScore {
+	if !matching.Unambiguous(candidates) {
 		if err := insertPairingAttempt(ctx, tx, generateID(), telegramID, "no_match", nil); err != nil {
 			return telegram.PairingProposal{}, err
 		}

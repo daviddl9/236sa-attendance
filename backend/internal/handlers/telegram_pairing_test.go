@@ -75,6 +75,45 @@ func TestTelegramPairingStrongMatchConfirmAndRecognition(t *testing.T) {
 	}
 }
 
+func TestTelegramPairingAmbiguousStrongMatchesAreNotProposed(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	seedUser(t, db, prefix+"-min", "TAN WEI MIN", "", "", "", true)
+	seedUser(t, db, prefix+"-ming", "TAN WEI MING", "", "", "", true)
+	store := &TelegramPairingStore{db: db}
+
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "TAN WEI MIN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proposal.NoMatch || proposal.AttemptID != "" || proposal.UserID != "" || proposal.Name != "" {
+		t.Fatalf("ambiguous proposal = %+v, want no disclosed candidate", proposal)
+	}
+	var outcome string
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT outcome FROM telegram_pairing_attempt WHERE telegram_id = $1
+	`, telegramID).Scan(&outcome); err != nil {
+		t.Fatal(err)
+	}
+	if outcome != "no_match" {
+		t.Fatalf("ambiguous attempt outcome = %q, want no_match", outcome)
+	}
+}
+
+func TestTelegramPairingClearSingleTypoStillProposes(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	targetID := prefix + "-target"
+	seedUser(t, db, targetID, "TAN WEI MING", "CPL", "Bravo", "", true)
+	store := &TelegramPairingStore{db: db}
+
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "TAN WEI MIMG")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.NoMatch || proposal.UserID != targetID || proposal.Name != "TAN WEI MING" {
+		t.Fatalf("clear typo proposal = %+v, want target %q", proposal, targetID)
+	}
+}
+
 func TestTelegramPairingWeakMatchCreatesOneRequestAndNoNameReply(t *testing.T) {
 	db, prefix, telegramID := openTelegramPairingDB(t)
 	seedUser(t, db, prefix+"-target", "TAN WEI MING", "CPL", "Bravo", "", true)
