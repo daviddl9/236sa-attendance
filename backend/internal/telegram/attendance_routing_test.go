@@ -22,11 +22,14 @@ func (f *fakeAttendanceMarker) MarkAttendance(_ context.Context, telegramID int6
 type attendancePairingFlow struct {
 	fakePairingLookup
 	proposed bool
+	seenName string
+	proposal PairingProposal
 }
 
-func (f *attendancePairingFlow) ProposePairing(context.Context, int64, string) (PairingProposal, error) {
+func (f *attendancePairingFlow) ProposePairing(_ context.Context, _ int64, name string) (PairingProposal, error) {
 	f.proposed = true
-	return PairingProposal{NoMatch: true}, nil
+	f.seenName = name
+	return f.proposal, nil
 }
 
 func (f *attendancePairingFlow) ConfirmPairing(context.Context, int64, string) (PairingConfirmation, error) {
@@ -55,20 +58,42 @@ func TestBotRoutesPairedStartPayloadToAttendanceMarker(t *testing.T) {
 }
 
 func TestBotDoesNotUseDeepLinkPayloadForPairing(t *testing.T) {
+	flow := &attendancePairingFlow{proposal: PairingProposal{NoMatch: true}}
+	marker := &fakeAttendanceMarker{}
+	bot := NewBotWithAttendance(flow, marker)
+
+	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
+		From: &User{ID: 7002, FirstName: "Synthetic", LastName: "Soldier"}, Chat: Chat{ID: 7002, Type: "private"}, Text: "/start opaque-code",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !flow.proposed || flow.seenName != "Synthetic Soldier" {
+		t.Fatalf("pairing input = proposed %v name %q, want display name only", flow.proposed, flow.seenName)
+	}
+	if marker.called != 0 {
+		t.Fatalf("attendance marker called %d times for unpaired account", marker.called)
+	}
+	if len(actions) != 1 || actions[0].Text != NoMatchReply {
+		t.Fatalf("actions = %#v, want normal pairing reply", actions)
+	}
+}
+
+func TestBotPromptsWhenDeepLinkSenderHasNoDisplayName(t *testing.T) {
 	flow := &attendancePairingFlow{}
 	bot := NewBotWithAttendance(flow, &fakeAttendanceMarker{})
 
 	actions, err := bot.HandleUpdate(context.Background(), Update{Message: &Message{
-		From: &User{ID: 7002}, Chat: Chat{ID: 7002, Type: "private"}, Text: "/start opaque-code",
+		From: &User{ID: 7004}, Chat: Chat{ID: 7004, Type: "private"}, Text: "/start opaque-code",
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if flow.proposed {
-		t.Fatal("deep-link payload was sent to pairing matching")
+		t.Fatal("empty Telegram display name entered pairing matcher")
 	}
-	if len(actions) != 1 || actions[0].Text != UnpairedAttendanceReply {
-		t.Fatalf("actions = %#v, want unpaired reply", actions)
+	if len(actions) != 1 || actions[0].Text != NamePromptReply {
+		t.Fatalf("actions = %#v, want name prompt", actions)
 	}
 }
 

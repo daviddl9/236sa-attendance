@@ -206,20 +206,20 @@ func (b *Bot) handleMessage(ctx context.Context, message *Message) ([]Action, er
 		}
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: linkedReply(pairing.FullName)}}, nil
 	}
-	if start.hasPayload {
-		// The deep-link payload is an opaque capability, never identity input.
-		// An unpaired account must pair first and must not learn anything about
-		// the code or session.
-		if b.flow == nil && b.attendance == nil {
-			return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnlinkedReply}}, nil
-		}
-		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnpairedAttendanceReply}}, nil
-	}
 	if b.flow == nil {
+		if start.hasPayload {
+			return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnpairedAttendanceReply}}, nil
+		}
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnlinkedReply}}, nil
 	}
 
 	name := pairingNameInput(message.Text)
+	if start.hasPayload {
+		// The deep-link payload is an opaque capability, never identity input.
+		// Preserve the normal pairing flow by matching only Telegram's display
+		// name, while the account remains unable to mark until confirmed.
+		name = pairingDisplayName(message.From)
+	}
 	if name == "" {
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: NamePromptReply}}, nil
 	}
@@ -333,6 +333,13 @@ func pairingNameInput(text string) string {
 		return ""
 	}
 	return text
+}
+
+func pairingDisplayName(user *User) string {
+	if user == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join([]string{user.FirstName, user.LastName}, " "))
 }
 
 func proposalText(proposal PairingProposal) string {
