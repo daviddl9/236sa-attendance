@@ -63,7 +63,7 @@ new_tables=0
 A subsequent `up` succeeded, regenerated a code only for the active session, left the closed session null, and retained the attendance record:
 
 ```text
-active_code=mnmn2isWuf1zlg338Gb1A
+active_code=mnmn2isWuf1zlg338Gb26A
 closed_code=<null>
 attendance=1
 ```
