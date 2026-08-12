@@ -101,7 +101,8 @@ func TestTelegramWebhookUnpairedDeepLinkUsesDisplayNameProposalWithoutMark(t *te
 
 	var outcome, proposedUserID string
 	if err := db.Pool.QueryRow(context.Background(), `
-		SELECT outcome, user_id FROM telegram_pairing_attempt WHERE telegram_id = $1
+		SELECT outcome, COALESCE(user_id, '') FROM telegram_pairing_attempt
+		WHERE telegram_id = $1 ORDER BY "createdAt" DESC LIMIT 1
 	`, telegramID).Scan(&outcome, &proposedUserID); err != nil {
 		t.Fatalf("read pairing attempt: %v", err)
 	}
@@ -479,6 +480,8 @@ func openTelegramAttendanceDB(t *testing.T) (*database.DB, string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = db.Pool.Exec(ctx, `DELETE FROM attendance_session WHERE id LIKE $1`, prefix+"-%")
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM telegram_pairing_request WHERE telegram_id BETWEEN $1 AND $2`, int64(970000000000), int64(970000002000))
+		_, _ = db.Pool.Exec(ctx, `DELETE FROM telegram_pairing_attempt WHERE telegram_id BETWEEN $1 AND $2`, int64(970000000000), int64(970000002000))
 		_, _ = db.Pool.Exec(ctx, `DELETE FROM telegram_pairing WHERE id LIKE $1`, prefix+"-%")
 		_, _ = db.Pool.Exec(ctx, `DELETE FROM "user" WHERE id LIKE $1`, prefix+"-%")
 		db.Close()
