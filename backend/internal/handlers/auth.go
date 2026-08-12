@@ -65,8 +65,6 @@ type userRow struct {
 	fullName               *string
 	rank                   *string
 	battery                *string
-	nricLast5              *string
-	dob                    *string
 	isSuperadmin           bool
 	tierOverride           *int16
 	verified               bool
@@ -84,38 +82,15 @@ const passwordHashCost = 12
 
 // signInUserColumns is the SELECT list shared by the sign-in lookups so the
 // primary query and the word-subset fallback scan an identical set of columns.
-const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password`
+const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password`
 
 // scanUserRow scans signInUserColumns (in order) into ur. It accepts a pgx.Row,
 // which both Pool.QueryRow and Pool.Query rows satisfy.
 func scanUserRow(row pgx.Row, ur *userRow) error {
 	return row.Scan(
-		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.isSuperadmin,
 		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired, &ur.createdAt, &ur.updatedAt, &ur.password,
 	)
-}
-
-// findUsersByNRICAndName returns users whose nric_last5 equals nricLast5 AND whose
-// full name contains every word in identifier (case-insensitive, any order). Used
-// as a sign-in fallback so personnel can type part of their name.
-func (h *AuthHandler) findUsersByNRICAndName(ctx context.Context, nricLast5, identifier string) ([]userRow, error) {
-	rows, err := h.db.Pool.Query(ctx, `SELECT `+signInUserColumns+` FROM "user" u WHERE u."nric_last5" = $1`, nricLast5)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var matches []userRow
-	for rows.Next() {
-		var ur userRow
-		if err := scanUserRow(rows, &ur); err != nil {
-			return nil, err
-		}
-		if nameMatchesIdentifier(ur.fullName, identifier) {
-			matches = append(matches, ur)
-		}
-	}
-	return matches, rows.Err()
 }
 
 func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
@@ -164,44 +139,104 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Compatibility path for existing roster rows that have no username yet.
-	passwordForAuth, nricLast5Val, legacyPasswordOK := prepareSignInCredential(req.Identifier, req.Password)
-	if !legacyPasswordOK {
-		passwordForAuth = strings.ToUpper(req.Password)
-	}
-	legacyErr := scanUserRow(h.db.Pool.QueryRow(ctx, `
-		SELECT `+signInUserColumns+`
-		FROM "user" u
-		WHERE upper(u."full_name") = upper($1) AND u."nric_last5" IS NOT DISTINCT FROM $2
-	`, req.Identifier, nricLast5Val), &ur)
-	if legacyErr != nil && errors.Is(legacyErr, pgx.ErrNoRows) && nricLast5Val != nil {
-		matches, fallbackErr := h.findUsersByNRICAndName(ctx, *nricLast5Val, req.Identifier)
-		switch {
-		case fallbackErr != nil:
-			log.Printf("[SignIn] Name fallback query failed for %q: %v", req.Identifier, fallbackErr)
-		case len(matches) > 1:
-			writeInvalidCredentials(w, req.Identifier)
-			return
-		case len(matches) == 1:
-			ur = matches[0]
-			legacyErr = nil
-		}
-	}
+	//
+	// Identity is established by the bcrypt hash in `password`, never by a stored
+	// copy of the secret itself. Pre-008 credentials were uppercased before
+	// hashing, so the typed value is tried as-is and uppercased.
+	matched, legacyErr := h.authenticateLegacyByName(ctx, req.Identifier, req.Password)
 	if legacyErr != nil {
-		if !errors.Is(legacyErr, pgx.ErrNoRows) {
-			log.Printf("[SignIn] Error querying legacy user: %v", legacyErr)
-			http.Error(w, "Failed to query user", http.StatusInternalServerError)
-			return
-		}
+		log.Printf("[SignIn] Error querying legacy user: %v", legacyErr)
+		http.Error(w, "Failed to query user", http.StatusInternalServerError)
+		return
+	}
+	if matched == nil {
 		// Keep unknown identifiers indistinguishable from wrong passwords.
 		writeInvalidCredentials(w, req.Identifier)
 		return
 	}
+	ur = *matched
+	h.finishSignIn(w, r, ctx, req.Identifier, ur)
+}
 
-	if !comparePassword(ur.password, passwordForAuth) {
-		writeInvalidCredentials(w, req.Identifier)
+// maxLegacyNameCandidates bounds how many same-named rows we will verify against.
+// The roster contains a handful of shared full names, and each candidate costs a
+// bcrypt comparison, so an unbounded loop would be a denial-of-service lever.
+const maxLegacyNameCandidates = 5
+
+// authenticateLegacyByName resolves a pre-008 credential using the full name and
+// the bcrypt hash alone. It returns the single row whose hash verifies, or nil
+// when none or more than one does. An ambiguous match is treated as a failure:
+// two people sharing a name and a secret must never silently resolve to one of
+// them.
+func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, password string) (*userRow, error) {
+	rows, err := h.db.Pool.Query(ctx, `
+		SELECT `+signInUserColumns+`
+		FROM "user" u
+		WHERE upper(u."full_name") = upper($1)
+		LIMIT $2
+	`, identifier, maxLegacyNameCandidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	candidates := make([]userRow, 0, maxLegacyNameCandidates)
+	for rows.Next() {
+		var candidate userRow
+		if err := scanUserRow(rows, &candidate); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Try the value as typed, and uppercased only when that differs. bcrypt at the
+	// current cost is deliberately slow, so verifying the same string twice against
+	// every candidate would double sign-in latency and hand an attacker a cheap way
+	// to make the server do expensive work.
+	attempts := []string{password}
+	if upper := strings.ToUpper(password); upper != password {
+		attempts = append(attempts, upper)
+	}
+	var matched *userRow
+	for i := range candidates {
+		for _, attempt := range attempts {
+			if !comparePassword(candidates[i].password, attempt) {
+				continue
+			}
+			if matched != nil {
+				return nil, nil
+			}
+			matched = &candidates[i]
+			break
+		}
+	}
+	if matched == nil {
+		return nil, nil
+	}
+	h.upgradeLegacyHash(ctx, matched.id, matched.password, password)
+	return matched, nil
+}
+
+// upgradeLegacyHash rehashes a verified credential at the current cost. Pre-008
+// hashes were written at bcrypt cost 4, which is the minimum the library allows
+// and is far too weak for a secret drawn from a small keyspace. Upgrading on a
+// successful sign-in retires those hashes without asking anyone to do anything.
+func (h *AuthHandler) upgradeLegacyHash(ctx context.Context, userID, storedHash, plaintext string) {
+	cost, err := bcrypt.Cost([]byte(storedHash))
+	if err != nil || cost >= passwordHashCost {
 		return
 	}
-	h.finishSignIn(w, r, ctx, req.Identifier, ur)
+	upgraded, err := bcrypt.GenerateFromPassword([]byte(plaintext), passwordHashCost)
+	if err != nil {
+		log.Printf("[SignIn] Failed to upgrade password hash: %v", err)
+		return
+	}
+	if _, err := h.db.Pool.Exec(ctx, `UPDATE "user" SET password = $1 WHERE id = $2`, string(upgraded), userID); err != nil {
+		log.Printf("[SignIn] Failed to persist upgraded password hash: %v", err)
+	}
 }
 
 func (h *AuthHandler) findUserByUsername(ctx context.Context, username string, ur *userRow) error {
@@ -354,8 +389,6 @@ func (h *AuthHandler) createSession(ctx context.Context, r *http.Request, ur use
 		FullName:               ur.fullName,
 		Rank:                   ur.rank,
 		Battery:                ur.battery,
-		NRICLast5:              ur.nricLast5,
-		DOB:                    ur.dob,
 		TierOverride:           ur.tierOverride,
 		Verified:               ur.verified,
 		PasswordChangeRequired: ur.passwordChangeRequired,
@@ -468,14 +501,14 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	var ur userRow
 	err = h.db.Pool.QueryRow(ctx, `
 		SELECT
-			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
+			u.id, u."full_name", u.rank, u.battery, u."is_superadmin",
 			u.tier_override, u.verified, u.password_change_required,
 			u."createdAt", u."updatedAt"
 		FROM "user" u
 		JOIN session s ON s."userId" = u.id
 		WHERE s.token = $1 AND s."expiresAt" > NOW()
 	`, cookie.Value).Scan(
-		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.isSuperadmin,
 		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired,
 		&ur.createdAt, &ur.updatedAt,
 	)
@@ -494,8 +527,6 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		FullName:               ur.fullName,
 		Rank:                   ur.rank,
 		Battery:                ur.battery,
-		NRICLast5:              ur.nricLast5,
-		DOB:                    ur.dob,
 		TierOverride:           ur.tierOverride,
 		Verified:               ur.verified,
 		PasswordChangeRequired: ur.passwordChangeRequired,

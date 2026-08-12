@@ -85,11 +85,11 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 			user = &models.User{}
 			var passwordChangeRequired bool
 			err = h.db.Pool.QueryRow(ctx, `
-				SELECT id, "full_name", rank, battery, "nric_last5", dob, is_superadmin, password_change_required, "createdAt", "updatedAt"
+				SELECT id, "full_name", rank, battery, is_superadmin, password_change_required, "createdAt", "updatedAt"
 				FROM "user" WHERE id = $1
 			`, userID).Scan(
 				&user.ID, &user.FullName, &user.Rank, &user.Battery,
-				&user.NRICLast5, &user.DOB, &user.IsSuperadmin, &passwordChangeRequired,
+				&user.IsSuperadmin, &passwordChangeRequired,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
 			user.PasswordChangeRequired = passwordChangeRequired
