@@ -218,22 +218,28 @@ func main() {
 					})
 				})
 
-				// Admin routes: superadmin only
+				// Telegram pairing review is available to unit commanders; all other
+				// admin operations remain superadmin-only.
 				r.Route("/admin", func(r chi.Router) {
-					r.Use(middleware.RequireSuperadmin(db))
 					adminHandler := handlers.NewAdminHandler(db)
-					r.Get("/telegram/pairings", adminHandler.ListTelegramPairings)
-					r.Post("/telegram/pairings/{telegramID}/confirm", adminHandler.ConfirmTelegramPairing)
-					r.Delete("/telegram/pairings/{telegramID}", adminHandler.UnpairTelegramAccount)
-					r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
-					r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
-					r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)
-					// Registration approval
-					r.Get("/registrations", adminHandler.ListPendingRegistrations)
-					r.Post("/registrations/bulk-approve", adminHandler.BulkApproveRegistrations)
-					r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
-					r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
-					r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)
+					r.Route("/telegram", func(r chi.Router) {
+						r.Use(middleware.RequireUnitCommander(db))
+						r.Get("/pairings", adminHandler.ListTelegramPairings)
+						r.Post("/pairings/{telegramID}/confirm", adminHandler.ConfirmTelegramPairing)
+						r.Delete("/pairings/{telegramID}", adminHandler.UnpairTelegramAccount)
+					})
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RequireSuperadmin(db))
+						r.Post("/users/bulk-upload", adminHandler.BulkUploadUsers)
+						r.Post("/users/bulk-create", adminHandler.BulkCreateUsers)
+						r.Post("/users/{id}/credentials", adminHandler.ProvisionCredentials)
+						// Registration approval
+						r.Get("/registrations", adminHandler.ListPendingRegistrations)
+						r.Post("/registrations/bulk-approve", adminHandler.BulkApproveRegistrations)
+						r.Get("/registrations/{id}/candidates", adminHandler.ListRegistrationCandidates)
+						r.Post("/registrations/{id}/approve", adminHandler.ApproveRegistration)
+						r.Post("/registrations/{id}/reject", adminHandler.RejectRegistration)
+					})
 				})
 
 				// Status routes: Tier 3+

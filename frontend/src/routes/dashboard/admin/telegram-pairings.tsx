@@ -9,7 +9,7 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { useAuth } from '../../../lib/auth-context';
 import { apiClient, type TelegramPairingAttemptRecord, type TelegramPairingRequestRecord } from '../../../lib/api-client';
-import { isSuperadmin } from '../../../lib/user-utils';
+import { canManageUnit } from '../../../lib/user-utils';
 
 export const Route = createFileRoute('/dashboard/admin/telegram-pairings')({
   component: TelegramPairingsPage,
@@ -18,7 +18,7 @@ export const Route = createFileRoute('/dashboard/admin/telegram-pairings')({
 function TelegramPairingsPage() {
   const { user, isLoading } = useAuth();
   if (isLoading) return null;
-  if (!isSuperadmin(user)) return <Navigate to="/dashboard" />;
+  if (!canManageUnit(user)) return <Navigate to="/dashboard" />;
   return <TelegramPairingsContent />;
 }
 

@@ -46,13 +46,13 @@ type TelegramPairingReviewResponse struct {
 	Requests []TelegramPairingRequestRecord `json:"requests"`
 }
 
-func requireTelegramSuperadmin(w http.ResponseWriter, r *http.Request) bool {
+func requireTelegramUnitCommander(w http.ResponseWriter, r *http.Request) bool {
 	actor, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return false
 	}
-	if !actor.IsSuperadmin {
+	if !actor.IsUnitCommander() {
 		http.Error(w, "Insufficient permissions", http.StatusForbidden)
 		return false
 	}
@@ -62,7 +62,7 @@ func requireTelegramSuperadmin(w http.ResponseWriter, r *http.Request) bool {
 // ListTelegramPairings returns pairings and the exception attempts first so
 // the review page does not bury conflicts below routine self-confirmations.
 func (h *AdminHandler) ListTelegramPairings(w http.ResponseWriter, r *http.Request) {
-	if !requireTelegramSuperadmin(w, r) {
+	if !requireTelegramUnitCommander(w, r) {
 		return
 	}
 	ctx := r.Context()
@@ -214,7 +214,7 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
-	if !actor.IsSuperadmin {
+	if !actor.IsUnitCommander() {
 		http.Error(w, "Insufficient permissions", http.StatusForbidden)
 		return
 	}
@@ -295,7 +295,7 @@ func (h *AdminHandler) ConfirmTelegramPairing(w http.ResponseWriter, r *http.Req
 // UnpairTelegramAccount removes only the Telegram relationship; attendance
 // history remains attached to the roster row.
 func (h *AdminHandler) UnpairTelegramAccount(w http.ResponseWriter, r *http.Request) {
-	if !requireTelegramSuperadmin(w, r) {
+	if !requireTelegramUnitCommander(w, r) {
 		return
 	}
 	telegramID, err := strconv.ParseInt(chi.URLParam(r, "telegramID"), 10, 64)
