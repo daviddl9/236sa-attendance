@@ -236,9 +236,9 @@ func openTestDB(t *testing.T) (*database.DB, string) {
 func seedUser(t *testing.T, db *database.DB, id, name, battery string) {
 	t.Helper()
 	_, err := db.Pool.Exec(context.Background(), `
-		INSERT INTO "user" (id, name, email, "full_name", rank, battery, password, extras, "is_superadmin", verified, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, $2, 'PTE', $4, 'test', '{}'::jsonb, false, true, NOW(), NOW())
-	`, id, name, id+"@example.test", battery)
+		INSERT INTO "user" (id, "full_name", rank, battery, password, extras, "is_superadmin", verified, "createdAt", "updatedAt")
+		VALUES ($1, $2, 'PTE', $3, 'test', '{}'::jsonb, false, true, NOW(), NOW())
+	`, id, name, battery)
 	if err != nil {
 		t.Fatalf("insert user %s: %v", id, err)
 	}
