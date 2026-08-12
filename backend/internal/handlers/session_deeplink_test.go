@@ -33,7 +33,7 @@ func TestCreateSessionGeneratesUniqueDeepLinkCodes(t *testing.T) {
 	}
 }
 
-func TestCreateSessionExposesTelegramDeepLink(t *testing.T) {
+func TestSessionTelegramLinkIsCommanderOnlyAndDeepLinkNeverSerializes(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "synthetic-test-token")
 	t.Setenv("TELEGRAM_WEBHOOK_SECRET", "synthetic-webhook-secret")
 	t.Setenv("TELEGRAM_BOT_USERNAME", "synthetic_attendance_bot")
@@ -45,30 +45,77 @@ func TestCreateSessionExposesTelegramDeepLink(t *testing.T) {
 	handler := NewSessionHandler(db, nil)
 	sessionID := createStandardSession(t, handler, creatorID, "same name")
 	code := assertSessionDeepLinkCode(t, db, sessionID)
+	wantLink := "https://t.me/synthetic_attendance_bot?start=" + code
 
-	// The response itself is checked by createStandardSession's helper in the
-	// companion assertion below, while the persisted value remains the source
-	// of truth for the URL.
-	var response SessionResponse
-	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID, nil)
+	tests := []struct {
+		name             string
+		user             *models.User
+		wantTelegramLink bool
+		wantQRCode       bool
+	}{
+		{
+			name:             "battery commander",
+			user:             sessionTestUser(creatorID, models.Rank3SG),
+			wantTelegramLink: true,
+			wantQRCode:       true,
+		},
+		{
+			name:             "enlisted",
+			user:             sessionTestUser(prefix+"-enlisted", models.RankPTE),
+			wantTelegramLink: false,
+			wantQRCode:       false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID, nil)
+			req = withSessionUser(req, tc.user, sessionID)
+			rec := httptest.NewRecorder()
+			handler.GetSession(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("get session status = %d: %s", rec.Code, rec.Body.String())
+			}
+
+			body := rec.Body.String()
+			var response map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := response["deeplinkCode"]; ok {
+				t.Fatalf("response serialized the internal deep-link field: %s", body)
+			}
+			if tc.wantTelegramLink {
+				if got, _ := response["telegramLink"].(string); got != wantLink {
+					t.Fatalf("Telegram link = %q, want %q", got, wantLink)
+				}
+				if !strings.Contains(body, wantLink) {
+					t.Fatalf("authorized response did not contain configured Telegram link: %s", body)
+				}
+			} else {
+				if _, ok := response["telegramLink"]; ok {
+					t.Fatalf("enlisted response exposed Telegram link: %s", body)
+				}
+				if strings.Contains(body, code) {
+					t.Fatalf("enlisted response exposed raw deep-link code: %s", body)
+				}
+			}
+			_, hasQRCode := response["qrCode"]
+			if hasQRCode != tc.wantQRCode {
+				t.Fatalf("qrCode visibility = %v, want %v: %s", hasQRCode, tc.wantQRCode, body)
+			}
+		})
+	}
+}
+
+func sessionTestUser(id, rank string) *models.User {
+	return &models.User{ID: id, Rank: &rank}
+}
+
+func withSessionUser(req *http.Request, user *models.User, sessionID string) *http.Request {
 	rc := chi.NewRouteContext()
 	rc.URLParams.Add("id", sessionID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
-	rec := httptest.NewRecorder()
-	handler.GetSession(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("get session status = %d: %s", rec.Code, rec.Body.String())
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	if response.DeepLinkCode != code {
-		t.Fatalf("response deep-link code = %q, want %q", response.DeepLinkCode, code)
-	}
-	wantLink := "https://t.me/synthetic_attendance_bot?start=" + code
-	if response.TelegramLink != wantLink {
-		t.Fatalf("response Telegram link = %q, want %q", response.TelegramLink, wantLink)
-	}
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rc)
+	return req.WithContext(context.WithValue(ctx, middleware.UserKey, user))
 }
 
 func TestTelegramSessionLinkRequiresCompleteConfiguration(t *testing.T) {

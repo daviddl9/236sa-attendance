@@ -25,6 +25,17 @@ func TestTelegramPairingStrongMatchConfirmAndRecognition(t *testing.T) {
 	if proposal.NoMatch || proposal.AttemptID == "" || proposal.UserID != targetID {
 		t.Fatalf("proposal = %+v", proposal)
 	}
+	var requestCount int
+	var requestDisplayName, requestAttemptID string
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*), COALESCE(MAX(display_name), ''), COALESCE(MAX(attempt_id), '')
+		FROM telegram_pairing_request WHERE telegram_id = $1
+	`, telegramID).Scan(&requestCount, &requestDisplayName, &requestAttemptID); err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 1 || requestDisplayName != "TAN WEI MIMG" || requestAttemptID != proposal.AttemptID {
+		t.Fatalf("strong proposal request = (%d, %q, %q), want one request for attempt %q", requestCount, requestDisplayName, requestAttemptID, proposal.AttemptID)
+	}
 	confirmation, err := store.ConfirmPairing(context.Background(), telegramID, proposal.AttemptID)
 	if err != nil || confirmation.Outcome != telegram.PairingConfirmed {
 		t.Fatalf("confirmation = %+v, err=%v", confirmation, err)
@@ -50,6 +61,14 @@ func TestTelegramPairingStrongMatchConfirmAndRecognition(t *testing.T) {
 	if attemptCount != 1 || outcome != "confirmed" {
 		t.Fatalf("attempts = (%d, %q), want one confirmed attempt", attemptCount, outcome)
 	}
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1
+	`, telegramID).Scan(&requestCount); err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("confirmed pairing request count = %d, want 0", requestCount)
+	}
 	repeat, err := store.ConfirmPairing(context.Background(), telegramID, proposal.AttemptID)
 	if err != nil || repeat.Outcome != telegram.PairingConflict {
 		t.Fatalf("repeated confirmation = %+v, err=%v", repeat, err)
@@ -61,6 +80,14 @@ func TestTelegramPairingStrongMatchConfirmAndRecognition(t *testing.T) {
 	}
 	if err := store.DiscardPairing(context.Background(), declinedID, declined.AttemptID); err != nil {
 		t.Fatal(err)
+	}
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1
+	`, declinedID).Scan(&requestCount); err != nil {
+		t.Fatal(err)
+	}
+	if requestCount != 0 {
+		t.Fatalf("declined pairing request count = %d, want 0", requestCount)
 	}
 	if result, err := store.ConfirmPairing(context.Background(), declinedID, declined.AttemptID); err != nil || result.Outcome != telegram.PairingStale {
 		t.Fatalf("declined confirmation = %+v, err=%v", result, err)
