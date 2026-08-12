@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
@@ -180,6 +182,142 @@ func TestTelegramPairingAdminResolutionTargetsRequestAttempt(t *testing.T) {
 	if intended != "confirmed" || later != "no_match" {
 		t.Fatalf("attempt outcomes = intended %q, later %q", intended, later)
 	}
+}
+
+func TestTelegramPairingConfirmAndUnpairDoNotDeadlock(t *testing.T) {
+	db, prefix, telegramID := openTelegramPairingDB(t)
+	targetID := prefix + "-target"
+	seedUser(t, db, targetID, "PAIRING LOCK TARGET", "PTE", "Alpha", "", true)
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO telegram_pairing (id, telegram_id, user_id, self_confirmed)
+		VALUES ($1, $2, $3, true)
+	`, prefix+"-pairing", telegramID, targetID); err != nil {
+		t.Fatal(err)
+	}
+	store := &TelegramPairingStore{db: db}
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "PAIRING LOCK TARGET")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the roster lock while admin unpair reaches it first. With the old
+	// order, confirmation then held the attempt row and waited behind unpair;
+	// releasing the roster lock formed the inverse-lock cycle. With the shared
+	// order, confirmation waits on the Telegram-account lock instead and never
+	// waits for the pairing row while unpair owns that account lock.
+	blocker, err := db.Pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	if _, err := blocker.Exec(context.Background(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, targetID); err != nil {
+		t.Fatal(err)
+	}
+
+	admin := NewAdminHandler(db)
+	unpairDone := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodDelete, "/api/admin/telegram/pairings/"+itoa(telegramID), nil)
+		req = withTelegramRoute(req, telegramID)
+		req = req.WithContext(context.WithValue(req.Context(), middleware.UserKey, &models.User{ID: prefix + "-admin", IsSuperadmin: true}))
+		rec := httptest.NewRecorder()
+		admin.UnpairTelegramAccount(rec, req)
+		unpairDone <- rec.Code
+	}()
+	if !waitForAdvisoryWaiters(db, telegramID, targetID, 1, 0, 2*time.Second) {
+		t.Fatal("admin unpair did not reach the roster advisory lock")
+	}
+
+	confirmDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := store.ConfirmPairing(ctx, telegramID, proposal.AttemptID)
+		confirmDone <- err
+	}()
+	// Old code makes unpair the first waiter on the target lock and
+	// confirmation the second, forming the inverse-lock cycle after the
+	// blocker is released. The fixed code makes confirmation wait on the
+	// account lock instead, so accept either observed state.
+	if !waitForAdvisoryContention(db, telegramID, targetID, 2*time.Second) {
+		t.Fatal("self-confirmation and unpair did not reach the shared lock ordering")
+	}
+	if err := blocker.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-confirmDone:
+		if err != nil {
+			t.Fatalf("confirmation returned an error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("confirmation timed out")
+	}
+	select {
+	case status := <-unpairDone:
+		if status != http.StatusOK {
+			t.Fatalf("unpair status = %d, want %d", status, http.StatusOK)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("unpair timed out")
+	}
+}
+
+func waitForAdvisoryWaiters(db *database.DB, telegramID int64, targetID string, targetWant, accountWant int, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var targetCount, accountCount int
+		err := db.Pool.QueryRow(ctx, `
+			SELECT
+				COUNT(*) FILTER (
+					WHERE classid = (((hashtextextended($2, 0) >> 32) & 4294967295)::oid)
+					  AND objid = ((hashtextextended($2, 0) & 4294967295)::oid)
+				),
+				COUNT(*) FILTER (
+					WHERE classid = (((($1::bigint >> 32) & 4294967295))::oid)
+					  AND objid = ((($1::bigint & 4294967295))::oid)
+				)
+			FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted
+		`, telegramID, targetID).Scan(&targetCount, &accountCount)
+		if err == nil && targetCount >= targetWant && accountCount >= accountWant {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func waitForAdvisoryContention(db *database.DB, telegramID int64, targetID string, timeout time.Duration) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		var targetCount, accountCount int
+		err := db.Pool.QueryRow(ctx, `
+			SELECT
+				COUNT(*) FILTER (
+					WHERE classid = (((hashtextextended($2, 0) >> 32) & 4294967295)::oid)
+					  AND objid = ((hashtextextended($2, 0) & 4294967295)::oid)
+				),
+				COUNT(*) FILTER (
+					WHERE classid = (((($1::bigint >> 32) & 4294967295))::oid)
+					  AND objid = ((($1::bigint & 4294967295))::oid)
+				)
+			FROM pg_locks
+			WHERE locktype = 'advisory' AND NOT granted
+		`, telegramID, targetID).Scan(&targetCount, &accountCount)
+		// Old code waits twice on the roster lock; shared ordering waits once
+		// there and once on the account lock.
+		if err == nil && (targetCount >= 2 || (targetCount >= 1 && accountCount >= 1)) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
 }
 
 func TestConfirmTelegramPairingRequiresSuperadmin(t *testing.T) {
