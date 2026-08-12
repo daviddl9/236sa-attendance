@@ -168,3 +168,62 @@ The backfill still runs after every API boot and after upward migration commands
 ### Backfill concurrency and partial-failure decision
 
 The backfill remains transaction-bound. Its `SELECT ... FOR UPDATE` locks each null active candidate; a concurrent backfill waits for the lock and rechecks the null predicate under PostgreSQL's default `READ COMMITTED` behavior, so only one writer fills a row. Any generation or write failure rolls back the transaction's earlier backfill writes. The partial unique index also rejects an accidental duplicate code. The deployment currently runs a single API container, but the row-locking and retry behavior make concurrent backfill runs safe if that changes. Because every application insert now writes the code atomically, a session created after the backfill's candidate scan cannot reintroduce the reported post-boot gap.
+
+### Round 1 validation output
+
+#### `cd backend && go build ./...`
+
+Verbatim output: no output. Exit status: 0.
+
+#### `cd backend && go vet ./...`
+
+Verbatim output: no output. Exit status: 0.
+
+#### `cd backend && go test ./... -count=1`
+
+```text
+?    github.com/davidlivingston/go-nextjs-starter/backend/cmd/api [no test files]
+?    github.com/davidlivingston/go-nextjs-starter/backend/cmd/migrate [no test files]
+?    github.com/davidlivingston/go-nextjs-starter/backend/internal/database [no test files]
+ok   github.com/davidlivingston/go-nextjs-starter/backend/internal/handlers 5.462s
+ok   github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware 1.377s
+?    github.com/davidlivingston/go-nextjs-starter/backend/internal/models [no test files]
+ok   github.com/davidlivingston/go-nextjs-starter/backend/internal/services/agent 1.125s
+ok   github.com/davidlivingston/go-nextjs-starter/backend/internal/services/attendance 0.990s
+ok   github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink 1.376s
+ok   github.com/davidlivingston/go-nextjs-starter/backend/internal/services/matching 0.678s
+?    github.com/davidlivingston/go-nextjs-starter/backend/internal/sse [no test files]
+```
+
+#### `cd frontend && npm run build && npm run lint`
+
+```text
+> go-nextjs-frontend@0.1.0 build
+> tsc -b && vite build
+
+vite v7.2.4 building client environment for production...
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+transforming...
+Browserslist: browsers data (caniuse-lite) is 9 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+✓ 3574 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                     0.52 kB │ gzip:   0.32 kB
+dist/assets/index-DIY95Nft.css     63.22 kB │ gzip:  11.20 kB
+dist/assets/index-XtLNV7bV.js   1,601.70 kB │ gzip: 493.10 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking via https://rollupjs.org/configuration-options#output-manualchunks.
+- Adjust chunk size limit to code.split via build.chunkSizeWarningLimit.
+✓ built in 4.15s
+
+> go-nextjs-frontend@0.1.0 lint
+> eslint .
+
+[baseline-browser-mapping] The data in this module is over two months old.  To ensure accurate Baseline data, please update: `npm i baseline-browser-mapping@latest -D`
+```
+
+Both frontend commands exited 0. The warnings are existing dependency freshness and bundle-size warnings.
