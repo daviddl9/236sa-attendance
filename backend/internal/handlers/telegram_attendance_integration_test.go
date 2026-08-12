@@ -80,7 +80,7 @@ func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(
 		{name: "closed", telegramID: 970000000002, code: closedCode, want: telegram.AttendanceClosedReply, sessionID: prefix + "-closed", userID: closedUserID},
 		{name: "out of scope", telegramID: 970000000003, code: outOfScopeCode, want: telegram.AttendanceOutOfScopeReply, sessionID: prefix + "-scoped", userID: outOfScopeUserID},
 		{name: "unknown code", telegramID: 970000000003, code: mustGenerateTelegramCode(t), want: telegram.AttendanceInvalidReply, sessionID: prefix + "-scoped", userID: outOfScopeUserID},
-		{name: "unpaired", telegramID: 970000000004, code: unpairedCode, want: telegram.UnpairedAttendanceReply, sessionID: prefix + "-unpaired", userID: unpairedUserID},
+		{name: "unpaired", telegramID: 970000000004, code: unpairedCode, want: telegram.NamePromptReply, sessionID: prefix + "-unpaired", userID: unpairedUserID},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
