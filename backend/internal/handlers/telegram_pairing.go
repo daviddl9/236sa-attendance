@@ -90,6 +90,9 @@ func (s *TelegramPairingStore) ProposePairing(ctx context.Context, telegramID in
 	if err := insertPairingAttempt(ctx, tx, attemptID, telegramID, "proposed", &candidate.ID); err != nil {
 		return telegram.PairingProposal{}, err
 	}
+	if err := upsertPairingRequest(ctx, tx, telegramID, name, attemptID); err != nil {
+		return telegram.PairingProposal{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return telegram.PairingProposal{}, err
 	}
@@ -223,8 +226,14 @@ func (s *TelegramPairingStore) DiscardPairing(ctx context.Context, telegramID in
 		return errors.New("telegram pairing store is not configured")
 	}
 	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE telegram_pairing_attempt SET user_id = NULL
-		WHERE id = $1 AND telegram_id = $2 AND outcome = 'proposed'
+		WITH invalidated AS (
+			UPDATE telegram_pairing_attempt SET user_id = NULL
+			WHERE id = $1 AND telegram_id = $2 AND outcome = 'proposed'
+			RETURNING id
+		)
+		DELETE FROM telegram_pairing_request r
+		USING invalidated
+		WHERE r.telegram_id = $2 AND r.attempt_id = invalidated.id
 	`, attemptID, telegramID)
 	return err
 }

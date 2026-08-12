@@ -87,7 +87,8 @@ CREATE TABLE telegram_pairing (
     "createdAt"   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- weak/ambiguous pairing attempts awaiting commander review
+-- Pairing attempts awaiting resolution: weak/ambiguous attempts await
+-- commander review, while strong proposals await soldier confirmation.
 CREATE TABLE telegram_pairing_request (
     id            TEXT PRIMARY KEY,
     telegram_id   BIGINT NOT NULL UNIQUE,
