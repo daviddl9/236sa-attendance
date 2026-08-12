@@ -15,7 +15,7 @@ The existing authenticated dashboard remains available. Telegram adds an in-chat
 | Decision | Choice |
 |---|---|
 | Surface | Telegram private-chat inline buttons and conversational wizard |
-| Event creation | Unit commanders and superadmins only |
+| Event creation | Unit commanders and superadmins only; unit commanders close only events they created |
 | Tier 2 commanders | Cannot create or close events; can view and manually manage attendance within their battery |
 | Event fields | Name, unit-wide/battery-specific scope, battery when required, required end time |
 | End-time UX | Preset durations: 30 minutes, 1 hour, 2 hours, or 4 hours |
@@ -32,8 +32,8 @@ The existing authenticated dashboard remains available. Telegram adds an in-chat
 | Role | Create/close | View status | Manual mark/undo |
 |---|---:|---:|---:|
 | Tier 2 commander | No | Own battery | Own battery |
-| Tier 3 unit commander | Yes | Unit | Unit |
-| Superadmin | Yes | Permitted global scope | Permitted global scope |
+| Tier 3 unit commander | Create and close own events | Unit | Unit |
+| Superadmin | Create and close any permitted event | Permitted global scope | Permitted global scope |
 
 These rules preserve the existing web permission boundary: event creation is a unit-commander-level operation, while manual attendance is available to commanders within their existing authority.
 
@@ -78,8 +78,8 @@ Input rules:
 
 - Event names are between 1 and 80 characters after trimming.
 - The end time is required and is calculated from the server's current time using the selected duration.
-- A unit commander can create unit-wide or battery-specific events for batteries within their unit.
-- A superadmin can create events across their permitted scope.
+- A unit commander can create unit-wide or battery-specific events for batteries within their unit and can close only events they created.
+- A superadmin can create and close events across their permitted scope.
 - The first release does not accept custom Excel rosters or arbitrary timestamp text.
 
 Event creation is confirmed explicitly. A replayed confirmation must not create a second session.
@@ -95,11 +95,11 @@ First Parade · ends 09:30
   +-- Missing soldiers
   +-- Search soldier
   +-- My manual marks
-  +-- Close event       (Tier 3+ only)
+  +-- Close event       (creator only; superadmin any)
   +-- Back
 ```
 
-A Tier 2 commander may view and use the QR for an authorized active session, but cannot close it or create a new one. Every action rechecks the actor and session rather than trusting the menu button.
+A Tier 2 commander may view and use the QR for an authorized active session, but cannot close it or create a new one. A unit commander may close only an event they created; a superadmin may close any permitted event. Every action rechecks the actor and session rather than trusting the menu button.
 
 ### QR and link
 
