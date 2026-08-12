@@ -82,11 +82,12 @@ CREATE TABLE telegram_pairing (
     telegram_id   BIGINT NOT NULL UNIQUE,
     user_id       TEXT NOT NULL UNIQUE REFERENCES "user"(id) ON DELETE CASCADE,
     display_name  TEXT,
-    confirmed_by  TEXT NOT NULL REFERENCES "user"(id) ON DELETE RESTRICT,
+    confirmed_by  TEXT REFERENCES "user"(id) ON DELETE SET NULL,
+    self_confirmed BOOLEAN NOT NULL DEFAULT false,
     "createdAt"   TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- awaiting a commander
+-- weak/ambiguous pairing attempts awaiting commander review
 CREATE TABLE telegram_pairing_request (
     id            TEXT PRIMARY KEY,
     telegram_id   BIGINT NOT NULL UNIQUE,
@@ -157,11 +158,12 @@ This refactor lands **first, alone, with no behaviour change**, so any regressio
 | `/start <code>` | paired, session active, in scope | Mark, confirm with session name |
 | `/start <code>` | paired, already marked | Say already marked, record nothing |
 | `/start <code>` | paired, closed or out of scope | Decline, record nothing |
-| `/start <code>` | unpaired | Create pairing request, tell them to see a commander |
-| `/start <code>` | unknown code | Generic rejection, revealing nothing (FR-017) |
+| `/start <code>` | unpaired | Ignore the opaque code as identity input; use only Telegram FirstName+LastName for the normal pairing attempt, propose one strong candidate for explicit soldier confirmation, or prompt/direct to a commander when empty or weak |
+| `/start <code>` | paired, unknown code | Generic rejection, revealing nothing (FR-017) |
+| `/start <code>` | unpaired, any payload | Use only Telegram FirstName+LastName for the normal pairing attempt; never mark or pass/store the opaque payload |
 | `/start` or any DM | paired | Show own recent attendance only |
-| `/start` or any DM | unpaired, no request yet | Create pairing request |
-| `/start` or any DM | unpaired, request pending | Repeat the pending message, create nothing |
+| `/start` or any DM | unpaired, non-empty display name | Propose one strong candidate for explicit soldier confirmation, or direct to a commander without naming anyone |
+| `/start` or any DM | unpaired, empty display name | Prompt normally for a name; do not search or disclose a person |
 | any | not a direct message | Ignore entirely (FR-018) |
 | name search | paired commander | Ranked roster rows within their authority |
 | name search | paired non-commander | Refuse, return no name (FR-016) |
@@ -173,12 +175,12 @@ Authority comes from the paired roster row's existing tier, so `middleware/rbac.
 - **Webhook authenticity**: register with Telegram's `secret_token` and require the `X-Telegram-Bot-Api-Secret-Token` header to match, using a constant-time comparison. Reject otherwise (FR-019). The webhook path also contains a random segment, but the header is the real control.
 - **Idempotency**: `attendance_record` already has `UNIQUE (session_id, user_id)`. Treat a unique violation as `AlreadyMarked`, which makes retried webhook delivery harmless (FR-012).
 - **Always answer 200** for updates that are authentic but unactionable, so Telegram stops retrying. Reserve non-2xx for genuine server faults.
-- **No roster leakage**: a soldier's replies contain only their own name. Search is commander-only and battery-scoped.
-- **Config**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME` from the environment, never committed. The bot stays disabled when the token is absent, so local and test runs are unaffected.
+- **No roster leakage**: non-commanders cannot perform arbitrary roster searches, receive candidate lists, or receive unrelated names. The sole exception is one strong candidate proposed in direct response to that account's own explicit pairing attempt, including an unpaired deep-link `/start`; the opaque payload is never passed to matching. Search is commander-only and battery-scoped.
+- **Config**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_BOT_USERNAME`, and `TELEGRAM_WEBHOOK_PATH` are all required for an enabled bot, never committed. With none configured the bot stays disabled; partial configuration fails closed. Session Telegram links are empty unless all four are present.
 
 ## Pairing model: soldier confirms, commander reviews by exception
 
-The soldier types their name. The bot ranks the roster with the 008 matcher and, **only if there is a strong match**, proposes exactly one person: *"Are you CPL TAN WEI MING, Bravo?"* On confirmation the pairing is live and they can mark attendance immediately. No commander is in the path.
+The bot uses Telegram's FirstName+LastName as the normal pairing hint. It ranks the roster with the 008 matcher and, **only if there is a strong match**, proposes exactly one person: *"Are you CPL TAN WEI MING, Bravo?"* On explicit soldier confirmation the pairing is live and they can mark attendance immediately; a commander reviews routine confirmations and handles weak matches or conflicts by exception. No opaque deep-link payload is used as identity input.
 
 Three properties keep that safe, and all three must hold:
 
@@ -194,7 +196,7 @@ Rate-limit proposals per Telegram account: because the bot answers "are you X?",
 
 Feature 008's approval screen already does exactly what pairing needs: take a request carrying a claimed name, rank roster candidates by fuzzy score, show mismatch chips, and require an explicit confirmation.
 
-The only change is the intake channel. A pairing request carries a Telegram display name instead of a chosen username. `services/matching` is reused unchanged, including the score-80 strong/weak split and the always-reachable weak matches — which matter more here, since Telegram display names are frequently nicknames and will often score weak.
+The only change is the intake channel. A pairing attempt carries a Telegram FirstName+LastName display hint instead of a chosen username. `services/matching` is reused unchanged, including the score-80 strong/weak split and the always-reachable weak matches — which matter more here, since Telegram display names are frequently nicknames and will often score weak. An unpaired deep-link payload never reaches the matcher and is not stored; valid and unknown payloads must not produce a session-existence signal.
 
 ## PR breakdown
 
@@ -226,6 +228,7 @@ PR6 is **not deferrable**. It is the manual-marking path for soldiers who are no
 - Mark succeeds for a paired soldier on an active session.
 - Second identical update produces exactly one record (idempotency via the unique constraint).
 - Closed session, out-of-scope battery, unknown code, unpaired account: nothing recorded.
+- An unpaired deep link with synthetic FirstName+LastName follows the normal pairing attempt/proposal path, proposes at most one strong candidate for explicit confirmation, creates no attendance row, and neither stores nor matches the opaque payload; a valid and unknown payload produce no session-existence distinction.
 - Pairing request created once; a second contact does not duplicate it.
 - Confirming a pairing preserves attendance history (seed 3 records, confirm, assert 3 remain).
 - One Telegram account cannot pair to two roster rows; one roster row cannot take two accounts.
@@ -287,8 +290,8 @@ Expected: rejected without the secret header; rejected with a wrong one; accepte
 Requires a test bot from BotFather and a public URL.
 
 1. Create a session on the dashboard; confirm its QR encodes `https://t.me/<bot>?start=<22-char code>`.
-2. Scan with an unpaired account. Expect no record and a pairing request visible to a commander.
-3. Confirm the pairing; expect the correct roster row ranked first for a display name with a typo.
+2. Scan with an unpaired account whose synthetic Telegram FirstName+LastName is a strong roster hint. Expect no record, one proposed candidate, and an explicit confirmation keyboard; the opaque payload must not appear in the proposal or pairing data.
+3. Confirm the proposal; expect the correct roster row and commander review-by-exception visibility.
 4. Scan again. Expect Present within 10 seconds, and the session board to move that soldier from Missing to Present.
 5. Scan a third time. Expect "already marked" and still exactly one record.
 6. Close the session and scan. Expect a decline and no record.
@@ -306,7 +309,7 @@ Drive 431 concurrent marks against local PostgreSQL. Expected: 431 records, zero
 | Risk | Severity | Mitigation |
 |---|---|---|
 | Marking rules diverge between web and Telegram | **High** — silently wrong attendance | Extract the service in PR1; parity tests |
-| Wrong pairing marks the wrong soldier present | **High** | Commander confirms every pairing; unpair exists; never auto-pair |
+| Wrong pairing marks the wrong soldier present | **High** | Soldier explicitly confirms one strong proposal; weak/ambiguous matches go to commander review; unpair exists; never pair silently |
 | Shared phone marks the wrong soldier | Medium | One account per roster row; commander can see and undo pairings |
 | Telegram display names are nicknames, so matching often scores weak | Medium | Weak matches always reachable (008 PR3d); commander decides |
 | Bot token leaked | **High** — anyone can impersonate the bot | Environment only; V2 scan; rotate via BotFather |

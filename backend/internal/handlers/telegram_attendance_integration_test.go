@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,12 +19,27 @@ import (
 )
 
 type captureTelegramSink struct {
+	mu      sync.Mutex
 	actions []telegram.Action
 }
 
 func (s *captureTelegramSink) Enqueue(actions []telegram.Action) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.actions = append(s.actions, actions...)
 	return true
+}
+
+func (s *captureTelegramSink) Actions() []telegram.Action {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]telegram.Action(nil), s.actions...)
+}
+
+func (s *captureTelegramSink) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.actions = nil
 }
 
 func TestTelegramWebhookMarksPairedSoldierExactlyOnce(t *testing.T) {
@@ -38,20 +54,90 @@ func TestTelegramWebhookMarksPairedSoldierExactlyOnce(t *testing.T) {
 	if first.Code != http.StatusOK {
 		t.Fatalf("first webhook status = %d, want 200", first.Code)
 	}
-	if len(sink.actions) != 1 || sink.actions[0].Text != "Attendance marked for Synthetic active parade." {
-		t.Fatalf("first reply = %#v", sink.actions)
+	actions := sink.Actions()
+	if len(actions) != 1 || actions[0].Text != "Attendance marked for Synthetic active parade." {
+		t.Fatalf("first reply = %#v", actions)
 	}
 	assertTelegramRecord(t, db, prefix+"-active", soldierID, 1, models.MarkingMethodTelegramScan)
 
-	sink.actions = nil
+	sink.Reset()
 	second := postTelegramMessage(t, handler, 970000000001, "/start "+code)
 	if second.Code != http.StatusOK {
 		t.Fatalf("repeated webhook status = %d, want 200", second.Code)
 	}
-	if len(sink.actions) != 1 || sink.actions[0].Text != "You are already marked for Synthetic active parade." {
-		t.Fatalf("repeated reply = %#v", sink.actions)
+	actions = sink.Actions()
+	if len(actions) != 1 || actions[0].Text != "You are already marked for Synthetic active parade." {
+		t.Fatalf("repeated reply = %#v", actions)
 	}
 	assertTelegramRecord(t, db, prefix+"-active", soldierID, 1, models.MarkingMethodTelegramScan)
+}
+
+func TestTelegramWebhookUnpairedDeepLinkUsesDisplayNameProposalWithoutMark(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	targetID := prefix + "-target"
+	seedUser(t, db, targetID, "SYNTHETIC DISPLAY SOLDIER", "PTE", "Alpha", prefix+"-target", true)
+	code := seedTelegramSession(t, db, prefix+"-session", "Synthetic pairing parade", "unit_wide", nil, "active", targetID)
+	telegramID := int64(970000000101)
+	handler, sink := newTelegramAttendanceHandler(db)
+
+	first := postTelegramUserMessage(t, handler, telegram.User{
+		ID: telegramID, FirstName: "Synthetic", LastName: "Display Soldier",
+	}, "/start "+code)
+	if first.Code != http.StatusOK {
+		t.Fatalf("valid deep-link webhook status = %d, want 200", first.Code)
+	}
+	actions := sink.Actions()
+	if len(actions) != 1 || actions[0].Text != "Are you PTE SYNTHETIC DISPLAY SOLDIER, Alpha?" {
+		t.Fatalf("valid deep-link pairing actions = %#v", actions)
+	}
+	if strings.Contains(actions[0].Text, code) {
+		t.Fatalf("opaque deep-link payload was echoed in pairing reply: %q", actions[0].Text)
+	}
+	if actions[0].ReplyMarkup == nil {
+		t.Fatal("strong display-name match did not require explicit confirmation")
+	}
+	assertTelegramRecord(t, db, prefix+"-session", targetID, 0, "")
+
+	var outcome, proposedUserID string
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT outcome, user_id FROM telegram_pairing_attempt WHERE telegram_id = $1
+	`, telegramID).Scan(&outcome, &proposedUserID); err != nil {
+		t.Fatalf("read pairing attempt: %v", err)
+	}
+	if outcome != "proposed" || proposedUserID != targetID {
+		t.Fatalf("pairing attempt = (%q, %q), want proposed target %q", outcome, proposedUserID, targetID)
+	}
+	var payloadRows int
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM telegram_pairing_request
+		WHERE telegram_id = $1 AND display_name LIKE '%' || $2 || '%'
+	`, telegramID, code).Scan(&payloadRows); err != nil {
+		t.Fatalf("search pairing request for opaque payload: %v", err)
+	}
+	if payloadRows != 0 {
+		t.Fatalf("opaque payload was stored in pairing request display_name (%d rows)", payloadRows)
+	}
+
+	// An unknown capability gets the same normal display-name proposal rather
+	// than a session-existence response. This keeps the code opaque while still
+	// allowing a soldier to pair from the normal /start flow.
+	sink.Reset()
+	unknownCode := mustGenerateTelegramCode(t)
+	secondID := telegramID + 1
+	second := postTelegramUserMessage(t, handler, telegram.User{
+		ID: secondID, FirstName: "Synthetic", LastName: "Display Soldier",
+	}, "/start "+unknownCode)
+	if second.Code != http.StatusOK {
+		t.Fatalf("unknown deep-link webhook status = %d, want 200", second.Code)
+	}
+	unknownActions := sink.Actions()
+	if len(unknownActions) != 1 || unknownActions[0].Text != actions[0].Text {
+		t.Fatalf("unknown deep-link proposal = %#v, want same normal proposal text", unknownActions)
+	}
+	if strings.Contains(unknownActions[0].Text, unknownCode) {
+		t.Fatalf("unknown opaque payload was echoed in pairing reply: %q", unknownActions[0].Text)
+	}
+	assertTelegramRecord(t, db, prefix+"-session", targetID, 0, "")
 }
 
 func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(t *testing.T) {
@@ -84,13 +170,14 @@ func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sink.actions = nil
+			sink.Reset()
 			rec := postTelegramMessage(t, handler, tc.telegramID, "/start "+tc.code)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("webhook status = %d, want 200", rec.Code)
 			}
-			if len(sink.actions) != 1 || sink.actions[0].Text != tc.want {
-				t.Fatalf("reply = %#v, want %q", sink.actions, tc.want)
+			actions := sink.Actions()
+			if len(actions) != 1 || actions[0].Text != tc.want {
+				t.Fatalf("reply = %#v, want %q", actions, tc.want)
 			}
 			assertTelegramRecord(t, db, tc.sessionID, tc.userID, 0, "")
 		})
@@ -109,8 +196,8 @@ func TestTelegramWebhookIgnoresGroupMessages(t *testing.T) {
 	req.Header.Set(telegramSecretHeader, "synthetic-webhook-secret")
 	rec := httptest.NewRecorder()
 	handler.Webhook(rec, req)
-	if rec.Code != http.StatusOK || len(sink.actions) != 0 {
-		t.Fatalf("group webhook = status %d actions %#v, want 200/no actions", rec.Code, sink.actions)
+	if rec.Code != http.StatusOK || len(sink.Actions()) != 0 {
+		t.Fatalf("group webhook = status %d actions %#v, want 200/no actions", rec.Code, sink.Actions())
 	}
 	assertTelegramRecord(t, db, prefix+"-group", soldierID, 0, "")
 }
@@ -131,8 +218,8 @@ func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 
 	handler, sink := newTelegramAttendanceHandler(db)
 	postTelegramMessage(t, handler, 970000000006, "/start "+activeCode)
-	if len(sink.actions) != 1 || sink.actions[0].Text != "Attendance marked for Synthetic parity active." {
-		t.Fatalf("Telegram active reply = %#v", sink.actions)
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != "Attendance marked for Synthetic parity active." {
+		t.Fatalf("Telegram active reply = %#v", actions)
 	}
 
 	web := NewAttendanceHandler(db, nil)
@@ -147,20 +234,20 @@ func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 
 	// A closed session and a scoped rejection must be the same service outcomes
 	// regardless of whether the request arrives through Telegram or web.
-	sink.actions = nil
+	sink.Reset()
 	postTelegramMessage(t, handler, 970000000006, "/start "+closedCode)
-	if len(sink.actions) != 1 || sink.actions[0].Text != telegram.AttendanceClosedReply {
-		t.Fatalf("Telegram closed reply = %#v", sink.actions)
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != telegram.AttendanceClosedReply {
+		t.Fatalf("Telegram closed reply = %#v", actions)
 	}
 	webClosed := markWebForTest(t, web, closedID, closedID+"-secret", soldierID)
 	if webClosed.Code != http.StatusBadRequest {
 		t.Fatalf("web closed status = %d, want %d", webClosed.Code, http.StatusBadRequest)
 	}
 
-	sink.actions = nil
+	sink.Reset()
 	postTelegramMessage(t, handler, 970000000007, "/start "+scopedCode)
-	if len(sink.actions) != 1 || sink.actions[0].Text != telegram.AttendanceOutOfScopeReply {
-		t.Fatalf("Telegram out-of-scope reply = %#v", sink.actions)
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != telegram.AttendanceOutOfScopeReply {
+		t.Fatalf("Telegram out-of-scope reply = %#v", actions)
 	}
 	webScoped := markWebForTest(t, web, prefix+"-scoped", prefix+"-scoped-secret", outsideID)
 	if webScoped.Code != http.StatusForbidden {
@@ -231,7 +318,12 @@ func newTelegramAttendanceHandler(db *database.DB) (*TelegramHandler, *captureTe
 
 func postTelegramMessage(t *testing.T, handler *TelegramHandler, telegramID int64, text string) *httptest.ResponseRecorder {
 	t.Helper()
-	body := fmt.Sprintf(`{"message":{"from":{"id":%d},"chat":{"id":%d,"type":"private"},"text":%q}}`, telegramID, telegramID, text)
+	return postTelegramUserMessage(t, handler, telegram.User{ID: telegramID}, text)
+}
+
+func postTelegramUserMessage(t *testing.T, handler *TelegramHandler, user telegram.User, text string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := fmt.Sprintf(`{"message":{"from":{"id":%d,"first_name":%q,"last_name":%q},"chat":{"id":%d,"type":"private"},"text":%q}}`, user.ID, user.FirstName, user.LastName, user.ID, text)
 	req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/synthetic", strings.NewReader(body))
 	req.Header.Set(telegramSecretHeader, "synthetic-webhook-secret")
 	rec := httptest.NewRecorder()

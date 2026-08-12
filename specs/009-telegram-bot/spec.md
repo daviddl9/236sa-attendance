@@ -49,18 +49,18 @@ A soldier scans the parade QR code with their phone camera. It opens the unit's 
 
 ### User Story 2 - Soldier pairs their Telegram account once (Priority: P1)
 
-A soldier opens the bot for the first time. It does not recognise them, so it registers a pairing request carrying their Telegram display name. A commander matches that request to their roster row and confirms. The soldier is told they are ready.
+A soldier opens the bot for the first time. It does not recognise them, so it uses Telegram's FirstName+LastName as a pairing hint. When that hint has one strong candidate, the bot proposes only that person and the soldier must explicitly confirm. A commander reviews routine self-confirmations and handles weak matches or conflicts by exception. The soldier is told they are ready after confirmation.
 
 **Why this priority**: Nothing works before pairing. It is P1 alongside Story 1 but strictly precedes it.
 
-**Independent Test**: Open the bot as an unknown Telegram account, confirm a pending pairing appears for a commander, link it, and confirm the soldier can then mark attendance.
+**Independent Test**: Open the bot as an unknown Telegram account with a synthetic FirstName+LastName, confirm one strong proposed roster name is shown without marking attendance, explicitly confirm it, and confirm the soldier can then mark attendance. Also verify a weak match becomes a commander-review exception.
 
 **Acceptance Scenarios**:
 
-1. **Given** an unrecognised Telegram account, **When** they open the bot, **Then** a pending pairing is created and the soldier is told a commander must confirm it.
-2. **Given** a pending pairing, **When** a commander views it, **Then** candidate roster rows are ranked with the closest name first, tolerant of a wrong rank.
-3. **Given** a commander confirms a pairing, **When** the soldier next opens the bot, **Then** they are recognised and can mark attendance.
-4. **Given** an unpaired soldier, **When** they open a QR deep link, **Then** nothing is recorded and they are told to pair first.
+1. **Given** an unrecognised Telegram account with a non-empty FirstName+LastName, **When** they open the bot, **Then** the bot attempts normal pairing from that display name, proposes at most one strong candidate, and requires an explicit soldier confirmation before any pairing or attendance mark.
+2. **Given** a strong proposal, **When** the soldier confirms it, **Then** the pairing is live immediately and a commander can review the self-confirmation afterwards.
+3. **Given** a weak, ambiguous, empty, or rate-limited hint, **When** the account contacts the bot, **Then** no person is proposed and the account is directed to a commander; no unrelated roster name is disclosed.
+4. **Given** an unpaired soldier, **When** they open a QR deep link, **Then** nothing is recorded, the opaque payload is not used as identity input, and the normal FirstName+LastName pairing attempt is used (or the normal name prompt is shown when the display name is empty).
 5. **Given** a pending pairing, **When** the soldier opens the bot again, **Then** no duplicate pairing is created.
 6. **Given** a Telegram account already paired to a roster row, **When** a commander tries to pair it to a second row, **Then** it is refused.
 7. **Given** a commander rejects a pairing, **When** the soldier opens the bot again, **Then** they may request pairing afresh.
@@ -109,7 +109,7 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 ### Edge Cases
 
 - **The deep link payload cannot carry the current QR token.** Today's token is `sessionID:secret`, 97 characters including a colon. Telegram limits `/start` payloads to 64 characters from `A-Za-z0-9_-`. A shorter session code is required.
-- **Telegram display names are unreliable identifiers.** They are user-chosen, may be a nickname, a single word, or emoji, and can change at any time. They are a matching hint for a commander, never an identity.
+- **Telegram display names are unreliable identifiers.** They are user-chosen, may be a nickname, a single word, or emoji, and can change at any time. FirstName+LastName are only a pairing hint; one strong candidate may be proposed to that account for explicit soldier confirmation, never treated as identity and never exposed as a search result.
 - **Two soldiers sharing one phone.** Telegram identity is per account, not per device, so the second soldier would mark the first present. Pairing is one account to one roster row, and a commander must be able to see and undo a wrong pairing.
 - **A soldier changes Telegram account** (new number, deleted account). Their old pairing is stale and a commander must be able to re-pair them.
 - **Webhook delivery is retried.** Telegram redelivers on non-2xx and may deliver out of order, so marking must be idempotent.
@@ -153,8 +153,8 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 
 **Not disclosing the roster**
 
-- **FR-016**: The bot MUST NOT reveal any personnel name to an account that is not a confirmed commander.
-- **FR-017**: Rejections MUST NOT reveal whether a session or a person exists.
+- **FR-016**: The bot MUST NOT reveal personnel names to an account that is not a confirmed commander except for the single strong candidate proposed in direct response to that account's own explicit pairing attempt (including an unpaired deep-link `/start`). A non-commander MUST NOT perform arbitrary roster searches, receive a list of candidates, or receive an unrelated person's name.
+- **FR-017**: Rejections MUST NOT reveal whether a session or a person exists. An unpaired deep link therefore follows the same display-name pairing path for valid and unknown opaque payloads, without checking or echoing the payload as identity data.
 - **FR-018**: The bot MUST ignore messages that are not direct messages, so a link shared in a group cannot act on another member.
 - **FR-019**: The system MUST reject webhook requests that do not prove they came from Telegram.
 
@@ -184,8 +184,8 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 
 ### Key Entities
 
-- **Pairing**: A confirmed link between a Telegram account and a roster row. Holds the Telegram identifier, the roster row, who confirmed it and when.
-- **Pairing request**: An unconfirmed pairing awaiting a commander, holding the Telegram identifier and the display name offered as a matching hint.
+- **Pairing**: A confirmed link between a Telegram account and a roster row. Holds the Telegram identifier, the roster row, whether the soldier self-confirmed, any commander reviewer and when.
+- **Pairing request**: A weak or ambiguous pairing attempt awaiting commander review, holding the Telegram identifier and the FirstName+LastName display hint. A strong attempt is proposed directly to the soldier and still requires explicit confirmation.
 - **Session deep-link code**: A short, unguessable per-session code that fits a Telegram `/start` payload, replacing the current 97-character token for this purpose.
 - **Attendance record**: Unchanged, except that its marking method distinguishes a Telegram scan.
 - **User**: Unchanged. Gains no Telegram-specific fields beyond the pairing relationship.

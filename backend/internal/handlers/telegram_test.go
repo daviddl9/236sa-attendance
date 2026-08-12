@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,12 +14,21 @@ import (
 )
 
 type telegramActionSink struct {
+	mu      sync.Mutex
 	actions []telegram.Action
 }
 
 func (s *telegramActionSink) Enqueue(actions []telegram.Action) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.actions = append(s.actions, actions...)
 	return true
+}
+
+func (s *telegramActionSink) Actions() []telegram.Action {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]telegram.Action(nil), s.actions...)
 }
 
 type telegramPairingLookup struct {
@@ -67,12 +77,13 @@ func TestTelegramWebhookAuthenticity(t *testing.T) {
 			} else if rec.Code == http.StatusOK {
 				t.Fatalf("status = 200 for rejected request")
 			}
+			actions := sink.Actions()
 			if tc.wantOK {
-				if len(sink.actions) != 1 {
-					t.Fatalf("accepted request queued %d actions, want 1", len(sink.actions))
+				if len(actions) != 1 {
+					t.Fatalf("accepted request queued %d actions, want 1", len(actions))
 				}
-			} else if len(sink.actions) != 0 {
-				t.Fatalf("rejected request queued actions: %#v", sink.actions)
+			} else if len(actions) != 0 {
+				t.Fatalf("rejected request queued actions: %#v", actions)
 			}
 		})
 	}
@@ -89,8 +100,8 @@ func TestTelegramWebhookGroupMessageHasNoActionOrReply(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if len(sink.actions) != 0 {
-		t.Fatalf("group message queued actions: %#v", sink.actions)
+	if actions := sink.Actions(); len(actions) != 0 {
+		t.Fatalf("group message queued actions: %#v", actions)
 	}
 }
 
@@ -105,8 +116,8 @@ func TestTelegramWebhookRepliesToUnknownPrivateAccount(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	if len(sink.actions) != 1 || sink.actions[0].Text != telegram.UnlinkedReply {
-		t.Fatalf("actions = %#v, want unlinked reply", sink.actions)
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != telegram.UnlinkedReply {
+		t.Fatalf("actions = %#v, want unlinked reply", actions)
 	}
 }
 
@@ -121,8 +132,8 @@ func TestTelegramWebhookAuthenticatedMalformedAndMissingUpdatesReturnOK(t *testi
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
 			}
-			if len(sink.actions) != 0 {
-				t.Fatalf("malformed or missing update queued actions: %#v", sink.actions)
+			if actions := sink.Actions(); len(actions) != 0 {
+				t.Fatalf("malformed or missing update queued actions: %#v", actions)
 			}
 		})
 	}
@@ -150,8 +161,8 @@ func TestTelegramWebhookBodyLimitBoundary(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
 			}
-			if len(sink.actions) != tc.wantActions {
-				t.Fatalf("actions = %d, want %d", len(sink.actions), tc.wantActions)
+			if actions := sink.Actions(); len(actions) != tc.wantActions {
+				t.Fatalf("actions = %d, want %d", len(actions), tc.wantActions)
 			}
 		})
 	}
@@ -188,8 +199,8 @@ func TestTelegramWebhookHandlesNullAndUnexpectedFieldTypes(t *testing.T) {
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rec.Code)
 			}
-			if len(sink.actions) != 0 {
-				t.Fatalf("unexpected input queued actions: %#v", sink.actions)
+			if actions := sink.Actions(); len(actions) != 0 {
+				t.Fatalf("unexpected input queued actions: %#v", actions)
 			}
 		})
 	}
