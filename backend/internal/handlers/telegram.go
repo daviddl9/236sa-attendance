@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 	"github.com/jackc/pgx/v5"
 )
@@ -97,11 +98,19 @@ func (h *TelegramHandler) serverError(w http.ResponseWriter) {
 // constrained by Telegram account ID, so the only name returned to a paired
 // soldier is that account's own name.
 type TelegramPairingStore struct {
-	db *database.DB
+	db  *database.DB
+	hub *sse.Hub
 }
 
 func NewTelegramPairingStore(db *database.DB) *TelegramPairingStore {
-	return &TelegramPairingStore{db: db}
+	return NewTelegramPairingStoreWithHub(db, nil)
+}
+
+// NewTelegramPairingStoreWithHub wires the optional live attendance hub. The
+// nil-hub constructor remains useful for tests and deployments that do not
+// expose SSE.
+func NewTelegramPairingStoreWithHub(db *database.DB, hub *sse.Hub) *TelegramPairingStore {
+	return &TelegramPairingStore{db: db, hub: hub}
 }
 
 func (s *TelegramPairingStore) FindPairing(ctx context.Context, telegramID int64) (telegram.Pairing, bool, error) {

@@ -12,12 +12,16 @@ import (
 )
 
 const (
-	UnlinkedReply        = "Your account is not yet linked. Pairing arrives soon."
-	NamePromptReply      = "Please send your full name so I can find your roster record."
-	NoMatchReply         = "I couldn't find a close match. Please see a commander to complete pairing."
-	PairingConflictReply = "Pairing could not be completed. Please see a commander."
-	PairingDeclinedReply = "Okay. Send your full name again if you want to try another match."
-	PairingStaleReply    = "That proposal is no longer available. Please send your full name again."
+	UnlinkedReply             = "Your account is not yet linked. Pairing arrives soon."
+	NamePromptReply           = "Please send your full name so I can find your roster record."
+	UnpairedAttendanceReply   = "Please pair your Telegram account before scanning an attendance QR code."
+	AttendanceClosedReply     = "This attendance session is closed."
+	AttendanceOutOfScopeReply = "You are not eligible for this attendance session."
+	AttendanceInvalidReply    = "This attendance link is invalid or unavailable."
+	NoMatchReply              = "I couldn't find a close match. Please see a commander to complete pairing."
+	PairingConflictReply      = "Pairing could not be completed. Please see a commander."
+	PairingDeclinedReply      = "Okay. Send your full name again if you want to try another match."
+	PairingStaleReply         = "That proposal is no longer available. Please send your full name again."
 )
 
 // Pairing is the identity data the bot needs. FullName is read for the
@@ -31,6 +35,34 @@ type Pairing struct {
 // PairingLookup reads a confirmed pairing for one Telegram account.
 type PairingLookup interface {
 	FindPairing(ctx context.Context, telegramID int64) (Pairing, bool, error)
+}
+
+// AttendanceOutcome is the result of resolving one Telegram deep link and
+// applying the shared attendance marking rules.
+type AttendanceOutcome int
+
+const (
+	AttendanceMarked AttendanceOutcome = iota
+	AttendanceAlreadyMarked
+	AttendanceSessionClosed
+	AttendanceOutOfScope
+	AttendanceUnknownCode
+	AttendanceUnpaired
+)
+
+// AttendanceResult contains only the session name needed in a successful
+// soldier-facing reply. Unknown and rejected outcomes leave it empty.
+type AttendanceResult struct {
+	Outcome     AttendanceOutcome
+	SessionName string
+}
+
+// AttendanceMarker resolves a per-session Telegram deep-link code and marks
+// the paired account. The production adapter owns the transaction and calls
+// services/attendance.Mark; tests can inject a real-DB adapter or a narrow
+// fake without replacing the pairing lookup.
+type AttendanceMarker interface {
+	MarkAttendance(ctx context.Context, telegramID int64, deeplinkCode string) (AttendanceResult, error)
 }
 
 // PairingProposal is the one roster row the system may propose to a soldier.
@@ -102,16 +134,30 @@ const (
 )
 
 // Bot routes updates and composes replies. Attendance and pairing writes are
-// delegated to the optional PairingFlow implemented by the database adapter.
+// delegated to optional service adapters implemented by the database store.
 type Bot struct {
-	pairings PairingLookup
-	flow     PairingFlow
+	pairings   PairingLookup
+	flow       PairingFlow
+	attendance AttendanceMarker
 }
 
 func NewBot(pairings PairingLookup) *Bot {
-	bot := &Bot{pairings: pairings}
+	return NewBotWithAttendance(pairings, nil)
+}
+
+// NewBotWithAttendance keeps the pairing lookup and attendance marker
+// independently injectable. NewBot remains the compatibility constructor for
+// read-only pairing tests and automatically discovers adapters implemented by
+// the same production store.
+func NewBotWithAttendance(pairings PairingLookup, marker AttendanceMarker) *Bot {
+	bot := &Bot{pairings: pairings, attendance: marker}
 	if flow, ok := pairings.(PairingFlow); ok {
 		bot.flow = flow
+	}
+	if bot.attendance == nil {
+		if marker, ok := pairings.(AttendanceMarker); ok {
+			bot.attendance = marker
+		}
 	}
 	return bot
 }
@@ -136,12 +182,38 @@ func (b *Bot) handleMessage(ctx context.Context, message *Message) ([]Action, er
 		return nil, errors.New("telegram pairing lookup is not configured")
 	}
 
+	start := parseStartCommand(message.Text)
 	pairing, found, err := b.pairings.FindPairing(ctx, message.From.ID)
 	if err != nil {
 		return nil, fmt.Errorf("find Telegram pairing: %w", err)
 	}
 	if found {
+		if start.hasPayload {
+			if start.payload == "" || b.attendance == nil {
+				// A malformed payload is not a name and must never enter the
+				// pairing matcher. Keep the old linked response when the
+				// attendance adapter is not configured in a read-only test bot.
+				if b.attendance == nil {
+					return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: linkedReply(pairing.FullName)}}, nil
+				}
+				return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: AttendanceInvalidReply}}, nil
+			}
+			result, err := b.attendance.MarkAttendance(ctx, message.From.ID, start.payload)
+			if err != nil {
+				return nil, fmt.Errorf("mark Telegram attendance: %w", err)
+			}
+			return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: attendanceReply(result)}}, nil
+		}
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: linkedReply(pairing.FullName)}}, nil
+	}
+	if start.hasPayload {
+		// The deep-link payload is an opaque capability, never identity input.
+		// An unpaired account must pair first and must not learn anything about
+		// the code or session.
+		if b.flow == nil && b.attendance == nil {
+			return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnlinkedReply}}, nil
+		}
+		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnpairedAttendanceReply}}, nil
 	}
 	if b.flow == nil {
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: UnlinkedReply}}, nil
@@ -202,6 +274,57 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query *CallbackQuery) ([]
 		actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingStaleReply})
 	}
 	return actions, nil
+}
+
+type startCommand struct {
+	hasPayload bool
+	payload    string
+}
+
+func parseStartCommand(text string) startCommand {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return startCommand{}
+	}
+	command := fields[0]
+	if at := strings.IndexByte(command, '@'); at >= 0 {
+		command = command[:at]
+	}
+	if !strings.EqualFold(command, "/start") {
+		return startCommand{}
+	}
+	if len(fields) == 1 {
+		return startCommand{}
+	}
+	if len(fields) != 2 {
+		return startCommand{hasPayload: true}
+	}
+	return startCommand{hasPayload: true, payload: fields[1]}
+}
+
+func attendanceReply(result AttendanceResult) string {
+	sessionName := strings.TrimSpace(result.SessionName)
+	switch result.Outcome {
+	case AttendanceMarked:
+		if sessionName == "" {
+			return "Attendance marked."
+		}
+		return "Attendance marked for " + sessionName + "."
+	case AttendanceAlreadyMarked:
+		if sessionName == "" {
+			return "You are already marked for this attendance session."
+		}
+		return "You are already marked for " + sessionName + "."
+	case AttendanceSessionClosed:
+		return AttendanceClosedReply
+	case AttendanceOutOfScope:
+		return AttendanceOutOfScopeReply
+	case AttendanceUnpaired:
+		return UnpairedAttendanceReply
+	default:
+		// Unknown and malformed capabilities deliberately share one response.
+		return AttendanceInvalidReply
+	}
 }
 
 func pairingNameInput(text string) string {

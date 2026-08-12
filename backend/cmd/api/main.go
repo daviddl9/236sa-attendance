@@ -53,7 +53,7 @@ func main() {
 
 	// Initialize optional Telegram bot. A missing token disables only this
 	// integration; the rest of the API starts exactly as before.
-	telegramHandler, telegramDispatcher := newTelegramRuntime(db, telegramConfig)
+	telegramHandler, telegramDispatcher := newTelegramRuntime(db, telegramConfig, sseHub)
 	if telegramDispatcher != nil {
 		defer telegramDispatcher.Close()
 	}
@@ -310,7 +310,7 @@ func newAgentParser() agent.Parser {
 	return agent.NewParser(client)
 }
 
-func newTelegramRuntime(db *database.DB, config telegram.Config) (*handlers.TelegramHandler, *telegram.Dispatcher) {
+func newTelegramRuntime(db *database.DB, config telegram.Config, hub *sse.Hub) (*handlers.TelegramHandler, *telegram.Dispatcher) {
 	if !config.Enabled() {
 		log.Println("Telegram bot disabled: set TELEGRAM_BOT_TOKEN to enable")
 		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
@@ -321,7 +321,7 @@ func newTelegramRuntime(db *database.DB, config telegram.Config) (*handlers.Tele
 		log.Println("Telegram bot disabled: client could not be initialized")
 		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
 	}
-	bot := telegram.NewBot(handlers.NewTelegramPairingStore(db))
+	bot := telegram.NewBot(handlers.NewTelegramPairingStoreWithHub(db, hub))
 	dispatcher := telegram.NewDispatcher(client, 512)
 	return handlers.NewTelegramHandler(bot, config.WebhookSecret, dispatcher), dispatcher
 }

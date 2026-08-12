@@ -16,7 +16,7 @@ import (
 type MarkRequest struct {
 	SessionID string
 	UserID    string
-	Method    string     // qr_scan | manual (telegram_scan arrives in a later task)
+	Method    string     // qr_scan | telegram_scan | manual
 	MarkedBy  *string    // set for manual marks
 	MarkedAt  *time.Time // set when a caller needs one timestamp for a batch
 }
