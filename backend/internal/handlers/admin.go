@@ -394,14 +394,12 @@ func (h *AdminHandler) BulkUploadUsers(w http.ResponseWriter, r *http.Request) {
 		fn := vr.data.FullName
 		rk := vr.data.Rank
 		bt := vr.data.Battery
-		nr := vr.data.NRICLast5
 
 		createdUsers = append(createdUsers, models.User{
 			ID:        userID,
 			FullName:  &fn,
 			Rank:      &rk,
 			Battery:   &bt,
-			NRICLast5: &nr,
 			Extras:    extras,
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -580,14 +578,12 @@ func (h *AdminHandler) BulkCreateUsers(w http.ResponseWriter, r *http.Request) {
 		fn := vr.data.FullName
 		rk := vr.data.Rank
 		bt := vr.data.Battery
-		nr := vr.data.NRICLast5
 
 		createdUsers = append(createdUsers, models.User{
 			ID:        userID,
 			FullName:  &fn,
 			Rank:      &rk,
 			Battery:   &bt,
-			NRICLast5: &nr,
 			Extras:    extras,
 			CreatedAt: now,
 			UpdatedAt: now,

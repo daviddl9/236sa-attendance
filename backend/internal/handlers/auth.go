@@ -65,8 +65,6 @@ type userRow struct {
 	fullName               *string
 	rank                   *string
 	battery                *string
-	nricLast5              *string
-	dob                    *string
 	isSuperadmin           bool
 	tierOverride           *int16
 	verified               bool
@@ -84,13 +82,13 @@ const passwordHashCost = 12
 
 // signInUserColumns is the SELECT list shared by the sign-in lookups so the
 // primary query and the word-subset fallback scan an identical set of columns.
-const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password`
+const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password`
 
 // scanUserRow scans signInUserColumns (in order) into ur. It accepts a pgx.Row,
 // which both Pool.QueryRow and Pool.Query rows satisfy.
 func scanUserRow(row pgx.Row, ur *userRow) error {
 	return row.Scan(
-		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.isSuperadmin,
 		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired, &ur.createdAt, &ur.updatedAt, &ur.password,
 	)
 }
@@ -384,8 +382,6 @@ func (h *AuthHandler) createSession(ctx context.Context, r *http.Request, ur use
 		FullName:               ur.fullName,
 		Rank:                   ur.rank,
 		Battery:                ur.battery,
-		NRICLast5:              ur.nricLast5,
-		DOB:                    ur.dob,
 		TierOverride:           ur.tierOverride,
 		Verified:               ur.verified,
 		PasswordChangeRequired: ur.passwordChangeRequired,
@@ -498,14 +494,14 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	var ur userRow
 	err = h.db.Pool.QueryRow(ctx, `
 		SELECT
-			u.id, u."full_name", u.rank, u.battery, u."nric_last5", u.dob, u."is_superadmin",
+			u.id, u."full_name", u.rank, u.battery, u."is_superadmin",
 			u.tier_override, u.verified, u.password_change_required,
 			u."createdAt", u."updatedAt"
 		FROM "user" u
 		JOIN session s ON s."userId" = u.id
 		WHERE s.token = $1 AND s."expiresAt" > NOW()
 	`, cookie.Value).Scan(
-		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.nricLast5, &ur.dob, &ur.isSuperadmin,
+		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.isSuperadmin,
 		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired,
 		&ur.createdAt, &ur.updatedAt,
 	)
@@ -524,8 +520,6 @@ func (h *AuthHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 		FullName:               ur.fullName,
 		Rank:                   ur.rank,
 		Battery:                ur.battery,
-		NRICLast5:              ur.nricLast5,
-		DOB:                    ur.dob,
 		TierOverride:           ur.tierOverride,
 		Verified:               ur.verified,
 		PasswordChangeRequired: ur.passwordChangeRequired,
