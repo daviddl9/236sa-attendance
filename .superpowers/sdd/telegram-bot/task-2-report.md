@@ -131,7 +131,7 @@ dist/assets/index-XtLNV7bV.js   1,601.70 kB │ gzip: 493.10 kB
 ✓ built in 7.65s
 ```
 
-The two wrapped lines in the Vite warning above are the existing warning text; the build exited 0. (The captured command also reported the existing bundle-size warning.)
+The build exited 0. The warnings are existing dependency freshness and bundle-size warnings.
 
 ### `cd frontend && npm run lint`
 
