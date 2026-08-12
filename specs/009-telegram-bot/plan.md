@@ -121,7 +121,7 @@ Notes:
 - `telegram_id` is `BIGINT`. Telegram IDs already exceed 32-bit range.
 - Both `UNIQUE` constraints on `telegram_pairing` enforce FR-006 in the database, not just in code.
 - `ON DELETE CASCADE` on `user_id` is safe here: a pairing is derived data, unlike the attendance records that made 008's migration dangerous.
-- `confirmed_by` is `RESTRICT`, so an audit trail cannot be silently erased.
+- `confirmed_by` uses `ON DELETE SET NULL`, so deleting a confirming commander preserves the pairing while clearing the optional reviewer reference.
 - Backfill `deeplink_code` for existing open sessions so QR regeneration is not required mid-cycle.
 
 ## The central refactor: extract an attendance service
