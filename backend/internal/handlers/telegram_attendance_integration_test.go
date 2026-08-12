@@ -15,6 +15,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 )
 
@@ -140,6 +141,54 @@ func TestTelegramWebhookUnpairedDeepLinkUsesDisplayNameProposalWithoutMark(t *te
 	assertTelegramRecord(t, db, prefix+"-session", targetID, 0, "")
 }
 
+func TestTelegramWebhookConcurrentDuplicateDeliveryCreatesOneRecord(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	soldierID := prefix + "-concurrent-soldier"
+	telegramID := int64(970000000111)
+	seedUser(t, db, soldierID, "PTE SYNTHETIC CONCURRENT", "PTE", "Alpha", prefix+"-concurrent", true)
+	code := seedTelegramSession(t, db, prefix+"-concurrent", "Synthetic concurrent parade", "unit_wide", nil, "active", soldierID)
+	seedTelegramPairing(t, db, prefix+"-concurrent-pairing", telegramID, soldierID)
+	handler, sink := newTelegramAttendanceHandler(db)
+
+	const deliveries = 32
+	statuses := make(chan int, deliveries)
+	var wg sync.WaitGroup
+	for i := 0; i < deliveries; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses <- postTelegramMessage(t, handler, telegramID, "/start "+code).Code
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("duplicate delivery status = %d, want 200", status)
+		}
+	}
+
+	actions := sink.Actions()
+	if len(actions) != deliveries {
+		t.Fatalf("duplicate delivery replies = %d, want %d", len(actions), deliveries)
+	}
+	marked, already := 0, 0
+	for _, action := range actions {
+		switch action.Text {
+		case "Attendance marked for Synthetic concurrent parade.":
+			marked++
+		case "You are already marked for Synthetic concurrent parade.":
+			already++
+		default:
+			t.Fatalf("unsafe duplicate delivery reply = %q", action.Text)
+		}
+	}
+	if marked != 1 || already != deliveries-1 {
+		t.Fatalf("duplicate delivery outcomes = marked %d already %d, want 1/%d", marked, already, deliveries-1)
+	}
+	assertTelegramRecord(t, db, prefix+"-concurrent", soldierID, 1, models.MarkingMethodTelegramScan)
+}
+
 func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(t *testing.T) {
 	db, prefix := openTelegramAttendanceDB(t)
 	closedUserID := prefix + "-closed-user"
@@ -202,6 +251,98 @@ func TestTelegramWebhookIgnoresGroupMessages(t *testing.T) {
 	assertTelegramRecord(t, db, prefix+"-group", soldierID, 0, "")
 }
 
+func TestTelegramWebhookBroadcastsTelegramAttributionAfterCommit(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	soldierID := prefix + "-sse-soldier"
+	telegramID := int64(970000000121)
+	seedUser(t, db, soldierID, "PTE SYNTHETIC SSE", "PTE", "Alpha", prefix+"-sse", true)
+	code := seedTelegramSession(t, db, prefix+"-sse", "Synthetic SSE parade", "unit_wide", nil, "active", soldierID)
+	seedTelegramPairing(t, db, prefix+"-sse-pairing", telegramID, soldierID)
+
+	hub := sse.NewHub()
+	client := sse.NewClient("synthetic-sse-client", prefix+"-commander")
+	hub.Subscribe(prefix+"-sse", client)
+	t.Cleanup(func() { hub.Unsubscribe(prefix+"-sse", client) })
+	handler, sink := newTelegramAttendanceHandlerWithHub(db, hub)
+	response := postTelegramMessage(t, handler, telegramID, "/start "+code)
+	if response.Code != http.StatusOK {
+		t.Fatalf("SSE Telegram webhook status = %d, want 200", response.Code)
+	}
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != "Attendance marked for Synthetic SSE parade." {
+		t.Fatalf("SSE Telegram reply = %#v", actions)
+	}
+
+	select {
+	case event := <-client.Send:
+		if event.Type != sse.EventTypeAttendanceMarked {
+			t.Fatalf("SSE event type = %q, want %q", event.Type, sse.EventTypeAttendanceMarked)
+		}
+		payload, ok := event.Payload.(sse.AttendanceMarkedPayload)
+		if !ok {
+			t.Fatalf("SSE payload type = %T, want AttendanceMarkedPayload", event.Payload)
+		}
+		if payload.MarkingMethod != models.MarkingMethodTelegramScan {
+			t.Fatalf("SSE marking method = %q, want %q", payload.MarkingMethod, models.MarkingMethodTelegramScan)
+		}
+		if payload.UserID != soldierID {
+			t.Fatalf("SSE user ID = %q, want %q", payload.UserID, soldierID)
+		}
+		var count int
+		if err := db.Pool.QueryRow(context.Background(), `
+			SELECT COUNT(*) FROM attendance_record WHERE session_id = $1 AND user_id = $2
+		`, prefix+"-sse", soldierID).Scan(&count); err != nil {
+			t.Fatalf("read committed attendance from SSE assertion: %v", err)
+		}
+		if count != 1 {
+			t.Fatalf("attendance visible with SSE event = %d, want 1", count)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for Telegram attendance SSE event")
+	}
+}
+
+func TestTelegramWebhookRollsBackOnAttendanceInsertError(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	soldierID := prefix + "-rollback-soldier"
+	telegramID := int64(970000000131)
+	sessionID := prefix + "-rollback"
+	seedUser(t, db, soldierID, "PTE SYNTHETIC ROLLBACK", "PTE", "Alpha", prefix+"-rollback", true)
+	code := seedTelegramSession(t, db, sessionID, "Synthetic rollback parade", "unit_wide", nil, "active", soldierID)
+	seedTelegramPairing(t, db, prefix+"-rollback-pairing", telegramID, soldierID)
+
+	_, err := db.Pool.Exec(context.Background(), `
+		CREATE OR REPLACE FUNCTION tg_synthetic_fail_telegram_mark() RETURNS trigger
+		LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.marking_method = 'telegram_scan' THEN
+				RAISE EXCEPTION 'synthetic Telegram attendance insert failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER tg_synthetic_fail_telegram_mark
+		BEFORE INSERT ON attendance_record
+		FOR EACH ROW EXECUTE FUNCTION tg_synthetic_fail_telegram_mark()
+	`)
+	if err != nil {
+		t.Fatalf("install synthetic rollback trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS tg_synthetic_fail_telegram_mark ON attendance_record`)
+		_, _ = db.Pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS tg_synthetic_fail_telegram_mark()`)
+	})
+
+	handler, sink := newTelegramAttendanceHandler(db)
+	response := postTelegramMessage(t, handler, telegramID, "/start "+code)
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("rollback webhook status = %d, want 500", response.Code)
+	}
+	if actions := sink.Actions(); len(actions) != 0 {
+		t.Fatalf("rollback error queued unsafe reply: %#v", actions)
+	}
+	assertTelegramRecord(t, db, sessionID, soldierID, 0, "")
+}
+
 func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 	db, prefix := openTelegramAttendanceDB(t)
 	soldierID := prefix + "-soldier"
@@ -259,6 +400,68 @@ func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 	assertTelegramRecord(t, db, prefix+"-scoped", outsideID, 0, "")
 }
 
+func TestTelegramWebhookSynthetic431UserLoadHasNoFailuresOrDuplicates(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	const users = 431
+	firstTelegramID := int64(970000001000)
+	firstUserID := prefix + "-load-user-000"
+	seedUser(t, db, firstUserID, "SYNTHETIC LOAD SOLDIER 000", "PTE", "Alpha", prefix+"-load-000", true)
+	for i := 1; i < users; i++ {
+		userID := fmt.Sprintf("%s-load-user-%03d", prefix, i)
+		seedUser(t, db, userID, fmt.Sprintf("SYNTHETIC LOAD SOLDIER %03d", i), "PTE", "Alpha", fmt.Sprintf("%s-load-%03d", prefix, i), true)
+	}
+	sessionID := prefix + "-load-session"
+	code := seedTelegramSession(t, db, sessionID, "Synthetic 431-user parade", "unit_wide", nil, "active", firstUserID)
+	for i := 0; i < users; i++ {
+		userID := fmt.Sprintf("%s-load-user-%03d", prefix, i)
+		seedTelegramPairing(t, db, fmt.Sprintf("%s-load-pairing-%03d", prefix, i), firstTelegramID+int64(i), userID)
+	}
+
+	handler, sink := newTelegramAttendanceHandler(db)
+	statuses := make(chan int, users)
+	var wg sync.WaitGroup
+	for i := 0; i < users; i++ {
+		telegramID := firstTelegramID + int64(i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses <- postTelegramMessage(t, handler, telegramID, "/start "+code).Code
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("431-user load webhook status = %d, want 200", status)
+		}
+	}
+	if actions := sink.Actions(); len(actions) != users {
+		t.Fatalf("431-user load replies = %d, want %d", len(actions), users)
+	}
+
+	var count, distinctUsers, telegramMarks int
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*), COUNT(DISTINCT user_id), COUNT(*) FILTER (WHERE marking_method = $2)
+		FROM attendance_record WHERE session_id = $1
+	`, sessionID, models.MarkingMethodTelegramScan).Scan(&count, &distinctUsers, &telegramMarks); err != nil {
+		t.Fatalf("count 431-user attendance: %v", err)
+	}
+	if count != users || distinctUsers != users || telegramMarks != users {
+		t.Fatalf("431-user load records = total %d distinct %d Telegram %d, want %d/%d/%d", count, distinctUsers, telegramMarks, users, users, users)
+	}
+	var duplicateGroups int
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT COUNT(*) FROM (
+			SELECT user_id FROM attendance_record WHERE session_id = $1 GROUP BY user_id HAVING COUNT(*) > 1
+		) duplicates
+	`, sessionID).Scan(&duplicateGroups); err != nil {
+		t.Fatalf("count 431-user duplicate groups: %v", err)
+	}
+	if duplicateGroups != 0 {
+		t.Fatalf("431-user load duplicate groups = %d, want 0", duplicateGroups)
+	}
+}
+
 // These fixtures intentionally use generated row IDs, deterministic synthetic
 // names/Telegram IDs, and freshly generated test-only deep-link codes. The
 // webhook-to-database behavior does not depend on production-shaped data.
@@ -311,8 +514,12 @@ func seedTelegramPairing(t *testing.T, db *database.DB, id string, telegramID in
 }
 
 func newTelegramAttendanceHandler(db *database.DB) (*TelegramHandler, *captureTelegramSink) {
+	return newTelegramAttendanceHandlerWithHub(db, nil)
+}
+
+func newTelegramAttendanceHandlerWithHub(db *database.DB, hub *sse.Hub) (*TelegramHandler, *captureTelegramSink) {
 	sink := &captureTelegramSink{}
-	store := NewTelegramPairingStore(db)
+	store := NewTelegramPairingStoreWithHub(db, hub)
 	return NewTelegramHandler(telegram.NewBot(store), "synthetic-webhook-secret", sink), sink
 }
 
