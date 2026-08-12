@@ -30,6 +30,11 @@ func main() {
 		log.Println("No .env file found, using environment variables")
 	}
 
+	telegramConfig := telegram.LoadConfig()
+	if err := telegramConfig.Validate(); err != nil {
+		log.Fatalf("Invalid Telegram configuration: %v", err)
+	}
+
 	// Initialize database connection
 	db, err := database.NewPostgresDB(os.Getenv("DATABASE_URL"))
 	if err != nil {
@@ -48,7 +53,6 @@ func main() {
 
 	// Initialize optional Telegram bot. A missing token disables only this
 	// integration; the rest of the API starts exactly as before.
-	telegramConfig := telegram.LoadConfig()
 	telegramHandler, telegramDispatcher := newTelegramRuntime(db, telegramConfig)
 	if telegramDispatcher != nil {
 		defer telegramDispatcher.Close()

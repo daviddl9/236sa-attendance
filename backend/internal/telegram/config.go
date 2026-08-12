@@ -1,8 +1,7 @@
 package telegram
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"errors"
 	"os"
 	"strings"
 )
@@ -11,6 +10,7 @@ const (
 	botTokenEnv      = "TELEGRAM_BOT_TOKEN"
 	webhookSecretEnv = "TELEGRAM_WEBHOOK_SECRET"
 	botUsernameEnv   = "TELEGRAM_BOT_USERNAME"
+	webhookPathEnv   = "TELEGRAM_WEBHOOK_PATH"
 )
 
 // Config contains Telegram settings loaded from environment variables.
@@ -18,6 +18,7 @@ type Config struct {
 	BotToken      string
 	WebhookSecret string
 	BotUsername   string
+	WebhookPath   string
 }
 
 // LoadConfig reads Telegram settings without applying defaults that could
@@ -27,6 +28,7 @@ func LoadConfig() Config {
 		BotToken:      os.Getenv(botTokenEnv),
 		WebhookSecret: os.Getenv(webhookSecretEnv),
 		BotUsername:   os.Getenv(botUsernameEnv),
+		WebhookPath:   os.Getenv(webhookPathEnv),
 	}
 }
 
@@ -34,12 +36,23 @@ func (c Config) Enabled() bool {
 	return strings.TrimSpace(c.BotToken) != ""
 }
 
-// WebhookPathSegment derives a stable, opaque path segment from the configured
-// secret. It is separate from the header value, so a URL logged by a proxy
-// does not disclose the value Telegram must echo in its header.
+// Validate checks configuration that is required only when the bot is enabled.
+// Telegram stays optional, but an enabled bot must have an independently
+// configured webhook path.
+func (c Config) Validate() error {
+	if !c.Enabled() {
+		return nil
+	}
+	if strings.TrimSpace(c.WebhookPath) == "" {
+		return errors.New("TELEGRAM_WEBHOOK_PATH must be set when Telegram is enabled")
+	}
+	return nil
+}
+
+// WebhookPathSegment returns the configured path segment. It is deliberately
+// independent from the secret used for header authentication.
 func (c Config) WebhookPathSegment() string {
-	digest := sha256.Sum256([]byte(c.WebhookSecret))
-	return hex.EncodeToString(digest[:8])
+	return strings.TrimSpace(c.WebhookPath)
 }
 
 // WebhookURL returns the URL to pass to SetWebhook. Registration is explicit;

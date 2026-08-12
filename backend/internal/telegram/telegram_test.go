@@ -274,14 +274,29 @@ func TestSetWebhookAndCallbackMethodsUseExpectedAPI(t *testing.T) {
 	}
 }
 
-func TestConfigPathIsOpaqueAndStable(t *testing.T) {
-	config := Config{WebhookSecret: "header-secret"}
-	segment := config.WebhookPathSegment()
-	if segment == "header-secret" || len(segment) != 16 {
-		t.Fatalf("path segment = %q, want opaque 16-character segment", segment)
+func TestConfigUsesIndependentWebhookPath(t *testing.T) {
+	config := Config{BotToken: "redacted-token", WebhookSecret: "header-secret", WebhookPath: "independent-path"}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
 	}
-	if got := config.WebhookURL("https://attendance.example/"); got != "https://attendance.example/api/telegram/webhook/"+segment {
+	if got := config.WebhookPathSegment(); got != "independent-path" {
+		t.Fatalf("path segment = %q, want configured path", got)
+	}
+	config.WebhookSecret = "another-secret"
+	if got := config.WebhookPathSegment(); got != "independent-path" {
+		t.Fatalf("path segment changed with secret = %q", got)
+	}
+	if got := config.WebhookURL("https://attendance.example/"); got != "https://attendance.example/api/telegram/webhook/independent-path" {
 		t.Fatalf("webhook URL = %q", got)
+	}
+}
+
+func TestConfigRequiresWebhookPathWhenEnabled(t *testing.T) {
+	if err := (Config{}).Validate(); err != nil {
+		t.Fatalf("disabled config validation error = %v", err)
+	}
+	if err := (Config{BotToken: "redacted-token"}).Validate(); err == nil {
+		t.Fatal("enabled config without webhook path passed validation")
 	}
 }
 
