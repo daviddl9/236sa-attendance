@@ -217,6 +217,16 @@ Each under ~500 lines. PR5 is the one to review closely.
 
 PR6 is **not deferrable**. It is the manual-marking path for soldiers who are not on Telegram, so without it a commander must run the parade from a laptop and a phone simultaneously. It reuses `GetMissingUsers` and the existing unmark endpoint from 006 rather than adding new reporting logic.
 
+## Approved Telegram commander/admin acceptance criteria
+
+Task 5 completes the Telegram admin surface without replacing the existing authenticated dashboard. The dashboard remains the supported surface for roster import, pairing review, exports, boards, and manual attendance fallback; Telegram adds a private-chat inline-button flow.
+
+- A paired Tier 3 creator can run the name → scope → battery (when required) → duration → confirmation wizard. A battery-specific creation commits exactly one session with a required future end time, creator attribution, random opaque deep-link code, clickable URL button, and PNG QR photo. Replayed confirmation is idempotent.
+- A new `AdminStore`/`AdminRouter` instance reloads the selected session and wizard context from PostgreSQL. Closing clears the selected context, and a stale callback after closure is acknowledged safely without mutating attendance or disclosing names.
+- Tier 2 commanders see only authorized active sessions and own-battery missing/search rows. They cannot create or close, can mark an unpaired target with `marking_method=manual` and `marked_by=<actor>`, and can undo only their own manual mark. Tier 3 commanders close only events they created; superadmins may close permitted events created by others.
+- The existing paired-soldier `/start <code>` boundary remains wired through the same bot, records one `telegram_scan` row with no manual attribution, and returns an idempotent already-marked response on replay.
+- The end-to-end test drives `Bot.HandleUpdate` with a fake `Sender`, markup sender, and `PhotoSender`, and asserts actual PostgreSQL rows, role scopes, persistent context, callback acknowledgement/action shapes, URL buttons, PNG delivery, safe malformed/unauthenticated/group handling, and absence of name leakage.
+
 ## Test plan
 
 ### Unit — no network, no Telegram

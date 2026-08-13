@@ -211,13 +211,13 @@ func (r *AdminRouter) HandleCallback(ctx context.Context, query *CallbackQuery, 
 			return nil, true, nil
 		}
 		return r.mark(ctx, chatID, pairing, actor, sessionID, targetID)
-	case "mark-confirm", "confirm-mark", "mark_confirm", "confirm_mark":
+	case "mark-confirm", "confirm-mark", "mark_confirm", "confirm_mark", "mc":
 		sessionID, targetID, valid := callbackTarget(args)
 		if !valid {
 			return nil, true, nil
 		}
 		return r.confirmMark(ctx, chatID, pairing, actor, sessionID, targetID)
-	case "mark-cancel", "cancel-mark", "mark_cancel", "cancel_mark":
+	case "mark-cancel", "cancel-mark", "mark_cancel", "cancel_mark", "mx":
 		sessionID, targetID, valid := callbackTarget(args)
 		if !valid {
 			return nil, true, nil
@@ -789,9 +789,15 @@ func (r *AdminRouter) receiveSearch(ctx context.Context, chatID int64, pairing P
 	return []Action{statusMessage(chatID, adminContext.SessionID, result, query)}, true, nil
 }
 
-func (r *AdminRouter) mark(ctx context.Context, chatID int64, pairing Pairing, _ AdminActor, expectedSessionID, targetID string) ([]Action, bool, error) {
-	adminContext, ok, err := r.selectedContext(ctx, pairing, expectedSessionID)
+func (r *AdminRouter) mark(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, expectedSessionID, targetID string) ([]Action, bool, error) {
+	// Recheck the selected event before showing a confirmation prompt. A stale
+	// missing-row callback must not appear actionable after another commander
+	// closes the event; selectedEvent also clears only that unavailable context.
+	adminContext, _, ok, err := r.selectedEvent(ctx, pairing, actor, expectedSessionID)
 	if err != nil {
+		if errors.Is(err, ErrAdminUnavailable) {
+			return r.safeAction(chatID), true, nil
+		}
 		return nil, true, err
 	}
 	if !ok || strings.TrimSpace(targetID) == "" ||
@@ -1224,11 +1230,23 @@ func closeConfirmMarkup(sessionID string) *InlineKeyboardMarkup {
 
 func markConfirmMarkup(sessionID, targetID string) *InlineKeyboardMarkup {
 	rows := [][]InlineKeyboardButton{}
-	if data, ok := adminCallbackData("a", "mark-confirm", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(targetID)); ok {
-		rows = append(rows, []InlineKeyboardButton{{Text: "Mark present", CallbackData: data}})
+	// Keep the descriptive callback action for normal compact IDs. The short
+	// aliases are a fallback for imported or synthetic IDs whose full callback
+	// would otherwise exceed Telegram's 64-byte limit.
+	encodedSession, encodedTarget := encodeAdminCallbackID(sessionID), encodeAdminCallbackID(targetID)
+	confirmData, confirmOK := adminCallbackData("a", "mark-confirm", encodedSession, encodedTarget)
+	if !confirmOK {
+		confirmData, confirmOK = adminCallbackData("a", "mc", encodedSession, encodedTarget)
 	}
-	if data, ok := adminCallbackData("a", "mark-cancel", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(targetID)); ok {
-		rows = append(rows, []InlineKeyboardButton{{Text: "Cancel", CallbackData: data}})
+	if confirmOK {
+		rows = append(rows, []InlineKeyboardButton{{Text: "Mark present", CallbackData: confirmData}})
+	}
+	cancelData, cancelOK := adminCallbackData("a", "mark-cancel", encodedSession, encodedTarget)
+	if !cancelOK {
+		cancelData, cancelOK = adminCallbackData("a", "mx", encodedSession, encodedTarget)
+	}
+	if cancelOK {
+		rows = append(rows, []InlineKeyboardButton{{Text: "Cancel", CallbackData: cancelData}})
 	}
 	return &InlineKeyboardMarkup{InlineKeyboard: rows}
 }
