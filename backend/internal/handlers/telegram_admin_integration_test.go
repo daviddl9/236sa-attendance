@@ -639,6 +639,12 @@ func openTelegramAdminDB(t *testing.T) (*database.DB, string) {
 		if _, err := db.Pool.Exec(ctx, `DELETE FROM attendance_session WHERE id LIKE $1 OR created_by LIKE $1`, prefix+"-%"); err != nil {
 			t.Errorf("cleanup Telegram admin sessions: %v", err)
 		}
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM telegram_pairing_attempt WHERE telegram_id BETWEEN $1 AND $2`, telegramAdminID(prefix, 0), telegramAdminID(prefix, 100)); err != nil {
+			t.Errorf("cleanup Telegram admin pairing attempts: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM telegram_pairing_request WHERE telegram_id BETWEEN $1 AND $2`, telegramAdminID(prefix, 0), telegramAdminID(prefix, 100)); err != nil {
+			t.Errorf("cleanup Telegram admin pairing requests: %v", err)
+		}
 		if _, err := db.Pool.Exec(ctx, `DELETE FROM telegram_pairing WHERE id LIKE $1`, prefix+"-%"); err != nil {
 			t.Errorf("cleanup Telegram admin pairings: %v", err)
 		}
