@@ -420,8 +420,8 @@ func NewBotWithAdmin(pairings PairingLookup, marker AttendanceMarker, admin Admi
 
 `NewBot` and `NewBotWithAttendance` remain valid compatibility constructors. Paired `/start <payload>` continues to take the soldier attendance path before admin routing.
 
-- [ ] **Step 1: Write failing pure-router tests** for all three role menus, wizard transitions, invalid input, cancellation, active selection, status pagination, search, mark/undo, close ownership, stale callbacks, and soldier compatibility.
-- [ ] **Step 2: Run the pure-router tests**.
+- [x] **Step 1: Write failing pure-router tests** for all three role menus, wizard transitions, invalid input, cancellation, active selection, status pagination, search, mark/undo, close ownership, stale callbacks, and soldier compatibility.
+- [x] **Step 2: Run the pure-router tests**.
 
 ```sh
 cd backend
@@ -430,8 +430,8 @@ go test ./internal/telegram -run 'Admin|Menu|Wizard|Status|Mark|Close' -count=1
 
 Expected: FAIL because the admin flow and callbacks do not exist.
 
-- [ ] **Step 3: Implement the state machine and integrate it into `Bot.HandleUpdate`** while preserving pairing callback parsing and soldier deep-link behavior.
-- [ ] **Step 4: Run the entire Telegram package suite**.
+- [x] **Step 3: Implement the state machine and integrate it into `Bot.HandleUpdate`** while preserving pairing callback parsing and soldier deep-link behavior.
+- [x] **Step 4: Run the entire Telegram package suite**.
 
 ```sh
 cd backend
@@ -440,7 +440,7 @@ go test ./internal/telegram -count=1
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the admin UI flow**.
+- [x] **Step 5: Commit the admin UI flow**.
 
 ```sh
 git add backend/internal/telegram backend/internal/handlers/telegram_admin.go
