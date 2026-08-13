@@ -54,6 +54,14 @@ type Service struct {
 	db *database.DB
 }
 
+// queryer is implemented by both pgxpool.Pool and pgx.Tx. Keeping the report
+// SQL behind this small interface lets adapters run the exact same roster
+// rules while holding the authorization transaction's session and user locks.
+type queryer interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 // NewService constructs a report service.
 func NewService(db *database.DB) *Service {
 	return &Service{db: db}
@@ -67,8 +75,21 @@ func (s *Service) Summary(ctx context.Context, sessionID string, actor *models.U
 	if s == nil || s.db == nil || s.db.Pool == nil {
 		return Summary{}, errors.New("report service is not configured")
 	}
+	return s.summary(ctx, s.db.Pool, sessionID, actor)
+}
 
-	meta, rosterSQL, args, err := s.scopedRoster(ctx, sessionID, actor)
+// SummaryTx runs Summary using the caller's transaction. Callers should lock
+// the actor and session before invoking it when the result is an authorization
+// decision for a mutation or scoped read.
+func (s *Service) SummaryTx(ctx context.Context, tx pgx.Tx, sessionID string, actor *models.User) (Summary, error) {
+	if s == nil || tx == nil {
+		return Summary{}, errors.New("report service is not configured")
+	}
+	return s.summary(ctx, tx, sessionID, actor)
+}
+
+func (s *Service) summary(ctx context.Context, q queryer, sessionID string, actor *models.User) (Summary, error) {
+	meta, rosterSQL, args, err := s.scopedRosterWith(ctx, q, sessionID, actor)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -76,7 +97,7 @@ func (s *Service) Summary(ctx context.Context, sessionID string, actor *models.U
 	args = append(args, sessionID)
 
 	var total, present int
-	err = s.db.Pool.QueryRow(ctx, fmt.Sprintf(`
+	err = q.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(*)::int, COUNT(ar.user_id)::int
 		FROM (%s) AS eligible
 		LEFT JOIN attendance_record ar
@@ -111,11 +132,23 @@ func (s *Service) EligibleUsers(ctx context.Context, sessionID string, actor *mo
 	if s == nil || s.db == nil || s.db.Pool == nil {
 		return nil, errors.New("report service is not configured")
 	}
-	_, rosterSQL, args, err := s.scopedRoster(ctx, sessionID, actor)
+	return s.eligibleUsers(ctx, s.db.Pool, sessionID, actor)
+}
+
+// EligibleUsersTx runs the shared roster query in a caller-owned transaction.
+func (s *Service) EligibleUsersTx(ctx context.Context, tx pgx.Tx, sessionID string, actor *models.User) ([]UserRow, error) {
+	if s == nil || tx == nil {
+		return nil, errors.New("report service is not configured")
+	}
+	return s.eligibleUsers(ctx, tx, sessionID, actor)
+}
+
+func (s *Service) eligibleUsers(ctx context.Context, q queryer, sessionID string, actor *models.User) ([]UserRow, error) {
+	_, rosterSQL, args, err := s.scopedRosterWith(ctx, q, sessionID, actor)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Pool.Query(ctx, fmt.Sprintf(`
+	rows, err := q.Query(ctx, fmt.Sprintf(`
 		SELECT eligible.user_id, eligible.user_name, eligible.user_rank, eligible.user_battery
 		FROM (%s) AS eligible
 		ORDER BY lower(eligible.user_name), eligible.user_id
@@ -146,8 +179,19 @@ func (s *Service) Missing(ctx context.Context, sessionID string, actor *models.U
 	if s == nil || s.db == nil || s.db.Pool == nil {
 		return MissingPage{}, errors.New("report service is not configured")
 	}
+	return s.missing(ctx, s.db.Pool, sessionID, actor, query, page, pageSize)
+}
 
-	meta, rosterSQL, args, err := s.scopedRoster(ctx, sessionID, actor)
+// MissingTx runs the shared missing-roster query in a caller-owned transaction.
+func (s *Service) MissingTx(ctx context.Context, tx pgx.Tx, sessionID string, actor *models.User, query string, page, pageSize int) (MissingPage, error) {
+	if s == nil || tx == nil {
+		return MissingPage{}, errors.New("report service is not configured")
+	}
+	return s.missing(ctx, tx, sessionID, actor, query, page, pageSize)
+}
+
+func (s *Service) missing(ctx context.Context, q queryer, sessionID string, actor *models.User, query string, page, pageSize int) (MissingPage, error) {
+	meta, rosterSQL, args, err := s.scopedRosterWith(ctx, q, sessionID, actor)
 	if err != nil {
 		return MissingPage{}, err
 	}
@@ -163,7 +207,7 @@ func (s *Service) Missing(ctx context.Context, sessionID string, actor *models.U
 	attendanceArg := len(args) + 1
 	countArgs := appendCopy(args, sessionID)
 	var total int
-	if err := s.db.Pool.QueryRow(ctx, fmt.Sprintf(`
+	if err := q.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(*)::int
 		FROM (%s) AS eligible
 		WHERE NOT EXISTS (
@@ -199,7 +243,7 @@ func (s *Service) Missing(ctx context.Context, sessionID string, actor *models.U
 		limitArg := len(rowArgs) + 1
 		offsetArg := limitArg + 1
 		rowArgs = append(rowArgs, pageSize, (page-1)*pageSize)
-		queryRows, err := s.db.Pool.Query(ctx, fmt.Sprintf(`
+		queryRows, err := q.Query(ctx, fmt.Sprintf(`
 			SELECT eligible.user_id, eligible.user_name, eligible.user_rank, eligible.user_battery
 			FROM (%s) AS eligible
 			WHERE NOT EXISTS (
@@ -245,8 +289,12 @@ type sessionMeta struct {
 // user_rank, and user_battery. It deliberately retains the table alias u so a
 // caller can safely append a SQL name predicate before wrapping the query.
 func (s *Service) scopedRoster(ctx context.Context, sessionID string, actor *models.User) (sessionMeta, string, []any, error) {
+	return s.scopedRosterWith(ctx, s.db.Pool, sessionID, actor)
+}
+
+func (s *Service) scopedRosterWith(ctx context.Context, q queryer, sessionID string, actor *models.User) (sessionMeta, string, []any, error) {
 	var meta sessionMeta
-	err := s.db.Pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT name, scope, batteries
 		FROM attendance_session
 		WHERE id = $1

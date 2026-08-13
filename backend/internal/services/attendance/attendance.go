@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	sessionservice "github.com/davidlivingston/go-nextjs-starter/backend/internal/services/sessions"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -134,9 +135,18 @@ func UndoManual(ctx context.Context, tx pgx.Tx, req UndoRequest) (UndoOutcome, e
 func loadSession(ctx context.Context, tx pgx.Tx, sessionID string) (string, string, []string, error) {
 	var status, scope string
 	var batteries []string
+	var endTime *time.Time
 	err := tx.QueryRow(ctx, `
-		SELECT status, scope, batteries FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&status, &scope, &batteries)
+		SELECT status, scope, batteries, end_time
+		FROM attendance_session
+		WHERE id = $1
+		FOR UPDATE
+	`, sessionID).Scan(&status, &scope, &batteries, &endTime)
+	if err == nil && status == models.SessionStatusActive && sessionservice.IsExpired(endTime, time.Now()) {
+		// Keep the public MarkOutcome contract: expiry is an unavailable/closed
+		// session for all existing scanner and Telegram callers.
+		status = models.SessionStatusClosed
+	}
 	return status, scope, batteries, err
 }
 

@@ -213,7 +213,7 @@ The existing `telegram_chat_context` table becomes the durable conversation stat
 - `expires_at TIMESTAMP`;
 - `version BIGINT NOT NULL DEFAULT 0`.
 
-The existing `"updatedAt"` column is updated on every context write. The version is incremented with an optimistic update so replayed callbacks cannot overwrite a newer draft or create a second event.
+The existing `"updatedAt"` column is updated on every context write. A missing context is read as version `0`, while its first persisted write consumes that version and stores version `1`; later writes increment the version optimistically so replayed callbacks cannot overwrite a newer draft or create a second event.
 
 A selected active session survives an API restart. A draft expires after a short timeout. Selecting a closed or expired session clears the context and returns the actor to the active-event menu.
 

@@ -126,8 +126,8 @@ func UndoManual(ctx context.Context, tx pgx.Tx, req UndoRequest) (UndoOutcome, e
 
 `UndoManual` must inspect the existing row and delete only when its method is `manual` and `marked_by` equals the actor. It must not change the existing web endpoint's broader behavior; the Telegram adapter uses this stricter operation.
 
-- [ ] **Step 1: Write failing service tests** for session validation/random codes, active-session scope, close ownership, report scope/pagination/search, and manual undo ownership.
-- [ ] **Step 2: Run the focused tests**.
+- [x] **Step 1: Write failing service tests** for session validation/random codes, active-session scope, close ownership, report scope/pagination/search, and manual undo ownership.
+- [x] **Step 2: Run the focused tests**.
 
 Run:
 
@@ -138,12 +138,12 @@ go test ./internal/services/sessions ./internal/services/reports ./internal/serv
 
 Expected: FAIL because the new packages/methods do not exist or the new assertions are unmet.
 
-- [ ] **Step 3: Implement the services and move the repeated session/report query logic out of HTTP handlers.** Keep JSON response shapes and existing dashboard permissions unchanged. The session service must reuse `services/deeplink.GenerateCode`; do not derive codes from names or timestamps.
-- [ ] **Step 4: Run focused tests and existing handler tests**.
+- [x] **Step 3: Implement the services and move the repeated session/report query logic out of HTTP handlers.** Keep JSON response shapes and existing dashboard permissions unchanged. The session service must reuse `services/deeplink.GenerateCode`; do not derive codes from names or timestamps.
+- [x] **Step 4: Run focused tests and existing handler tests**.
 
 Expected: PASS for the new tests and all touched handler tests.
 
-- [ ] **Step 5: Commit the service foundation**.
+- [x] **Step 5: Commit the service foundation**.
 
 ```sh
 git add backend/internal/services/sessions backend/internal/services/reports backend/internal/services/attendance backend/internal/handlers/session.go backend/internal/handlers/reports.go backend/internal/handlers/session_deeplink_test.go
@@ -267,10 +267,10 @@ expires_at TIMESTAMP,
 version BIGINT NOT NULL DEFAULT 0
 ```
 
-The down migration must first delete only idle/draft context rows whose `session_id` is null, then restore the original non-null `session_id` constraint and drop the added columns. Existing selected-session rows must remain valid during rollback.
+The down migration must first delete all transient context rows whose `session_id` is null, including every wizard state, then restore the original non-null `session_id` constraint and drop the added columns. Existing selected-session rows must remain valid during rollback.
 
-- [ ] **Step 1: Write failing migration/store tests** covering actor role resolution, context create/update/reload, optimistic version conflict, Tier 2 filtering, creator-only close, and closed-session cleanup.
-- [ ] **Step 2: Run the focused tests against disposable PostgreSQL**.
+- [x] **Step 1: Write failing migration/store tests** covering actor role resolution, context create/update/reload, optimistic version conflict, Tier 2 filtering, creator-only close, and closed-session cleanup.
+- [x] **Step 2: Run the focused tests against disposable PostgreSQL**.
 
 ```sh
 export TEST_DATABASE_URL="postgres://postgres:pw@localhost:55441/app?sslmode=disable"
@@ -280,12 +280,12 @@ go test ./internal/handlers -run 'TelegramAdmin|TelegramPairing' -count=1
 
 Expected: FAIL on missing migration/store behavior; tests must skip only when `TEST_DATABASE_URL` is absent.
 
-- [ ] **Step 3: Add the migration and implement `TelegramAdminStore`** using explicit transactions for event creation, manual marking, undo, status reads, and close. The transaction must reload the paired actor and target/session scope before mutation; `ClearContextForSession` must use the selected session ID and expected context version so concurrent drafts or another selected event are not erased.
-- [ ] **Step 4: Run focused integration tests and migration up/down checks**.
+- [x] **Step 3: Add the migration and implement `TelegramAdminStore`** using explicit transactions for event creation, manual marking, undo, status reads, and close. The transaction must reload the paired actor and target/session scope before mutation; `ClearContextForSession` must use the selected session ID and expected context version so concurrent drafts or another selected event are not erased.
+- [x] **Step 4: Run focused integration tests and migration up/down checks**.
 
 Expected: PASS; a fresh database contains the new context columns, seeded pairings reload after a new store instance, and no production database is accessed.
 
-- [ ] **Step 5: Commit the context/store foundation**.
+- [x] **Step 5: Commit the context/store foundation**.
 
 ```sh
 git add backend/migrations/20260815000000_telegram_admin_context.sql backend/internal/telegram/admin_types.go backend/internal/handlers/telegram_admin.go backend/internal/handlers/telegram_admin_test.go backend/internal/handlers/telegram_admin_integration_test.go backend/internal/handlers/telegram.go

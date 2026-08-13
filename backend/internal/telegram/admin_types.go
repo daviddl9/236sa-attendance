@@ -86,6 +86,7 @@ type AdminStore interface {
 	LoadContext(ctx context.Context, telegramID int64) (AdminContext, error)
 	SaveContext(ctx context.Context, next AdminContext) error
 	ClearContext(ctx context.Context, telegramID int64) error
+	ClearContextForSession(ctx context.Context, telegramID int64, sessionID string, expectedVersion int64) error
 	ActiveEvents(ctx context.Context, actor AdminActor) ([]ActiveEvent, error)
 	CreateEvent(ctx context.Context, actor AdminActor, draft AdminDraft) (ActiveEvent, error)
 	CloseEvent(ctx context.Context, actor AdminActor, sessionID string) error

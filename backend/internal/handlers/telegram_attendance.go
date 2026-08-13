@@ -31,19 +31,8 @@ func (s *TelegramPairingStore) MarkAttendance(ctx context.Context, telegramID in
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var sessionID, sessionName string
-	err = tx.QueryRow(ctx, `
-		SELECT id, name FROM attendance_session
-		WHERE deeplink_code = $1
-		FOR SHARE
-	`, deeplinkCode).Scan(&sessionID, &sessionName)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return telegram.AttendanceResult{Outcome: telegram.AttendanceUnknownCode}, nil
-	}
-	if err != nil {
-		return telegram.AttendanceResult{}, fmt.Errorf("resolve Telegram attendance code: %w", err)
-	}
-
+	// Resolve the pairing before the session so Telegram attendance and admin
+	// transactions acquire these row locks in one order.
 	var userID string
 	err = tx.QueryRow(ctx, `
 		SELECT user_id FROM telegram_pairing
@@ -55,6 +44,19 @@ func (s *TelegramPairingStore) MarkAttendance(ctx context.Context, telegramID in
 	}
 	if err != nil {
 		return telegram.AttendanceResult{}, fmt.Errorf("resolve Telegram pairing for attendance: %w", err)
+	}
+
+	var sessionID, sessionName string
+	err = tx.QueryRow(ctx, `
+		SELECT id, name FROM attendance_session
+		WHERE deeplink_code = $1
+		FOR UPDATE
+	`, deeplinkCode).Scan(&sessionID, &sessionName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return telegram.AttendanceResult{Outcome: telegram.AttendanceUnknownCode}, nil
+	}
+	if err != nil {
+		return telegram.AttendanceResult{}, fmt.Errorf("resolve Telegram attendance code: %w", err)
 	}
 
 	var pairedUser models.User

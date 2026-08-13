@@ -16,8 +16,7 @@ ALTER TABLE telegram_chat_context
 -- +goose Down
 -- +goose StatementBegin
 DELETE FROM telegram_chat_context
-WHERE session_id IS NULL
-  AND state IN ('idle', 'draft');
+WHERE session_id IS NULL;
 
 ALTER TABLE telegram_chat_context
   ALTER COLUMN session_id SET NOT NULL;

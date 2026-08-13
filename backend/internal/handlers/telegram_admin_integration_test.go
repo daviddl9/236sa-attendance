@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,8 +86,8 @@ func TestTelegramAdminContextPersistsRejectsStaleVersionAndExpiresDraft(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.State != "draft" || loaded.Draft.Name != draft.Draft.Name || loaded.Version != 0 {
-		t.Fatalf("loaded draft = %+v", loaded)
+	if loaded.State != "draft" || loaded.Draft.Name != draft.Draft.Name || loaded.Version != 1 {
+		t.Fatalf("loaded draft = %+v, want first save at version 1", loaded)
 	}
 	loaded.State = "choosing_duration"
 	loaded.Draft.Battery = models.BatteryAlpha
@@ -97,8 +98,8 @@ func TestTelegramAdminContextPersistsRejectsStaleVersionAndExpiresDraft(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Version != 1 || updated.State != "choosing_duration" || updated.Draft.Battery != models.BatteryAlpha {
-		t.Fatalf("updated context = %+v", updated)
+	if updated.Version != 2 || updated.State != "choosing_duration" || updated.Draft.Battery != models.BatteryAlpha {
+		t.Fatalf("updated context = %+v, want second save at version 2", updated)
 	}
 	if err := store.SaveContext(ctx, loaded); !errors.Is(err, telegram.ErrAdminContextConflict) {
 		t.Fatalf("stale SaveContext error = %v, want ErrAdminContextConflict", err)
@@ -126,8 +127,8 @@ func TestTelegramAdminContextPersistsRejectsStaleVersionAndExpiresDraft(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared.State != "idle" || cleared.Version != 0 {
-		t.Fatalf("cleared context = %+v", cleared)
+	if cleared.State != "idle" || cleared.Version != 3 || cleared.SessionID != "" {
+		t.Fatalf("cleared context = %+v, want idle tombstone at version 3", cleared)
 	}
 }
 
@@ -339,6 +340,286 @@ func TestTelegramAdminClosedSelectedContextIsCleanedAndUnavailable(t *testing.T)
 	}
 }
 
+func TestTelegramAdminContextConcurrentInitialSavesAndConditionalClear(t *testing.T) {
+	db, prefix := openTelegramAdminDB(t)
+	store := NewTelegramAdminStore(db, nil)
+	ctx := context.Background()
+	telegramID := telegramAdminID(prefix, 20)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			results <- store.SaveContext(ctx, telegram.AdminContext{
+				TelegramID: telegramID, State: fmt.Sprintf("draft-%d", index), Version: 0,
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	var successes, conflicts int
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, telegram.ErrAdminContextConflict):
+			conflicts++
+		default:
+			t.Fatalf("concurrent initial save error = %v", err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent initial saves = successes %d conflicts %d, want 1/1", successes, conflicts)
+	}
+
+	sessionID := prefix + "-context-session"
+	seedUser(t, db, prefix+"-creator", "CONTEXT CREATOR", models.RankSSG, models.BatteryHQ, "", true)
+	seedAdminSession(t, db, sessionID, "Context session", models.SessionScopeUnitWide, nil, prefix+"-creator", time.Hour)
+	loaded, err := store.LoadContext(ctx, telegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Version != 1 {
+		t.Fatalf("concurrent initial save loaded version = %d, want 1", loaded.Version)
+	}
+	loaded.SessionID = sessionID
+	loaded.State = "selected_session"
+	if err := store.SaveContext(ctx, loaded); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := store.LoadContext(ctx, telegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.Version != 2 {
+		t.Fatalf("concurrent initial save update version = %d, want 2", selected.Version)
+	}
+	if err := store.ClearContext(ctx, telegramID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveContext(ctx, selected); !errors.Is(err, telegram.ErrAdminContextConflict) {
+		t.Fatalf("stale save after clear = %v, want conflict", err)
+	}
+	if err := store.ClearContextForSession(ctx, telegramID, sessionID, selected.Version); !errors.Is(err, telegram.ErrAdminContextConflict) {
+		t.Fatalf("stale conditional clear = %v, want conflict", err)
+	}
+	current, err := store.LoadContext(ctx, telegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.SessionID != "" || current.State != "idle" || current.Version != 3 {
+		t.Fatalf("cleared tombstone = %+v, want idle version 3", current)
+	}
+
+	missingID := telegramAdminID(prefix, 25)
+	if err := store.ClearContext(ctx, missingID); err != nil {
+		t.Fatal(err)
+	}
+	tombstone, err := store.LoadContext(ctx, missingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tombstone.State != "idle" || tombstone.Version != 1 {
+		t.Fatalf("missing-row clear tombstone = %+v, want idle version 1", tombstone)
+	}
+	if err := store.SaveContext(ctx, telegram.AdminContext{TelegramID: missingID, State: "draft", Version: 0}); !errors.Is(err, telegram.ErrAdminContextConflict) {
+		t.Fatalf("save over missing-row tombstone = %v, want conflict", err)
+	}
+}
+
+func TestTelegramAdminCustomListTierTwoAndSSETotals(t *testing.T) {
+	db, prefix := openTelegramAdminDB(t)
+	ctx := context.Background()
+	actorID := prefix + "-actor"
+	alphaID := prefix + "-alpha"
+	bravoID := prefix + "-bravo"
+	seedUser(t, db, actorID, "ALPHA NCO", models.Rank3SG, models.BatteryAlpha, "", true)
+	seedUser(t, db, alphaID, "ALPHA TARGET", models.RankPTE, models.BatteryAlpha, "", true)
+	seedUser(t, db, bravoID, "BRAVO TARGET", models.RankPTE, models.BatteryBravo, "", true)
+	telegramID := telegramAdminID(prefix, 21)
+	seedTelegramAdminPairing(t, db, prefix+"-pairing", telegramID, actorID)
+	sessionID := prefix + "-custom-session"
+	seedCustomAdminSession(t, db, sessionID, "Custom event", actorID, time.Hour, []string{alphaID, bravoID})
+	hub := sse.NewHub()
+	client := sse.NewClient(prefix+"-sse", actorID)
+	hub.Subscribe(sessionID, client)
+	t.Cleanup(func() { hub.Unsubscribe(sessionID, client) })
+	store := NewTelegramAdminStore(db, hub)
+	actor, found, err := store.Actor(ctx, telegram.Pairing{TelegramID: telegramID, UserID: actorID})
+	if err != nil || !found {
+		t.Fatalf("Actor = %+v found=%v err=%v", actor, found, err)
+	}
+	events, err := store.ActiveEvents(ctx, actor)
+	if err != nil || !containsAdminEvent(events, sessionID) {
+		t.Fatalf("custom active events = %+v err=%v", events, err)
+	}
+	page, err := store.Status(ctx, actor, sessionID, "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || page.Missing != 1 || !containsAdminUser(page.Rows, alphaID) || containsAdminUser(page.Rows, bravoID) {
+		t.Fatalf("Tier 2 custom status = %+v, want only Alpha participant", page)
+	}
+	if err := store.MarkManual(ctx, actor, sessionID, alphaID); err != nil {
+		t.Fatalf("custom Alpha mark: %v", err)
+	}
+	select {
+	case event := <-client.Send:
+		payload, ok := event.Payload.(sse.AttendanceMarkedPayload)
+		if !ok || payload.UserID != alphaID || payload.UserName != "ALPHA TARGET" || payload.TotalUsers != 1 || payload.PresentCount != 1 {
+			t.Fatalf("custom mark SSE = %#v, want preserved metadata and 1/1 totals", event.Payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for custom mark SSE")
+	}
+	if err := store.MarkManual(ctx, actor, sessionID, bravoID); !errors.Is(err, telegram.ErrAdminUnavailable) {
+		t.Fatalf("Tier 2 custom Bravo mark = %v, want unavailable", err)
+	}
+	if err := store.UndoManual(ctx, actor, sessionID, alphaID); err != nil {
+		t.Fatalf("custom Alpha undo: %v", err)
+	}
+	select {
+	case event := <-client.Send:
+		payload, ok := event.Payload.(sse.AttendanceRemovedPayload)
+		if !ok || payload.UserID != alphaID || payload.TotalUsers != 1 || payload.PresentCount != 0 {
+			t.Fatalf("custom undo SSE = %#v, want 0/1 totals", event.Payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for custom undo SSE")
+	}
+}
+
+func TestTelegramAdminExpiryAndCloseVsMarkRace(t *testing.T) {
+	db, prefix := openTelegramAdminDB(t)
+	ctx := context.Background()
+	actorID := prefix + "-actor"
+	targetID := prefix + "-target"
+	seedUser(t, db, actorID, "EXPIRY COMMANDER", models.RankSSG, models.BatteryAlpha, "", true)
+	seedUser(t, db, targetID, "EXPIRY TARGET", models.RankPTE, models.BatteryAlpha, "", true)
+	telegramID := telegramAdminID(prefix, 23)
+	seedTelegramAdminPairing(t, db, prefix+"-pairing", telegramID, actorID)
+	store := NewTelegramAdminStore(db, nil)
+	actor, found, err := store.Actor(ctx, telegram.Pairing{TelegramID: telegramID, UserID: actorID})
+	if err != nil || !found {
+		t.Fatalf("Actor = %+v found=%v err=%v", actor, found, err)
+	}
+	expiredID := prefix + "-expired"
+	seedAdminSession(t, db, expiredID, "Expired event", models.SessionScopeUnitWide, nil, actorID, -time.Minute)
+	if err := store.MarkManual(ctx, actor, expiredID, targetID); !errors.Is(err, telegram.ErrAdminUnavailable) {
+		t.Fatalf("expired mark = %v, want unavailable", err)
+	}
+	if _, err := store.Status(ctx, actor, expiredID, "", 1); !errors.Is(err, telegram.ErrAdminUnavailable) {
+		t.Fatalf("expired status = %v, want unavailable", err)
+	}
+	if err := store.CloseEvent(ctx, actor, expiredID); !errors.Is(err, telegram.ErrAdminUnavailable) {
+		t.Fatalf("expired close = %v, want unavailable", err)
+	}
+
+	raceID := prefix + "-race"
+	seedAdminSession(t, db, raceID, "Close versus mark", models.SessionScopeUnitWide, nil, actorID, time.Hour)
+	start := make(chan struct{})
+	markResult := make(chan error, 1)
+	closeResult := make(chan error, 1)
+	go func() { <-start; markResult <- store.MarkManual(ctx, actor, raceID, targetID) }()
+	go func() { <-start; closeResult <- store.CloseEvent(ctx, actor, raceID) }()
+	close(start)
+	markErr := <-markResult
+	closeErr := <-closeResult
+	if closeErr != nil {
+		t.Fatalf("close-vs-mark close error = %v, want close to win or follow a committed mark", closeErr)
+	}
+	if markErr != nil && !errors.Is(markErr, telegram.ErrAdminUnavailable) {
+		t.Fatalf("close-vs-mark mark error = %v", markErr)
+	}
+	var status string
+	if err := db.Pool.QueryRow(ctx, `SELECT status FROM attendance_session WHERE id = $1`, raceID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.SessionStatusClosed {
+		t.Fatalf("close-vs-mark status = %q, want closed", status)
+	}
+}
+
+func TestTelegramAdminTargetBatteryMutationIsRecheckedInWriteTransaction(t *testing.T) {
+	db, prefix := openTelegramAdminDB(t)
+	ctx := context.Background()
+	actorID := prefix + "-actor"
+	targetID := prefix + "-target"
+	seedUser(t, db, actorID, "BATTERY COMMANDER", models.Rank3SG, models.BatteryAlpha, "", true)
+	seedUser(t, db, targetID, "MOVING TARGET", models.RankPTE, models.BatteryAlpha, "", true)
+	telegramID := telegramAdminID(prefix, 24)
+	seedTelegramAdminPairing(t, db, prefix+"-pairing", telegramID, actorID)
+	sessionID := prefix + "-battery-race"
+	seedAdminSession(t, db, sessionID, "Battery race", models.SessionScopeUnitWide, nil, actorID, time.Hour)
+	store := NewTelegramAdminStore(db, nil)
+	actor, found, err := store.Actor(ctx, telegram.Pairing{TelegramID: telegramID, UserID: actorID})
+	if err != nil || !found {
+		t.Fatalf("Actor = %+v found=%v err=%v", actor, found, err)
+	}
+	moveTx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := moveTx.Exec(ctx, `UPDATE "user" SET battery = $2 WHERE id = $1`, targetID, models.BatteryBravo); err != nil {
+		_ = moveTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- store.MarkManual(ctx, actor, sessionID, targetID) }()
+	// The roster move is uncommitted while the admin operation starts. Whether
+	// the operation reaches the target lock before or after this commit, its
+	// row lock must make it evaluate the committed Bravo state rather than the
+	// stale Alpha lookup.
+	if err := moveTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, telegram.ErrAdminUnavailable) {
+		t.Fatalf("mark after target battery move = %v, want unavailable", err)
+	}
+	var count int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM attendance_record WHERE session_id = $1 AND user_id = $2`, sessionID, targetID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("stale target was marked after battery move: %d records", count)
+	}
+}
+
+func TestTelegramAdminSuperadminClosesAnotherCreatorEvent(t *testing.T) {
+	db, prefix := openTelegramAdminDB(t)
+	ctx := context.Background()
+	creatorID := prefix + "-creator"
+	superID := prefix + "-super"
+	seedUser(t, db, creatorID, "CREATOR", models.RankSSG, models.BatteryAlpha, "", true)
+	seedUser(t, db, superID, "SUPERADMIN", models.RankCPT, models.BatteryHQ, "", true)
+	if _, err := db.Pool.Exec(ctx, `UPDATE "user" SET is_superadmin = true WHERE id = $1`, superID); err != nil {
+		t.Fatal(err)
+	}
+	telegramID := telegramAdminID(prefix, 22)
+	seedTelegramAdminPairing(t, db, prefix+"-pairing", telegramID, superID)
+	sessionID := prefix + "-other-creator-event"
+	seedAdminSession(t, db, sessionID, "Other creator event", models.SessionScopeUnitWide, nil, creatorID, time.Hour)
+	store := NewTelegramAdminStore(db, nil)
+	actor, found, err := store.Actor(ctx, telegram.Pairing{TelegramID: telegramID, UserID: superID})
+	if err != nil || !found {
+		t.Fatalf("superadmin Actor = %+v found=%v err=%v", actor, found, err)
+	}
+	if err := store.CloseEvent(ctx, actor, sessionID); err != nil {
+		t.Fatalf("superadmin close = %v", err)
+	}
+	var status string
+	if err := db.Pool.QueryRow(ctx, `SELECT status FROM attendance_session WHERE id = $1`, sessionID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.SessionStatusClosed {
+		t.Fatalf("superadmin closed status = %q", status)
+	}
+}
+
 func openTelegramAdminDB(t *testing.T) (*database.DB, string) {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -392,6 +673,23 @@ func seedAdminSession(t *testing.T, db *database.DB, id, name, scope string, bat
 		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, NOW(), $8, NULL)
 	`, id, name, id+"-qr", id+"-secret", scope, batteries, creatorID, time.Now().Add(duration)); err != nil {
 		t.Fatalf("seed Telegram admin session: %v", err)
+	}
+}
+
+func seedCustomAdminSession(t *testing.T, db *database.DB, id, name, creatorID string, duration time.Duration, participants []string) {
+	t.Helper()
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time, end_time, deeplink_code)
+		VALUES ($1, $2, $3, $4, $5, '{}', 'active', $6, NOW(), $7, NULL)
+	`, id, name, id+"-qr", id+"-secret", models.SessionScopeCustomList, creatorID, time.Now().Add(duration)); err != nil {
+		t.Fatalf("seed custom Telegram admin session: %v", err)
+	}
+	for _, participantID := range participants {
+		if _, err := db.Pool.Exec(context.Background(), `
+			INSERT INTO session_participants (session_id, user_id) VALUES ($1, $2)
+		`, id, participantID); err != nil {
+			t.Fatalf("seed custom participant %s: %v", participantID, err)
+		}
 	}
 }
 

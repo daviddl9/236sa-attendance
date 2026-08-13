@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -205,6 +206,114 @@ func TestTelegramWebhookNoPayloadStartUsesDisplayNameAndEmptyPrompts(t *testing.
 		t.Fatalf("empty-display pairing request count = %d, want 0", requestCount)
 	}
 	assertTelegramRecord(t, db, sessionID, targetID, 0, "")
+}
+
+func TestTelegramScanAndAdminManualMarkCompleteWithoutDeadlock(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	actorID := prefix + "-deadlock-actor"
+	sessionID := prefix + "-deadlock-session"
+	telegramID := int64(970000001500)
+	seedUser(t, db, actorID, "SSG DEADLOCK ACTOR", models.RankSSG, models.BatteryAlpha, prefix+"-deadlock", true)
+	code := seedTelegramSession(t, db, sessionID, "Synthetic deadlock parade", "unit_wide", nil, "active", actorID)
+	seedTelegramPairing(t, db, prefix+"-deadlock-pairing", telegramID, actorID)
+
+	adminStore := NewTelegramAdminStore(db, nil)
+	actor, found, err := adminStore.Actor(ctx, telegram.Pairing{TelegramID: telegramID, UserID: actorID})
+	if err != nil || !found {
+		t.Fatalf("deadlock regression actor = %+v, found=%v, err=%v", actor, found, err)
+	}
+
+	// Hold the pairing row so the admin operation queues on its first lock. The
+	// scan then locks the session and queues behind the admin. Releasing this
+	// blocker makes the old session-then-pairing order form a deterministic
+	// cycle, while pairing-then-session lets both operations drain.
+	blocker, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin deadlock blocker: %v", err)
+	}
+	defer func() { _ = blocker.Rollback(context.Background()) }()
+	var pairingID string
+	if err := blocker.QueryRow(ctx, `
+		SELECT id FROM telegram_pairing WHERE telegram_id = $1 FOR UPDATE
+	`, telegramID).Scan(&pairingID); err != nil {
+		t.Fatalf("lock deadlock regression pairing: %v", err)
+	}
+
+	type attendanceCall struct {
+		result telegram.AttendanceResult
+		err    error
+	}
+	adminDone := make(chan error, 1)
+	go func() {
+		adminDone <- adminStore.MarkManual(ctx, actor, sessionID, actorID)
+	}()
+	if err := waitForTelegramPairingWaiters(ctx, db, 1); err != nil {
+		t.Fatalf("admin did not queue on pairing lock: %v", err)
+	}
+
+	scanDone := make(chan attendanceCall, 1)
+	attendanceStore := NewTelegramPairingStore(db)
+	go func() {
+		result, err := attendanceStore.MarkAttendance(ctx, telegramID, code)
+		scanDone <- attendanceCall{result: result, err: err}
+	}()
+	if err := waitForTelegramPairingWaiters(ctx, db, 2); err != nil {
+		t.Fatalf("scan and admin did not queue on pairing lock: %v", err)
+	}
+
+	if err := blocker.Commit(ctx); err != nil {
+		t.Fatalf("release deadlock regression blocker: %v", err)
+	}
+	adminErr := <-adminDone
+	scan := <-scanDone
+	if adminErr != nil && !errors.Is(adminErr, telegram.ErrAdminUnavailable) {
+		t.Fatalf("admin manual mark error = %v, want success or idempotent unavailable", adminErr)
+	}
+	if scan.err != nil {
+		t.Fatalf("paired scan error = %v, want success or idempotent outcome", scan.err)
+	}
+	if scan.result.Outcome != telegram.AttendanceMarked && scan.result.Outcome != telegram.AttendanceAlreadyMarked {
+		t.Fatalf("paired scan outcome = %v, want marked or already marked", scan.result.Outcome)
+	}
+	var records int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM attendance_record WHERE session_id = $1 AND user_id = $2
+	`, sessionID, actorID).Scan(&records); err != nil {
+		t.Fatalf("count deadlock regression attendance: %v", err)
+	}
+	if records != 1 {
+		t.Fatalf("deadlock regression attendance records = %d, want one idempotent record", records)
+	}
+}
+
+func waitForTelegramPairingWaiters(ctx context.Context, db *database.DB, want int) error {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var waiting int
+		err := db.Pool.QueryRow(ctx, `
+			SELECT COUNT(*)
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND pid <> pg_backend_pid()
+			  AND wait_event_type = 'Lock'
+			  AND query ILIKE '%telegram_pairing%'
+		`).Scan(&waiting)
+		if err != nil {
+			return fmt.Errorf("inspect PostgreSQL pairing waiters: %w", err)
+		}
+		if waiting >= want {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for %d pairing waiters: %w", want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func TestTelegramWebhookConcurrentDuplicateDeliveryCreatesOneRecord(t *testing.T) {
