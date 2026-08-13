@@ -485,6 +485,156 @@ func TestTelegramAdminE2EThroughBotHandleUpdate(t *testing.T) {
 	}
 }
 
+// TestTelegramAdminE2ESelfConfirmationPairing drives the first-contact pairing
+// path end to end through the same Bot.HandleUpdate boundary: an unpaired
+// account proposes a strong roster match, explicitly confirms it, and only
+// then becomes a recognized paired account. It also covers decline, a second
+// account claiming the same row (conflict), and a no-match refusal.
+func TestTelegramAdminE2ESelfConfirmationPairing(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_USERNAME", "synthetic_tg_admin_bot")
+	db, prefix := openTelegramAdminDB(t)
+	ctx := context.Background()
+
+	pairID := prefix + "-pair"
+	pairTelegramID := telegramAdminID(prefix, 40)
+	declineTelegramID := telegramAdminID(prefix, 41)
+	conflictTelegramID := telegramAdminID(prefix, 42)
+	noMatchTelegramID := telegramAdminID(prefix, 43)
+	pairName := "E2E PAIR " + strings.ToUpper(prefix)
+
+	seedUser(t, db, pairID, pairName, models.RankPTE, models.BatteryAlpha, "", true)
+
+	store := NewTelegramAdminStore(db, nil)
+	sender := &telegramAdminE2ESender{}
+	dispatcher := telegram.NewDispatcher(sender, 128)
+	defer dispatcher.Close()
+	bot := telegram.NewBotWithAdmin(store, store, telegram.NewAdminRouter(store))
+
+	// An unpaired account sending its full name receives exactly one strong
+	// proposal with Yes/No buttons; nothing is paired yet.
+	proposal := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(pairTelegramID, pairName))
+	if len(proposal) != 1 || proposal[0].Kind != telegram.SendMessage {
+		t.Fatalf("pairing proposal actions = %#v, want one message", proposal)
+	}
+	if want := "Are you PTE " + pairName + ", Alpha?"; proposal[0].Text != want {
+		t.Fatalf("pairing proposal text = %q, want %q", proposal[0].Text, want)
+	}
+	yes := telegramAdminE2EButton(t, proposal, "Yes, that's me")
+	no := telegramAdminE2EButton(t, proposal, "No, try again")
+	yesParts := strings.Split(yes.CallbackData, ":")
+	noParts := strings.Split(no.CallbackData, ":")
+	if len(yesParts) != 3 || yesParts[0] != "p" || yesParts[1] != "y" || yesParts[2] == "" {
+		t.Fatalf("yes callback = %q", yes.CallbackData)
+	}
+	if len(noParts) != 3 || noParts[0] != "p" || noParts[1] != "n" || noParts[2] != yesParts[2] {
+		t.Fatalf("no callback = %q, want same attempt as yes %q", no.CallbackData, yes.CallbackData)
+	}
+	attemptID := yesParts[2]
+
+	var pairingCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, pairTelegramID).Scan(&pairingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pairingCount != 0 {
+		t.Fatalf("pairing rows before confirmation = %d, want 0", pairingCount)
+	}
+	var requestName string
+	if err := db.Pool.QueryRow(ctx, `SELECT display_name FROM telegram_pairing_request WHERE telegram_id = $1`, pairTelegramID).Scan(&requestName); err != nil {
+		t.Fatal(err)
+	}
+	if requestName != pairName {
+		t.Fatalf("pairing request display_name = %q, want %q", requestName, pairName)
+	}
+
+	// Tapping "Yes, that's me" claims the roster row for this account.
+	confirmed := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2ECallbackUpdate(pairTelegramID, yes.CallbackData))
+	confirmedText := telegramAdminE2EActionText(confirmed)
+	if !strings.Contains(confirmedText, "I recognise you as "+pairName+".") || !strings.Contains(confirmedText, "You are ready to mark attendance.") {
+		t.Fatalf("confirmation actions = %#v, want ready-to-mark recognition", confirmed)
+	}
+	var gotUserID string
+	var selfConfirmed bool
+	var confirmedBy *string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT user_id, self_confirmed, confirmed_by FROM telegram_pairing WHERE telegram_id = $1
+	`, pairTelegramID).Scan(&gotUserID, &selfConfirmed, &confirmedBy); err != nil {
+		t.Fatal(err)
+	}
+	if gotUserID != pairID || !selfConfirmed || confirmedBy != nil {
+		t.Fatalf("pairing = user %q self_confirmed %v confirmed_by %v, want %q true nil", gotUserID, selfConfirmed, confirmedBy, pairID)
+	}
+	var attemptOutcome string
+	if err := db.Pool.QueryRow(ctx, `SELECT outcome FROM telegram_pairing_attempt WHERE id = $1`, attemptID).Scan(&attemptOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if attemptOutcome != "confirmed" {
+		t.Fatalf("attempt outcome = %q, want confirmed", attemptOutcome)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM telegram_pairing_request WHERE telegram_id = $1`, pairTelegramID).Scan(&pairingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pairingCount != 0 {
+		t.Fatalf("pairing request rows after confirmation = %d, want 0", pairingCount)
+	}
+
+	// The paired account is now recognized on later messages.
+	recognized := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(pairTelegramID, "hello"))
+	if !strings.Contains(telegramAdminE2EActionText(recognized), "I recognise you as "+pairName+".") {
+		t.Fatalf("recognition actions = %#v, want linked reply", recognized)
+	}
+
+	// "No, try again" discards the proposal without pairing, and the same
+	// attempt cannot be confirmed afterwards.
+	declineProposal := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(declineTelegramID, pairName))
+	declineYes := telegramAdminE2EButton(t, declineProposal, "Yes, that's me")
+	declineNo := telegramAdminE2EButton(t, declineProposal, "No, try again")
+	declined := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2ECallbackUpdate(declineTelegramID, declineNo.CallbackData))
+	if !strings.Contains(telegramAdminE2EActionText(declined), telegram.PairingDeclinedReply) {
+		t.Fatalf("declined actions = %#v, want decline reply", declined)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, declineTelegramID).Scan(&pairingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pairingCount != 0 {
+		t.Fatalf("pairing rows after decline = %d, want 0", pairingCount)
+	}
+	stale := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2ECallbackUpdate(declineTelegramID, declineYes.CallbackData))
+	if !strings.Contains(telegramAdminE2EActionText(stale), telegram.PairingStaleReply) {
+		t.Fatalf("stale confirmation actions = %#v, want stale reply", stale)
+	}
+
+	// A second account confirming the same roster row is refused as a conflict
+	// instead of silently replacing the first pairing.
+	conflictProposal := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(conflictTelegramID, pairName))
+	conflictYes := telegramAdminE2EButton(t, conflictProposal, "Yes, that's me")
+	conflict := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2ECallbackUpdate(conflictTelegramID, conflictYes.CallbackData))
+	if !strings.Contains(telegramAdminE2EActionText(conflict), telegram.PairingConflictReply) {
+		t.Fatalf("conflict actions = %#v, want conflict reply", conflict)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, conflictTelegramID).Scan(&pairingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pairingCount != 0 {
+		t.Fatalf("pairing rows after conflict = %d, want 0", pairingCount)
+	}
+	var originalUserID string
+	if err := db.Pool.QueryRow(ctx, `SELECT user_id FROM telegram_pairing WHERE telegram_id = $1`, pairTelegramID).Scan(&originalUserID); err != nil {
+		t.Fatal(err)
+	}
+	if originalUserID != pairID {
+		t.Fatalf("original pairing user after conflict = %q, want %q", originalUserID, pairID)
+	}
+
+	// A name with no close roster match is refused without disclosing anyone.
+	noMatch := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(noMatchTelegramID, "NOBODY "+strings.ToUpper(prefix)+" UNRELATED"))
+	if len(noMatch) != 1 || noMatch[0].Kind != telegram.SendMessage || noMatch[0].Text != telegram.NoMatchReply {
+		t.Fatalf("no-match actions = %#v, want generic no-match reply", noMatch)
+	}
+	if telegramAdminE2EHasButton(noMatch, "Yes, that's me") || strings.Contains(telegramAdminE2EActionText(noMatch), pairName) {
+		t.Fatalf("no-match reply disclosed a roster name: %#v", noMatch)
+	}
+}
+
 func driveTelegramAdminE2E(t *testing.T, bot *telegram.Bot, dispatcher *telegram.Dispatcher, sender *telegramAdminE2ESender, update telegram.Update) []telegram.Action {
 	t.Helper()
 	actions, err := bot.HandleUpdate(context.Background(), update)
