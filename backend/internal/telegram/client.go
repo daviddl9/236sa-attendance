@@ -3,12 +3,16 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
+	"strconv"
 	"strings"
 )
 
@@ -84,6 +88,79 @@ func (c *Client) SendMessageWithMarkup(ctx context.Context, chatID int64, text s
 	}, nil)
 }
 
+// SendPhoto sends an in-memory PNG to a Telegram chat using multipart form
+// data. The bot token is used only to construct the private request URL.
+func (c *Client) SendPhoto(ctx context.Context, chatID int64, photo []byte, caption string, replyMarkup *InlineKeyboardMarkup) error {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
+		return errors.New("telegram sendPhoto: encode chat ID")
+	}
+	if err := writer.WriteField("caption", caption); err != nil {
+		return errors.New("telegram sendPhoto: encode caption")
+	}
+	if replyMarkup != nil {
+		markup, err := json.Marshal(replyMarkup)
+		if err != nil {
+			return errors.New("telegram sendPhoto: encode reply markup")
+		}
+		if err := writer.WriteField("reply_markup", string(markup)); err != nil {
+			return errors.New("telegram sendPhoto: encode reply markup")
+		}
+	}
+
+	part, err := writer.CreatePart(photoPartHeader())
+	if err != nil {
+		return errors.New("telegram sendPhoto: create photo part")
+	}
+	if _, err := part.Write(photo); err != nil {
+		return errors.New("telegram sendPhoto: encode photo")
+	}
+	if err := writer.Close(); err != nil {
+		return errors.New("telegram sendPhoto: finalize request")
+	}
+
+	requestURL := strings.TrimRight(c.baseURL, "/") + "/bot" + c.token + "/sendPhoto"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, &body)
+	if err != nil {
+		return errors.New("telegram sendPhoto: create request")
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return errors.New("telegram sendPhoto: request failed")
+	}
+	if resp == nil || resp.Body == nil {
+		return errors.New("telegram sendPhoto: empty response")
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return errors.New("telegram sendPhoto: read response")
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("telegram sendPhoto: API returned status %d", resp.StatusCode)
+	}
+
+	var response apiResponse
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		return errors.New("telegram sendPhoto: decode response")
+	}
+	if !response.OK {
+		return errors.New("telegram sendPhoto: API request was not accepted")
+	}
+	return nil
+}
+
+func photoPartHeader() textproto.MIMEHeader {
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", `form-data; name="photo"; filename="qr.png"`)
+	header.Set("Content-Type", "image/png")
+	return header
+}
+
 // AnswerCallbackQuery acknowledges a callback query without sending a chat
 // message. It is safe to call for callback updates that need no further action.
 func (c *Client) AnswerCallbackQuery(ctx context.Context, callbackQueryID string) error {
@@ -124,6 +201,9 @@ func (c *Client) call(ctx context.Context, method string, requestBody any, resul
 		// Do not wrap err: net/http errors include the request URL, which would
 		// expose the bot token.
 		return fmt.Errorf("telegram %s: request failed", method)
+	}
+	if resp == nil || resp.Body == nil {
+		return fmt.Errorf("telegram %s: empty response", method)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

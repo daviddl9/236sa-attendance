@@ -66,6 +66,12 @@ func (h *TelegramHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 	actions, err := h.bot.HandleUpdate(r.Context(), update)
 	if err != nil {
+		if acknowledgements := callbackAcknowledgements(actions); len(acknowledgements) > 0 {
+			if !h.actionSink.Enqueue(acknowledgements) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		}
 		log.Printf("Telegram update handling failed")
 		h.serverError(w)
 		return
@@ -75,6 +81,16 @@ func (h *TelegramHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func callbackAcknowledgements(actions []telegram.Action) []telegram.Action {
+	acknowledgements := make([]telegram.Action, 0, len(actions))
+	for _, action := range actions {
+		if action.Kind == telegram.AnswerCallbackQuery && action.CallbackQueryID != "" {
+			acknowledgements = append(acknowledgements, action)
+		}
+	}
+	return acknowledgements
 }
 
 func (h *TelegramHandler) authenticated(r *http.Request) bool {

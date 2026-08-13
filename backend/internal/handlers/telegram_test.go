@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,13 +17,16 @@ import (
 type telegramActionSink struct {
 	mu      sync.Mutex
 	actions []telegram.Action
+	calls   int
+	reject  bool
 }
 
 func (s *telegramActionSink) Enqueue(actions []telegram.Action) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.calls++
 	s.actions = append(s.actions, actions...)
-	return true
+	return !s.reject
 }
 
 func (s *telegramActionSink) Actions() []telegram.Action {
@@ -38,6 +42,32 @@ type telegramPairingLookup struct {
 
 func (l telegramPairingLookup) FindPairing(context.Context, int64) (telegram.Pairing, bool, error) {
 	return l.pairing, l.found, nil
+}
+
+type telegramCallbackFailureFlow struct {
+	telegramPairingLookup
+	confirmErr error
+	discardErr error
+}
+
+func (f telegramCallbackFailureFlow) ProposePairing(context.Context, int64, string) (telegram.PairingProposal, error) {
+	return telegram.PairingProposal{}, nil
+}
+
+func (f telegramCallbackFailureFlow) ConfirmPairing(context.Context, int64, string) (telegram.PairingConfirmation, error) {
+	return telegram.PairingConfirmation{}, f.confirmErr
+}
+
+func (f telegramCallbackFailureFlow) DiscardPairing(context.Context, int64, string) error {
+	return f.discardErr
+}
+
+type telegramFailingPairingLookup struct {
+	err error
+}
+
+func (l telegramFailingPairingLookup) FindPairing(context.Context, int64) (telegram.Pairing, bool, error) {
+	return telegram.Pairing{}, false, l.err
 }
 
 func newTelegramTestHandler(found bool) (*TelegramHandler, *telegramActionSink) {
@@ -102,6 +132,64 @@ func TestTelegramWebhookGroupMessageHasNoActionOrReply(t *testing.T) {
 	}
 	if actions := sink.Actions(); len(actions) != 0 {
 		t.Fatalf("group message queued actions: %#v", actions)
+	}
+}
+
+func TestTelegramWebhookQueuesCallbackAcknowledgementOnProcessingError(t *testing.T) {
+	serviceErr := errors.New("pairing service unavailable")
+	flow := telegramCallbackFailureFlow{confirmErr: serviceErr}
+	sink := &telegramActionSink{}
+	handler := NewTelegramHandler(telegram.NewBot(flow), "header-secret", sink)
+	req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(`{
+		"callback_query":{"id":"callback-1","from":{"id":42},"message":{"chat":{"id":42,"type":"private"}},"data":"p:y:attempt-1"}
+	}`))
+	req.Header.Set(telegramSecretHeader, "header-secret")
+	rec := httptest.NewRecorder()
+	handler.Webhook(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	actions := sink.Actions()
+	if len(actions) != 1 || actions[0].Kind != telegram.AnswerCallbackQuery || actions[0].CallbackQueryID != "callback-1" {
+		t.Fatalf("actions = %#v, want callback acknowledgement only", actions)
+	}
+}
+
+func TestTelegramWebhookReturns503WhenCallbackAcknowledgementCannotQueue(t *testing.T) {
+	sink := &telegramActionSink{reject: true}
+	handler := NewTelegramHandler(telegram.NewBot(telegramCallbackFailureFlow{
+		confirmErr: errors.New("pairing service unavailable"),
+	}), "header-secret", sink)
+	req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(`{
+		"callback_query":{"id":"callback-1","from":{"id":42},"message":{"chat":{"id":42,"type":"private"}},"data":"p:y:attempt-1"}
+	}`))
+	req.Header.Set(telegramSecretHeader, "header-secret")
+	rec := httptest.NewRecorder()
+	handler.Webhook(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Kind != telegram.AnswerCallbackQuery {
+		t.Fatalf("actions = %#v, want rejected callback acknowledgement", actions)
+	}
+}
+
+func TestTelegramWebhookDoesNotQueueMessageActionsOnProcessingError(t *testing.T) {
+	sink := &telegramActionSink{}
+	handler := NewTelegramHandler(telegram.NewBot(telegramFailingPairingLookup{
+		err: errors.New("pairing service unavailable"),
+	}), "header-secret", sink)
+	req := httptest.NewRequest(http.MethodPost, "/api/telegram/webhook/path", jsonBody(`{
+		"message":{"from":{"id":42},"chat":{"id":42,"type":"private"},"text":"hello"}
+	}`))
+	req.Header.Set(telegramSecretHeader, "header-secret")
+	rec := httptest.NewRecorder()
+	handler.Webhook(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if sink.calls != 0 || len(sink.Actions()) != 0 {
+		t.Fatalf("sink calls=%d actions=%#v, want no message actions", sink.calls, sink.Actions())
 	}
 }
 

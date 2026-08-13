@@ -338,8 +338,8 @@ func QRPNG(link string) ([]byte, error)
 
 Use the already-present `github.com/skip2/go-qrcode` module and promote it to a direct dependency only if `go mod tidy` requires the declaration.
 
-- [ ] **Step 1: Write failing client/QR/dispatcher tests** for URL-only buttons, callback-only buttons, PNG output, multipart fields, token-safe errors, photo delivery, and link fallback.
-- [ ] **Step 2: Run the focused Telegram tests**.
+- [x] **Step 1: Write failing client/QR/dispatcher tests** for URL-only buttons, callback-only buttons, PNG output, multipart fields, token-safe errors, photo delivery, and link fallback.
+- [x] **Step 2: Run the focused Telegram tests**.
 
 ```sh
 cd backend
@@ -348,12 +348,12 @@ go test ./internal/telegram -run 'URL|QR|Photo|Dispatcher|Markup' -count=1
 
 Expected: FAIL on the new transport behavior.
 
-- [ ] **Step 3: Implement the transport and QR helper** with no network calls in unit tests.
-- [ ] **Step 4: Run the full Telegram package tests**.
+- [x] **Step 3: Implement the transport and QR helper** with no network calls in unit tests.
+- [x] **Step 4: Run the full Telegram package tests**.
 
 Expected: PASS with existing pairing/deep-link callback behavior unchanged.
 
-- [ ] **Step 5: Commit the transport changes**.
+- [x] **Step 5: Commit the transport changes**.
 
 ```sh
 git add backend/internal/telegram go.mod go.sum
