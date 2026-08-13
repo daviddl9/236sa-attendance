@@ -477,8 +477,8 @@ Add a synthetic PostgreSQL E2E test that drives the bot through the same `Bot.Ha
 
 The test must use unique synthetic IDs and clean up all rows by prefix or transaction. It must not read production credentials or data.
 
-- [ ] **Step 1: Write the failing runtime/E2E tests and update the Telegram spec acceptance criteria** to include the approved admin surface while retaining the dashboard.
-- [ ] **Step 2: Run the E2E tests against disposable PostgreSQL**.
+- [x] **Step 1: Write the failing runtime/E2E tests and update the Telegram spec acceptance criteria** to include the approved admin surface while retaining the dashboard.
+- [x] **Step 2: Run the E2E tests against disposable PostgreSQL**.
 
 ```sh
 export TEST_DATABASE_URL="postgres://postgres:pw@localhost:55441/app?sslmode=disable"
@@ -488,8 +488,8 @@ go test ./internal/handlers ./internal/telegram -run 'Telegram.*Admin|Admin.*E2E
 
 Expected: FAIL before runtime wiring and end-to-end behavior are complete.
 
-- [ ] **Step 3: Wire `newTelegramRuntime` and complete the synthetic E2E flow.**
-- [ ] **Step 4: Run the feature validation suite**.
+- [x] **Step 3: Wire `newTelegramRuntime` and complete the synthetic E2E flow.**
+- [x] **Step 4: Run the feature validation suite**.
 
 From repository root:
 
@@ -503,7 +503,7 @@ go run ./cmd/migrate up ./migrations
 go build ./...
 go vet ./...
 go test ./... -count=1
-go test ./... -race -count=1
+go test -p 1 ./... -race -count=1
 cd ../frontend
 npm run generate
 npm run build
@@ -512,7 +512,7 @@ npm run lint
 
 Expected: every command exits 0; PostgreSQL migration output includes `20260815000000`; no Telegram token is printed.
 
-- [ ] **Step 5: Commit runtime wiring, E2E tests, and spec updates**.
+- [x] **Step 5: Commit runtime wiring, E2E tests, and spec updates**.
 
 ```sh
 git add backend/cmd/api/main.go backend/internal/handlers/telegram.go backend/internal/handlers/telegram_admin_e2e_test.go backend/internal/telegram specs/009-telegram-bot/spec.md specs/009-telegram-bot/plan.md

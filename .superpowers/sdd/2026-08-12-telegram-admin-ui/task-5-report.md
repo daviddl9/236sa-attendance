@@ -100,3 +100,7 @@ Code changes for this follow-up are limited to `backend/internal/handlers/telegr
 ## Fix addendum — selected Tier 2 forged-close evidence
 
 The E2E now selects the authorized battery-specific event and verifies its selected-event menu before sending `a:close:<same encoded event ID>` as Tier 2. It asserts the generic safe response and active database status, proving the denial exercises close authorization rather than missing selected context. The focused PostgreSQL E2E and full Go test suites pass.
+
+## Parent retry verification — 2026-08-13
+
+The parent reran the full validation against the disposable PostgreSQL instance on port 55471. Migrations reported no pending work; Go build, vet, the focused E2E, and the full non-race suite passed. An unconstrained `go test ./... -race -count=1` invocation stalled while sharing the disposable database across package workers and was stopped after the outer timeout without a test failure. The complete race suite then passed deterministically with `go test -p 1 ./... -race -count=1`, and the race packages were also verified individually. Frontend route generation, build, lint, `git diff --check`, and token-shaped secret scans passed.
