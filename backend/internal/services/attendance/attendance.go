@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	sessionservice "github.com/davidlivingston/go-nextjs-starter/backend/internal/services/sessions"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -29,6 +30,24 @@ const (
 	AlreadyMarked
 	SessionClosed
 	OutOfScope
+)
+
+// UndoRequest contains the values needed to remove one actor-owned manual
+// attendance mark.
+type UndoRequest struct {
+	SessionID string
+	UserID    string
+	MarkedBy  string
+}
+
+// UndoOutcome is the result of evaluating a strict manual-undo request.
+type UndoOutcome int
+
+const (
+	Undone UndoOutcome = iota
+	UndoNotFound
+	UndoNotOwned
+	UndoNotManual
 )
 
 // Mark applies the attendance rules using the caller's transaction. It does
@@ -74,12 +93,60 @@ func Mark(ctx context.Context, tx pgx.Tx, req MarkRequest) (MarkOutcome, error) 
 	return Marked, nil
 }
 
+// UndoManual removes an attendance record only when it is a manual mark made
+// by the requested actor. The caller owns the transaction and decides whether
+// to commit or roll it back.
+func UndoManual(ctx context.Context, tx pgx.Tx, req UndoRequest) (UndoOutcome, error) {
+	var method string
+	var markedBy *string
+	err := tx.QueryRow(ctx, `
+		SELECT marking_method, marked_by
+		FROM attendance_record
+		WHERE session_id = $1 AND user_id = $2
+		FOR UPDATE
+	`, req.SessionID, req.UserID).Scan(&method, &markedBy)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return UndoNotFound, nil
+		}
+		return UndoNotFound, fmt.Errorf("load attendance record for undo: %w", err)
+	}
+	if method != models.MarkingMethodManual {
+		return UndoNotManual, nil
+	}
+	if markedBy == nil || *markedBy != req.MarkedBy {
+		return UndoNotOwned, nil
+	}
+
+	result, err := tx.Exec(ctx, `
+		DELETE FROM attendance_record
+		WHERE session_id = $1 AND user_id = $2
+		  AND marking_method = $3 AND marked_by = $4
+	`, req.SessionID, req.UserID, models.MarkingMethodManual, req.MarkedBy)
+	if err != nil {
+		return UndoNotFound, fmt.Errorf("delete attendance record for undo: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return UndoNotFound, nil
+	}
+	return Undone, nil
+}
+
 func loadSession(ctx context.Context, tx pgx.Tx, sessionID string) (string, string, []string, error) {
 	var status, scope string
 	var batteries []string
+	var endTime *time.Time
 	err := tx.QueryRow(ctx, `
-		SELECT status, scope, batteries FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&status, &scope, &batteries)
+		SELECT status, scope, batteries, end_time
+		FROM attendance_session
+		WHERE id = $1
+		FOR UPDATE
+	`, sessionID).Scan(&status, &scope, &batteries, &endTime)
+	if err == nil && status == models.SessionStatusActive && sessionservice.IsExpired(endTime, time.Now()) {
+		// Keep the public MarkOutcome contract: expiry is an unavailable/closed
+		// session for all existing scanner and Telegram callers.
+		status = models.SessionStatusClosed
+	}
 	return status, scope, batteries, err
 }
 

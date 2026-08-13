@@ -139,6 +139,71 @@ func TestMarkManualRecordsMarkedBy(t *testing.T) {
 	}
 }
 
+func TestUndoManualOnlyRemovesTheActorOwnManualMark(t *testing.T) {
+	db, prefix := openTestDB(t)
+	actorID := prefix + "-actor"
+	otherID := prefix + "-other"
+	targetID := prefix + "-target"
+	sessionID := prefix + "-session"
+	seedUser(t, db, actorID, "ACTOR", "Alpha")
+	seedUser(t, db, otherID, "OTHER", "Alpha")
+	seedUser(t, db, targetID, "TARGET", "Alpha")
+	seedSession(t, db, sessionID, "unit_wide", nil, "active", actorID)
+
+	markedBy := actorID
+	if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: targetID, Method: "manual", MarkedBy: &markedBy}); outcome != Marked {
+		t.Fatalf("manual mark outcome = %v, want Marked", outcome)
+	}
+	if outcome := undo(t, db, UndoRequest{SessionID: sessionID, UserID: targetID, MarkedBy: actorID}); outcome != Undone {
+		t.Fatalf("owned manual undo outcome = %v, want Undone", outcome)
+	}
+	assertRecordCount(t, db, sessionID, 0)
+
+	if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: targetID, Method: "manual", MarkedBy: &markedBy}); outcome != Marked {
+		t.Fatalf("second manual mark outcome = %v, want Marked", outcome)
+	}
+	if outcome := undo(t, db, UndoRequest{SessionID: sessionID, UserID: targetID, MarkedBy: otherID}); outcome != UndoNotOwned {
+		t.Fatalf("other actor undo outcome = %v, want UndoNotOwned", outcome)
+	}
+	if outcome := undo(t, db, UndoRequest{SessionID: sessionID, UserID: prefix + "-missing", MarkedBy: actorID}); outcome != UndoNotFound {
+		t.Fatalf("missing undo outcome = %v, want UndoNotFound", outcome)
+	}
+}
+
+func TestUndoManualDoesNotRemoveNonManualAttendance(t *testing.T) {
+	db, prefix := openTestDB(t)
+	actorID := prefix + "-actor"
+	targetID := prefix + "-target"
+	sessionID := prefix + "-session"
+	seedUser(t, db, actorID, "ACTOR", "Alpha")
+	seedUser(t, db, targetID, "TARGET", "Alpha")
+	seedSession(t, db, sessionID, "unit_wide", nil, "active", actorID)
+	if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: targetID, Method: "qr_scan"}); outcome != Marked {
+		t.Fatalf("QR mark outcome = %v, want Marked", outcome)
+	}
+	if outcome := undo(t, db, UndoRequest{SessionID: sessionID, UserID: targetID, MarkedBy: actorID}); outcome != UndoNotManual {
+		t.Fatalf("non-manual undo outcome = %v, want UndoNotManual", outcome)
+	}
+	assertRecordCount(t, db, sessionID, 1)
+}
+
+func undo(t *testing.T, db *database.DB, req UndoRequest) UndoOutcome {
+	t.Helper()
+	tx, err := db.Pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin undo transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	outcome, err := UndoManual(context.Background(), tx, req)
+	if err != nil {
+		t.Fatalf("undo: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit undo: %v", err)
+	}
+	return outcome
+}
+
 func TestMarkConcurrentDuplicateIsIdempotent(t *testing.T) {
 	db, prefix := openTestDB(t)
 	userID := prefix + "-user"

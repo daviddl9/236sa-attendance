@@ -113,6 +113,9 @@ type Action struct {
 	Text            string
 	CallbackQueryID string
 	ReplyMarkup     *InlineKeyboardMarkup
+	Photo           []byte
+	Caption         string
+	FallbackText    string
 }
 
 // InlineKeyboardMarkup is the subset of Telegram's reply markup used for a
@@ -123,7 +126,8 @@ type InlineKeyboardMarkup struct {
 
 type InlineKeyboardButton struct {
 	Text         string `json:"text"`
-	CallbackData string `json:"callback_data"`
+	CallbackData string `json:"callback_data,omitempty"`
+	URL          string `json:"url,omitempty"`
 }
 
 type ActionKind int
@@ -131,6 +135,7 @@ type ActionKind int
 const (
 	SendMessage ActionKind = iota
 	AnswerCallbackQuery
+	SendPhoto
 )
 
 // Bot routes updates and composes replies. Attendance and pairing writes are
@@ -139,10 +144,20 @@ type Bot struct {
 	pairings   PairingLookup
 	flow       PairingFlow
 	attendance AttendanceMarker
+	admin      AdminFlow
 }
 
 func NewBot(pairings PairingLookup) *Bot {
 	return NewBotWithAttendance(pairings, nil)
+}
+
+// NewBotWithAdmin wires the optional commander UI while keeping the pairing
+// and attendance adapters independently injectable. Pairing remains the only
+// authenticated identity input to the admin flow.
+func NewBotWithAdmin(pairings PairingLookup, marker AttendanceMarker, admin AdminFlow) *Bot {
+	bot := NewBotWithAttendance(pairings, marker)
+	bot.admin = admin
+	return bot
 }
 
 // NewBotWithAttendance keeps the pairing lookup and attendance marker
@@ -158,6 +173,9 @@ func NewBotWithAttendance(pairings PairingLookup, marker AttendanceMarker) *Bot 
 		if marker, ok := pairings.(AttendanceMarker); ok {
 			bot.attendance = marker
 		}
+	}
+	if admin, ok := pairings.(AdminFlow); ok {
+		bot.admin = admin
 	}
 	return bot
 }
@@ -204,6 +222,12 @@ func (b *Bot) handleMessage(ctx context.Context, message *Message) ([]Action, er
 			}
 			return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: attendanceReply(result)}}, nil
 		}
+		if b.admin != nil {
+			actions, handled, err := b.admin.HandleMessage(ctx, message, pairing)
+			if handled || err != nil {
+				return actions, err
+			}
+		}
 		return []Action{{Kind: SendMessage, ChatID: message.Chat.ID, Text: linkedReply(pairing.FullName)}}, nil
 	}
 	if b.flow == nil {
@@ -247,37 +271,63 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query *CallbackQuery) ([]
 		return nil, nil
 	}
 	actions := []Action{{Kind: AnswerCallbackQuery, ChatID: query.Message.Chat.ID, CallbackQueryID: query.ID}}
-	if b.flow == nil || query.From == nil || query.From.ID == 0 {
+	if query.From == nil || query.From.ID == 0 {
 		return actions, nil
 	}
 
-	kind, attemptID, ok := parsePairingCallback(query.Data)
-	if !ok {
-		return actions, nil
-	}
-	if kind == "n" {
-		if discarder, ok := b.flow.(PairingDiscarder); ok {
-			if err := discarder.DiscardPairing(ctx, query.From.ID, attemptID); err != nil {
-				return nil, fmt.Errorf("discard Telegram pairing: %w", err)
-			}
+	// Pairing callbacks retain their original parser and service path. Admin
+	// callbacks are separately namespaced so a malformed admin payload can
+	// never be interpreted as a pairing attempt.
+	if kind, attemptID, ok := parsePairingCallback(query.Data); ok {
+		if b.flow == nil {
+			return actions, nil
 		}
-		actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingDeclinedReply})
+		if kind == "n" {
+			if discarder, ok := b.flow.(PairingDiscarder); ok {
+				if err := discarder.DiscardPairing(ctx, query.From.ID, attemptID); err != nil {
+					return actions, fmt.Errorf("discard Telegram pairing: %w", err)
+				}
+			}
+			actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingDeclinedReply})
+			return actions, nil
+		}
+
+		confirmation, err := b.flow.ConfirmPairing(ctx, query.From.ID, attemptID)
+		if err != nil {
+			return actions, fmt.Errorf("confirm Telegram pairing: %w", err)
+		}
+		switch confirmation.Outcome {
+		case PairingConfirmed:
+			actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: linkedReply(confirmation.Pairing.FullName) + " You are ready to mark attendance."})
+		case PairingConflict:
+			actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingConflictReply})
+		default:
+			actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingStaleReply})
+		}
 		return actions, nil
 	}
 
-	confirmation, err := b.flow.ConfirmPairing(ctx, query.From.ID, attemptID)
+	if b.admin == nil || !strings.HasPrefix(query.Data, "a:") {
+		return actions, nil
+	}
+	if b.pairings == nil {
+		return actions, nil
+	}
+	pairing, found, err := b.pairings.FindPairing(ctx, query.From.ID)
 	if err != nil {
-		return nil, fmt.Errorf("confirm Telegram pairing: %w", err)
+		return actions, fmt.Errorf("find Telegram pairing for admin callback: %w", err)
 	}
-	switch confirmation.Outcome {
-	case PairingConfirmed:
-		actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: linkedReply(confirmation.Pairing.FullName) + " You are ready to mark attendance."})
-	case PairingConflict:
-		actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingConflictReply})
-	default:
-		actions = append(actions, Action{Kind: SendMessage, ChatID: query.Message.Chat.ID, Text: PairingStaleReply})
+	if !found {
+		return actions, nil
 	}
-	return actions, nil
+	if pairing.TelegramID == 0 {
+		pairing.TelegramID = query.From.ID
+	}
+	adminActions, handled, err := b.admin.HandleCallback(ctx, query, pairing)
+	if handled || err != nil {
+		actions = append(actions, adminActions...)
+	}
+	return actions, err
 }
 
 type startCommand struct {
@@ -388,6 +438,11 @@ type markupSender interface {
 	SendMessageWithMarkup(ctx context.Context, chatID int64, text string, replyMarkup *InlineKeyboardMarkup) error
 }
 
+// PhotoSender is optional so existing Sender fakes remain source-compatible.
+type PhotoSender interface {
+	SendPhoto(ctx context.Context, chatID int64, photo []byte, caption string, replyMarkup *InlineKeyboardMarkup) error
+}
+
 // ActionSink accepts outbound actions without making the webhook wait for the
 // Telegram API. It returns false when the action cannot be accepted.
 type ActionSink interface {
@@ -451,21 +506,9 @@ func (d *Dispatcher) run() {
 		ctx, cancel := context.WithTimeout(context.Background(), deliveryTimeout)
 		switch action.Kind {
 		case SendMessage:
-			var err error
-			if action.ReplyMarkup != nil {
-				if sender, ok := d.sender.(markupSender); ok {
-					err = sender.SendMessageWithMarkup(ctx, action.ChatID, action.Text, action.ReplyMarkup)
-				} else {
-					err = d.sender.SendMessage(ctx, action.ChatID, action.Text)
-				}
-			} else {
-				err = d.sender.SendMessage(ctx, action.ChatID, action.Text)
-			}
-			if err != nil {
-				// Do not log action.Text: a linked reply may contain a person's name.
-				// The client also guarantees that its token is absent from errors.
-				logDeliveryError("send message", err)
-			}
+			d.deliverMessage(ctx, action)
+		case SendPhoto:
+			d.deliverPhoto(ctx, action)
 		case AnswerCallbackQuery:
 			if err := d.sender.AnswerCallbackQuery(ctx, action.CallbackQueryID); err != nil {
 				logDeliveryError("answer callback query", err)
@@ -473,6 +516,49 @@ func (d *Dispatcher) run() {
 		}
 		cancel()
 	}
+}
+
+func (d *Dispatcher) deliverMessage(ctx context.Context, action Action) {
+	var err error
+	if action.ReplyMarkup != nil {
+		if sender, ok := d.sender.(markupSender); ok {
+			err = sender.SendMessageWithMarkup(ctx, action.ChatID, action.Text, action.ReplyMarkup)
+		} else {
+			err = d.sender.SendMessage(ctx, action.ChatID, action.Text)
+		}
+	} else {
+		err = d.sender.SendMessage(ctx, action.ChatID, action.Text)
+	}
+	if err != nil {
+		// Do not log action.Text: a linked reply may contain a person's name.
+		// The client also guarantees that its token is absent from errors.
+		logDeliveryError("send message", err)
+	}
+}
+
+func (d *Dispatcher) deliverPhoto(ctx context.Context, action Action) {
+	sender, ok := d.sender.(PhotoSender)
+	if !ok {
+		d.deliverFallback(action)
+		return
+	}
+	if err := sender.SendPhoto(ctx, action.ChatID, action.Photo, action.Caption, action.ReplyMarkup); err != nil {
+		logDeliveryError("send photo", err)
+		d.deliverFallback(action)
+	}
+}
+
+func (d *Dispatcher) deliverFallback(action Action) {
+	if action.FallbackText == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), deliveryTimeout)
+	defer cancel()
+	d.deliverMessage(ctx, Action{
+		ChatID:      action.ChatID,
+		Text:        action.FallbackText,
+		ReplyMarkup: action.ReplyMarkup,
+	})
 }
 
 func (d *Dispatcher) Close() {

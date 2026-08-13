@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -184,6 +185,38 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestInlineKeyboardButtonJSONSupportsURLAndCallbackButtons(t *testing.T) {
+	urlOnly, err := json.Marshal(InlineKeyboardButton{Text: "Open", URL: "https://attendance.example/start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var urlPayload map[string]json.RawMessage
+	if err := json.Unmarshal(urlOnly, &urlPayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := urlPayload["callback_data"]; ok {
+		t.Fatalf("URL-only button contains callback_data: %s", urlOnly)
+	}
+	if got := string(urlPayload["url"]); got != `"https://attendance.example/start"` {
+		t.Fatalf("URL-only button URL = %s", got)
+	}
+
+	callbackOnly, err := json.Marshal(InlineKeyboardButton{Text: "Confirm", CallbackData: "p:y:attempt-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var callbackPayload map[string]json.RawMessage
+	if err := json.Unmarshal(callbackOnly, &callbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := callbackPayload["url"]; ok {
+		t.Fatalf("callback-only button contains url: %s", callbackOnly)
+	}
+	if got := string(callbackPayload["callback_data"]); got != `"p:y:attempt-1"` {
+		t.Fatalf("callback-only button callback_data = %s", got)
+	}
+}
+
 func TestClientUsesJSONAPIWithoutLeakingErrors(t *testing.T) {
 	const testToken = "redacted-token"
 	calls := 0
@@ -227,6 +260,106 @@ func TestClientDoesNotReturnTransportURL(t *testing.T) {
 	err = client.SendMessage(context.Background(), 1, "text")
 	if err == nil || strings.Contains(err.Error(), testToken) {
 		t.Fatalf("error = %v, want token-free error", err)
+	}
+}
+
+func TestClientSendPhotoUsesMultipartForm(t *testing.T) {
+	const testToken = "photo-token"
+	wantPhoto := []byte("synthetic PNG bytes")
+	wantMarkup := &InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{{
+		{Text: "Open", URL: "https://attendance.example/start"},
+	}}}
+	client, err := NewClientWithTransport(testToken, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(req.URL.Path, "/sendPhoto") {
+			t.Fatalf("request path = %q", req.URL.Path)
+		}
+		if !strings.HasPrefix(req.Header.Get("Content-Type"), "multipart/form-data;") {
+			t.Fatalf("content type = %q, want multipart/form-data", req.Header.Get("Content-Type"))
+		}
+		reader, err := req.MultipartReader()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields := make(map[string]string)
+		var gotPhoto []byte
+		var gotFilename string
+		for {
+			part, err := reader.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, err := io.ReadAll(part)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if part.FormName() == "photo" {
+				gotPhoto = value
+				gotFilename = part.FileName()
+			} else {
+				fields[part.FormName()] = string(value)
+			}
+		}
+		if fields["chat_id"] != "42" || fields["caption"] != "QR caption" {
+			t.Fatalf("multipart fields = %#v", fields)
+		}
+		var gotMarkup InlineKeyboardMarkup
+		if err := json.Unmarshal([]byte(fields["reply_markup"]), &gotMarkup); err != nil {
+			t.Fatalf("reply_markup = %q: %v", fields["reply_markup"], err)
+		}
+		if !bytes.Equal(gotPhoto, wantPhoto) || gotFilename != "qr.png" {
+			t.Fatalf("photo = %q filename=%q", gotPhoto, gotFilename)
+		}
+		if got := gotMarkup.InlineKeyboard[0][0].URL; got != wantMarkup.InlineKeyboard[0][0].URL {
+			t.Fatalf("markup URL = %q", got)
+		}
+		return jsonResponse(`{"ok":true}`), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SendPhoto(context.Background(), 42, wantPhoto, "QR caption", wantMarkup); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientSendPhotoErrorsAreTokenSafe(t *testing.T) {
+	const testToken = "photo-secret-token"
+	requestURL := apiBaseURL + "/bot" + testToken + "/sendPhoto"
+	for _, test := range []struct {
+		name      string
+		transport roundTripFunc
+	}{
+		{name: "transport", transport: func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("request failed: " + requestURL)
+		}},
+		{name: "malformed response", transport: func(*http.Request) (*http.Response, error) {
+			return jsonResponse("not-json"), nil
+		}},
+		{name: "non-2xx", transport: func(*http.Request) (*http.Response, error) {
+			response := jsonResponse(`{"ok":false,"description":"` + requestURL + `"}`)
+			response.StatusCode = http.StatusBadGateway
+			return response, nil
+		}},
+		{name: "telegram failure", transport: func(*http.Request) (*http.Response, error) {
+			return jsonResponse(`{"ok":false,"description":"` + requestURL + `"}`), nil
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, err := NewClientWithTransport(testToken, &http.Client{Transport: test.transport})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = client.SendPhoto(context.Background(), 42, []byte("photo"), "caption", nil)
+			if err == nil {
+				t.Fatal("SendPhoto succeeded unexpectedly")
+			}
+			if strings.Contains(err.Error(), testToken) || strings.Contains(err.Error(), requestURL) {
+				t.Fatalf("error leaked token or URL: %v", err)
+			}
+		})
 	}
 }
 
@@ -353,6 +486,125 @@ func TestConfigDoesNotSerializeSensitiveSettings(t *testing.T) {
 	}
 }
 
+type photoTestSender struct {
+	photoCalled   chan struct{}
+	messageCalled chan struct{}
+	photoErr      error
+	photo         []byte
+	caption       string
+	markup        *InlineKeyboardMarkup
+	messages      []string
+}
+
+func (s *photoTestSender) SendMessage(_ context.Context, _ int64, text string) error {
+	s.messages = append(s.messages, text)
+	if s.messageCalled != nil {
+		s.messageCalled <- struct{}{}
+	}
+	return nil
+}
+
+func (s *photoTestSender) AnswerCallbackQuery(context.Context, string) error { return nil }
+
+func (s *photoTestSender) SendPhoto(_ context.Context, _ int64, photo []byte, caption string, markup *InlineKeyboardMarkup) error {
+	s.photo = append([]byte(nil), photo...)
+	s.caption = caption
+	s.markup = markup
+	if s.photoCalled != nil {
+		s.photoCalled <- struct{}{}
+	}
+	return s.photoErr
+}
+
+type timeoutPhotoSender struct {
+	fallbackContextErr error
+	messages           []string
+}
+
+func (s *timeoutPhotoSender) SendMessage(ctx context.Context, _ int64, text string) error {
+	s.fallbackContextErr = ctx.Err()
+	s.messages = append(s.messages, text)
+	return nil
+}
+
+func (s *timeoutPhotoSender) AnswerCallbackQuery(context.Context, string) error { return nil }
+
+func (s *timeoutPhotoSender) SendPhoto(ctx context.Context, _ int64, _ []byte, _ string, _ *InlineKeyboardMarkup) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type fallbackOnlySender struct {
+	messageCalled chan struct{}
+	messages      []string
+}
+
+func (s *fallbackOnlySender) SendMessage(_ context.Context, _ int64, text string) error {
+	s.messages = append(s.messages, text)
+	s.messageCalled <- struct{}{}
+	return nil
+}
+
+func (s *fallbackOnlySender) AnswerCallbackQuery(context.Context, string) error { return nil }
+
+func TestDispatcherSendsPhotoToPhotoSender(t *testing.T) {
+	sender := &photoTestSender{photoCalled: make(chan struct{}, 1), messageCalled: make(chan struct{}, 1)}
+	dispatcher := NewDispatcher(sender, 1)
+	if !dispatcher.Enqueue([]Action{{Kind: SendPhoto, ChatID: 42, Photo: []byte("png"), Caption: "caption", ReplyMarkup: &InlineKeyboardMarkup{}}}) {
+		t.Fatal("photo action was not enqueued")
+	}
+	<-sender.photoCalled
+	dispatcher.Close()
+	if string(sender.photo) != "png" || sender.caption != "caption" || sender.markup == nil {
+		t.Fatalf("photo delivery = photo %q caption %q markup %#v", sender.photo, sender.caption, sender.markup)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("messages = %#v, want no fallback after successful photo", sender.messages)
+	}
+}
+
+func TestDispatcherFallsBackWhenPhotoSendFails(t *testing.T) {
+	sender := &photoTestSender{photoCalled: make(chan struct{}, 1), messageCalled: make(chan struct{}, 1), photoErr: errors.New("photo failed")}
+	dispatcher := NewDispatcher(sender, 1)
+	if !dispatcher.Enqueue([]Action{{Kind: SendPhoto, ChatID: 42, Photo: []byte("png"), FallbackText: "open link"}}) {
+		t.Fatal("photo action was not enqueued")
+	}
+	<-sender.messageCalled
+	dispatcher.Close()
+	if len(sender.messages) != 1 || sender.messages[0] != "open link" {
+		t.Fatalf("fallback messages = %#v", sender.messages)
+	}
+}
+
+func TestDispatcherUsesFreshContextForTimedOutPhotoFallback(t *testing.T) {
+	sender := &timeoutPhotoSender{}
+	dispatcher := &Dispatcher{sender: sender}
+	photoCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	dispatcher.deliverPhoto(photoCtx, Action{Kind: SendPhoto, ChatID: 42, Photo: []byte("png"), FallbackText: "open link"})
+
+	if sender.fallbackContextErr != nil {
+		t.Fatalf("fallback context error = %v, want nil", sender.fallbackContextErr)
+	}
+	if len(sender.messages) != 1 || sender.messages[0] != "open link" {
+		t.Fatalf("fallback messages = %#v", sender.messages)
+	}
+}
+
+func TestDispatcherFallsBackWhenSenderLacksPhotoSupport(t *testing.T) {
+	sender := &fallbackOnlySender{messageCalled: make(chan struct{}, 1)}
+	dispatcher := NewDispatcher(sender, 1)
+	if !dispatcher.Enqueue([]Action{{Kind: SendPhoto, ChatID: 42, Photo: []byte("png"), FallbackText: "open link"}}) {
+		t.Fatal("photo action was not enqueued")
+	}
+	<-sender.messageCalled
+	dispatcher.Close()
+	if len(sender.messages) != 1 || sender.messages[0] != "open link" {
+		t.Fatalf("fallback messages = %#v", sender.messages)
+	}
+}
+
 func TestDispatcherDoesNotBlockOnSender(t *testing.T) {
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
@@ -395,6 +647,8 @@ type fakePairingFlow struct {
 	fakePairingLookup
 	proposal     PairingProposal
 	confirmation PairingConfirmation
+	confirmErr   error
+	discardErr   error
 	seenName     string
 	seenAttempt  string
 	discarded    string
@@ -407,12 +661,15 @@ func (f *fakePairingFlow) ProposePairing(_ context.Context, _ int64, name string
 
 func (f *fakePairingFlow) ConfirmPairing(_ context.Context, _ int64, attemptID string) (PairingConfirmation, error) {
 	f.seenAttempt = attemptID
+	if f.confirmErr != nil {
+		return PairingConfirmation{}, f.confirmErr
+	}
 	return f.confirmation, nil
 }
 
 func (f *fakePairingFlow) DiscardPairing(_ context.Context, _ int64, attemptID string) error {
 	f.discarded = attemptID
-	return nil
+	return f.discardErr
 }
 
 func TestBotProposesExactlyOneStrongCandidateWithKeyboard(t *testing.T) {
@@ -560,5 +817,32 @@ func TestBotDeclineDiscardsProposal(t *testing.T) {
 	}})
 	if err != nil || flow.discarded != "attempt-1" || len(actions) != 2 || actions[1].Text != PairingDeclinedReply {
 		t.Fatalf("discarded=%q actions=%#v err=%v", flow.discarded, actions, err)
+	}
+}
+
+func TestBotCallbackServiceErrorsStillReturnAcknowledgement(t *testing.T) {
+	serviceErr := errors.New("pairing service unavailable")
+	for _, tc := range []struct {
+		name string
+		data string
+		flow func(*fakePairingFlow)
+	}{
+		{name: "discard", data: "p:n:attempt-1", flow: func(flow *fakePairingFlow) { flow.discardErr = serviceErr }},
+		{name: "confirm", data: "p:y:attempt-1", flow: func(flow *fakePairingFlow) { flow.confirmErr = serviceErr }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flow := &fakePairingFlow{}
+			tc.flow(flow)
+			actions, err := NewBot(flow).HandleUpdate(context.Background(), Update{CallbackQuery: &CallbackQuery{
+				ID: "callback-1", From: &User{ID: 42}, Data: tc.data,
+				Message: &Message{Chat: Chat{ID: 42, Type: "private"}},
+			}})
+			if !errors.Is(err, serviceErr) {
+				t.Fatalf("error = %v, want service error", err)
+			}
+			if len(actions) != 1 || actions[0].Kind != AnswerCallbackQuery || actions[0].CallbackQueryID != "callback-1" {
+				t.Fatalf("actions = %#v, want acknowledgement only", actions)
+			}
+		})
 	}
 }

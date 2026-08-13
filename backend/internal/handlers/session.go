@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
+	sessionservice "github.com/davidlivingston/go-nextjs-starter/backend/internal/services/sessions"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 	"github.com/go-chi/chi/v5"
@@ -21,12 +23,18 @@ import (
 )
 
 type SessionHandler struct {
-	db  *database.DB
-	hub *sse.Hub
+	db      *database.DB
+	hub     *sse.Hub
+	service *sessionservice.Service
 }
 
 func NewSessionHandler(db *database.DB, hub *sse.Hub) *SessionHandler {
-	return &SessionHandler{db: db, hub: hub}
+	config := telegram.LoadConfig()
+	return &SessionHandler{
+		db:      db,
+		hub:     hub,
+		service: sessionservice.NewService(db, config.BotUsername),
+	}
 }
 
 type CreateSessionRequest struct {
@@ -68,7 +76,7 @@ func setSessionQRVisibility(session *models.AttendanceSession, user *models.User
 	session.TelegramLink = telegramSessionLink(session.DeepLinkCode)
 }
 
-// CreateSession creates a new attendance session with QR code
+// CreateSession creates a new attendance session with QR code.
 func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
@@ -82,86 +90,26 @@ func (h *SessionHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate scope
-	if req.Scope != models.SessionScopeUnitWide && req.Scope != models.SessionScopeBatterySpecific {
-		http.Error(w, "Invalid scope (use unit_wide or battery_specific; for custom lists use /sessions/custom/create)", http.StatusBadRequest)
-		return
-	}
-
-	// Validate batteries if battery_specific
-	if req.Scope == models.SessionScopeBatterySpecific {
-		if len(req.Batteries) == 0 {
-			http.Error(w, "Batteries required for battery-specific sessions", http.StatusBadRequest)
+	session, err := h.service.Create(r.Context(), sessionservice.CreateRequest{
+		Name:      req.Name,
+		Scope:     req.Scope,
+		Batteries: req.Batteries,
+		EndTime:   req.EndTime,
+		CreatedBy: user.ID,
+	})
+	if err != nil {
+		if errors.Is(err, sessionservice.ErrInvalidRequest) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		for _, battery := range req.Batteries {
-			if battery != models.BatteryHQ && battery != models.BatteryAlpha && battery != models.BatteryBravo {
-				http.Error(w, fmt.Sprintf("Invalid battery: %s", battery), http.StatusBadRequest)
-				return
-			}
-		}
-	}
-
-	ctx := context.Background()
-	sessionID := generateID()
-	qrSecret := generateSessionToken() // Use session token generator for QR secret
-	deeplinkCode, err := deeplink.GenerateCode()
-	if err != nil {
-		http.Error(w, "Failed to generate session deep-link code", http.StatusInternalServerError)
-		return
-	}
-	now := time.Now()
-
-	// Store QR secret for frontend to construct URL
-	qrCode := fmt.Sprintf("%s:%s", sessionID, qrSecret)
-
-	// Insert session and its deep-link code atomically.
-	_, err = h.db.Pool.Exec(ctx, `
-		INSERT INTO attendance_session (
-			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, deeplink_code, "createdAt", "updatedAt"
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12)
-	`, sessionID, req.Name, qrCode, qrSecret, req.Scope,
-		req.Batteries, models.SessionStatusActive, user.ID, req.EndTime, deeplinkCode, now, now)
-
-	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	// Get the actual start_time from database (which defaults to NOW())
-	var startTime time.Time
-	err = h.db.Pool.QueryRow(ctx, `SELECT start_time FROM attendance_session WHERE id = $1`, sessionID).Scan(&startTime)
-	if err != nil {
-		http.Error(w, "Failed to retrieve session", http.StatusInternalServerError)
-		return
-	}
-
-	session := models.AttendanceSession{
-		ID:           sessionID,
-		Name:         req.Name,
-		QRCode:       qrCode,
-		QRCodeSecret: qrSecret,
-		Scope:        req.Scope,
-		Batteries:    req.Batteries,
-		Status:       models.SessionStatusActive,
-		CreatedBy:    user.ID,
-		StartTime:    startTime,
-		EndTime:      req.EndTime,
-		DeepLinkCode: deeplinkCode,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-
 	setSessionQRVisibility(&session, user)
-	response := SessionResponse{
-		AttendanceSession: session,
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
+	if err := json.NewEncoder(w).Encode(SessionResponse{AttendanceSession: session}); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
 }
@@ -256,48 +204,15 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetSession retrieves a single session by ID
+// GetSession retrieves a single session by ID.
 func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 	user, _ := middleware.GetUserFromContext(r.Context())
 	sessionID := chi.URLParam(r, "id")
 
-	var session models.AttendanceSession
-	var closedAt *time.Time
-	var deeplinkCode *string
-
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT 
-			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, closed_at, deeplink_code,
-			"createdAt", "updatedAt"
-		FROM attendance_session
-		WHERE id = $1
-	`, sessionID).Scan(
-		&session.ID,
-		&session.Name,
-		&session.QRCode,
-		&session.QRCodeSecret,
-		&session.Scope,
-		&session.Batteries,
-		&session.Status,
-		&session.CreatedBy,
-		&session.StartTime,
-		&session.EndTime,
-		&closedAt,
-		&deeplinkCode,
-		&session.CreatedAt,
-		&session.UpdatedAt,
-	)
-
+	session, err := h.service.Get(r.Context(), sessionID)
 	if err != nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
-	}
-
-	session.ClosedAt = closedAt
-	if deeplinkCode != nil {
-		session.DeepLinkCode = *deeplinkCode
 	}
 	setSessionQRVisibility(&session, user)
 
@@ -307,58 +222,21 @@ func (h *SessionHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GetActiveSessions retrieves all active sessions
+// GetActiveSessions retrieves all active sessions.
 func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 	user, _ := middleware.GetUserFromContext(r.Context())
-
-	rows, err := h.db.Pool.Query(ctx, `
-		SELECT 
-			id, name, qr_code, qr_code_secret, scope, batteries,
-			status, created_by, start_time, end_time, closed_at, deeplink_code,
-			"createdAt", "updatedAt"
-		FROM attendance_session
-		WHERE status = 'active'
-		ORDER BY start_time DESC
-	`)
+	sessions, err := h.service.ListActive(r.Context(), user)
 	if err != nil {
 		http.Error(w, "Failed to fetch active sessions", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-
-	var sessions []models.AttendanceSession
-	for rows.Next() {
-		var session models.AttendanceSession
-		var closedAt *time.Time
-		var deeplinkCode *string
-
-		err := rows.Scan(
-			&session.ID,
-			&session.Name,
-			&session.QRCode,
-			&session.QRCodeSecret,
-			&session.Scope,
-			&session.Batteries,
-			&session.Status,
-			&session.CreatedBy,
-			&session.StartTime,
-			&session.EndTime,
-			&closedAt,
-			&deeplinkCode,
-			&session.CreatedAt,
-			&session.UpdatedAt,
-		)
-		if err != nil {
-			continue
-		}
-
-		session.ClosedAt = closedAt
-		if deeplinkCode != nil {
-			session.DeepLinkCode = *deeplinkCode
-		}
-		setSessionQRVisibility(&session, user)
-		sessions = append(sessions, session)
+	for i := range sessions {
+		setSessionQRVisibility(&sessions[i], user)
+	}
+	// Preserve the dashboard's historical null JSON shape for an empty result.
+	// Telegram adapters may still consume the service's non-nil empty slice.
+	if len(sessions) == 0 {
+		sessions = nil
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -367,47 +245,31 @@ func (h *SessionHandler) GetActiveSessions(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// CloseSession closes an active session
+// CloseSession closes an active session.
 func (h *SessionHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
-
 	user, ok := middleware.GetUserFromContext(r.Context())
 	if !ok {
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
 
-	// Check if session exists and get creator
-	var createdBy string
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT created_by FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&createdBy)
-
+	err := h.service.Close(r.Context(), sessionID, user)
 	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+		switch {
+		case errors.Is(err, sessionservice.ErrSessionNotFound):
+			http.Error(w, "Session not found", http.StatusNotFound)
+		case errors.Is(err, sessionservice.ErrSessionNotOwner):
+			http.Error(w, "Insufficient permissions", http.StatusForbidden)
+		case errors.Is(err, sessionservice.ErrSessionClosed):
+			http.Error(w, "Session is not active", http.StatusBadRequest)
+		default:
+			http.Error(w, "Failed to close session", http.StatusInternalServerError)
+		}
 		return
 	}
 
-	// Only creator or superadmin can close
-	if createdBy != user.ID && !user.IsSuperadmin {
-		http.Error(w, "Insufficient permissions", http.StatusForbidden)
-		return
-	}
-
-	now := time.Now()
-	_, err = h.db.Pool.Exec(ctx, `
-		UPDATE attendance_session
-		SET status = 'closed', closed_at = $1, "updatedAt" = $2
-		WHERE id = $3 AND status = 'active'
-	`, now, now, sessionID)
-
-	if err != nil {
-		http.Error(w, "Failed to close session", http.StatusInternalServerError)
-		return
-	}
-
-	// Broadcast SSE event for live updates
+	// Broadcast SSE event for live updates after the close commits.
 	if h.hub != nil {
 		h.hub.Broadcast(sessionID, sse.Event{
 			Type: sse.EventTypeSessionClosed,

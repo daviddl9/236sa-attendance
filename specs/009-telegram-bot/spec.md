@@ -106,6 +106,34 @@ A commander at the parade square, holding only a phone, marks the soldiers who a
 
 ---
 
+### User Story 5 - Commander runs attendance from Telegram (Priority: P2)
+
+A paired Tier 2 battery NCO, Tier 3 unit commander, or superadmin can use the bot's private-chat inline-button surface at the parade square. The existing authenticated dashboard remains available for session creation, boards, roster import, pairing review, exports, and attendance fallback; Telegram adds an in-chat admin surface rather than replacing it.
+
+**Independent Test**: Against a disposable PostgreSQL database, drive the production `Bot.HandleUpdate` boundary with a fake Telegram transport and assert the database rows, scopes, attribution, persistent context, callback acknowledgements, URL buttons, QR PNG, and safe rejection responses for every role.
+
+**Acceptance Scenarios**:
+
+1. **Given** a paired Tier 3 creator, **when** they complete the name, battery-specific scope, battery, duration, and confirmation wizard, **then** exactly one active session is committed with the selected scope, end time, creator, random Telegram deep-link code, URL button, and valid PNG QR photo. Repeating the confirmation creates no second session.
+2. **Given** a new store/router instance after creation, **when** the creator opens active events and selects the event, **then** the selected session and status state reload from `telegram_chat_context` rather than process memory.
+3. **Given** a paired Tier 2 commander, **when** they open `/menu`, **then** they see active events but no create or close control. Their active-event/status/missing rows include only sessions and soldiers authorized by their own battery; names outside that battery are not returned.
+4. **Given** an unpaired target within a Tier 2 commander's authority, **when** the commander confirms a manual mark, **then** one attendance row is recorded with `marking_method=manual` and `marked_by` equal to that commander. The commander can undo that row, but cannot undo a manual row created by another commander.
+5. **Given** a paired Tier 3 commander viewing another creator's event, **when** they attempt to close it, **then** the event remains active and the bot returns a safe unavailable response. **Given** a superadmin, **when** they confirm the same close, **then** the event becomes closed and selected context is cleared.
+6. **Given** a missing-row callback captured before closure, **when** it is replayed after closure, **then** the callback is acknowledged but no attendance row is inserted and no session or soldier name is leaked.
+7. **Given** a paired soldier and an active Telegram deep-link code, **when** they send `/start <code>` repeatedly, **then** the first request records one `telegram_scan` row with no manual attribution and later requests report already marked without duplicates.
+8. **Given** malformed updates, an unknown/unpaired account, a wrong webhook secret, or a group/channel update, **when** they reach the bot boundary, **then** no admin action is delivered and no roster or event name is disclosed.
+9. **Given** any Telegram admin callback, **when** it is delivered, **then** the bot acknowledges it promptly, rechecks the current pairing, role, scope, session, and target, and treats stale/unauthorized resources as unavailable rather than trusting callback data.
+
+The Telegram role boundary is:
+
+| Role | Create/close | View status | Manual mark/undo |
+|---|---:|---:|---:|
+| Tier 2 commander | No | Own battery | Own battery |
+| Tier 3 unit commander | Create and close own events | Unit | Unit |
+| Superadmin | Create and close permitted events | Permitted scope | Permitted scope |
+
+---
+
 ### Edge Cases
 
 - **The deep link payload cannot carry the current QR token.** Today's token is `sessionID:secret`, 97 characters including a colon. Telegram limits `/start` payloads to 64 characters from `A-Za-z0-9_-`. A shorter session code is required.

@@ -3,20 +3,23 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	reportservice "github.com/davidlivingston/go-nextjs-starter/backend/internal/services/reports"
 	"github.com/go-chi/chi/v5"
 )
 
 type ReportsHandler struct {
-	db *database.DB
+	db      *database.DB
+	service *reportservice.Service
 }
 
 func NewReportsHandler(db *database.DB) *ReportsHandler {
-	return &ReportsHandler{db: db}
+	return &ReportsHandler{db: db, service: reportservice.NewService(db)}
 }
 
 type SessionAnalytics struct {
@@ -65,88 +68,50 @@ func batteryScopeForAnalytics(user *models.User) *string {
 	return &empty
 }
 
-// GetSessionAnalytics returns detailed analytics for a session
+// GetSessionAnalytics returns detailed analytics for a session.
 func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
+	ctx := r.Context()
 	sessionID := chi.URLParam(r, "id")
+	currentUser, _ := middleware.GetUserFromContext(ctx)
 
-	// Verify session exists
-	var sessionScope string
-	var sessionBatteries []string
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT scope, batteries FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&sessionScope, &sessionBatteries)
-
+	// Use the shared service for both authorization and the scoped roster. The
+	// web response still enriches missing users with active personnel status;
+	// Telegram callers only receive the service's status-free rows.
+	summary, err := h.service.Summary(ctx, sessionID, currentUser)
 	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+		if errors.Is(err, reportservice.ErrSessionNotFound) {
+			http.Error(w, "Session not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+		}
 		return
 	}
-
-	// Tier 1–2 users see only their own battery's slice of the analytics.
-	currentUser, _ := middleware.GetUserFromContext(r.Context())
-	batteryScope := batteryScopeForAnalytics(currentUser)
-
-	// Build user query based on session scope + optional battery scope for Tier 1–2.
-	var userQuery string
-	var userArgs []any
-	switch sessionScope {
-	case models.SessionScopeCustomList:
-		// Custom lists are hand-picked, so include superadmins (e.g. CPT/MAJ)
-		// who the creator explicitly added.
-		if batteryScope != nil {
-			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u.battery = $2 AND u.verified = true`
-			userArgs = []any{sessionID, *batteryScope}
-		} else {
-			userQuery = `SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u.verified = true`
-			userArgs = []any{sessionID}
-		}
-	case models.SessionScopeUnitWide:
-		if batteryScope != nil {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true AND battery = $1`
-			userArgs = []any{*batteryScope}
-		} else {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true`
-		}
-	default: // battery_specific
-		if batteryScope != nil {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true AND battery = $1`
-			userArgs = []any{*batteryScope}
-		} else {
-			userQuery = `SELECT id, "full_name", rank, battery FROM "user" WHERE "is_superadmin" = false AND verified = true AND battery = ANY($1)`
-			userArgs = []any{sessionBatteries}
-		}
-	}
-
-	// Get all eligible users
-	rows, err := h.db.Pool.Query(ctx, userQuery, userArgs...)
+	roster, err := h.service.EligibleUsers(ctx, sessionID, currentUser)
 	if err != nil {
 		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
 
-	var allUsers []UserInfo
-	userMap := make(map[string]UserInfo)
-	for rows.Next() {
-		var user UserInfo
-		var fullName, rank, battery *string
-		err := rows.Scan(&user.ID, &fullName, &rank, &battery)
-		if err != nil {
-			continue
+	allUsers := make([]UserInfo, 0, len(roster))
+	for _, row := range roster {
+		user := UserInfo{ID: row.ID}
+		if row.Name != "" {
+			name := row.Name
+			user.FullName = &name
 		}
-		user.FullName = fullName
-		user.Rank = rank
-		user.Battery = battery
+		if row.Rank != "" {
+			rank := row.Rank
+			user.Rank = &rank
+		}
+		if row.Battery != "" {
+			battery := row.Battery
+			user.Battery = &battery
+		}
 		allUsers = append(allUsers, user)
-		userMap[user.ID] = user
 	}
 
-	// Get marked attendance
-	rows, err = h.db.Pool.Query(ctx, `
+	// Get marked attendance.
+	rows, err := h.db.Pool.Query(ctx, `
 		SELECT user_id FROM attendance_record WHERE session_id = $1
 	`, sessionID)
 	if err != nil {
@@ -164,7 +129,7 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		presentUserIDs[userID] = true
 	}
 
-	// Find missing and present users
+	// Find missing and present users.
 	var missingUsers []UserInfo
 	var presentUsers []UserInfo
 	var missingUserIDs []string
@@ -177,18 +142,8 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Calculate statistics. presentCount is counted from the scoped eligible
-	// set (presentUsers), not the raw attendance rows, so battery-scoped
-	// viewers get a present count and percentage consistent with the roster
-	// they can see.
-	totalUsers := len(allUsers)
-	presentCount := len(presentUsers)
-	var attendancePercentage float64
-	if totalUsers > 0 {
-		attendancePercentage = float64(presentCount) / float64(totalUsers) * 100
-	}
-
-	// Fetch active statuses for missing users
+	// Fetch active statuses for missing users only in the existing web
+	// response; the shared Telegram rows intentionally contain no statuses.
 	activeStatuses := GetActiveStatusesForUsers(ctx, h.db, missingUserIDs)
 	for i := range missingUsers {
 		if status, ok := activeStatuses[missingUsers[i].ID]; ok {
@@ -196,7 +151,7 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Calculate by battery
+	// Keep the existing dashboard's per-battery and per-rank breakdowns.
 	byBattery := make(map[string]BatteryStats)
 	for _, user := range allUsers {
 		if user.Battery == nil {
@@ -211,7 +166,6 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		byBattery[battery] = stats
 	}
 
-	// Calculate by rank
 	byRank := make(map[string]RankStats)
 	for _, user := range allUsers {
 		if user.Rank == nil {
@@ -227,9 +181,9 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	}
 
 	analytics := SessionAnalytics{
-		TotalUsers:           totalUsers,
-		PresentCount:         presentCount,
-		AttendancePercentage: attendancePercentage,
+		TotalUsers:           summary.Total,
+		PresentCount:         summary.Present,
+		AttendancePercentage: summary.Percentage,
 		MissingUsers:         missingUsers,
 		PresentUsers:         presentUsers,
 		ByBattery:            byBattery,
@@ -242,110 +196,41 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// GetMissingUsers returns list of users who haven't marked attendance
+// GetMissingUsers returns list of users who haven't marked attendance.
 func (h *ReportsHandler) GetMissingUsers(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
+	actor, _ := middleware.GetUserFromContext(r.Context())
+	search := r.URL.Query().Get("q")
 
-	// Get session scope
-	var sessionScope string
-	var sessionBatteries []string
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT scope, batteries FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&sessionScope, &sessionBatteries)
-
-	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-
-	// Tier 2 battery scoping for missing list.
-	missingUser, _ := middleware.GetUserFromContext(r.Context())
-	var missingBatteryScope *string
-	if missingUser != nil && missingUser.GetTier() == models.TierBatteryNCO && missingUser.Battery != nil {
-		missingBatteryScope = missingUser.Battery
-	}
-
-	var userQuery string
-	var userArgs []any
-	switch sessionScope {
-	case models.SessionScopeCustomList:
-		// Custom lists are hand-picked, so include superadmins (e.g. CPT/MAJ)
-		// who the creator explicitly added.
-		if missingBatteryScope != nil {
-			userQuery = `
-				SELECT u.id, u."full_name", u.rank, u.battery
-				FROM "user" u
-				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u.battery = $2 AND u.verified = true
-				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
-			`
-			userArgs = []any{sessionID, *missingBatteryScope}
-		} else {
-			userQuery = `
-				SELECT u.id, u."full_name", u.rank, u.battery
-				FROM "user" u
-				JOIN session_participants sp ON sp.user_id = u.id
-				WHERE sp.session_id = $1 AND u.verified = true
-				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
-			`
-			userArgs = []any{sessionID}
-		}
-	case models.SessionScopeUnitWide:
-		if missingBatteryScope != nil {
-			userQuery = `
-				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.verified = true AND u.battery = $1
-				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
-			`
-			userArgs = []any{*missingBatteryScope, sessionID}
-		} else {
-			userQuery = `
-				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.verified = true
-				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $1 AND ar.user_id = u.id)
-			`
-			userArgs = []any{sessionID}
-		}
-	default: // battery_specific
-		if missingBatteryScope != nil {
-			userQuery = `
-				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.verified = true AND u.battery = $1
-				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
-			`
-			userArgs = []any{*missingBatteryScope, sessionID}
-		} else {
-			userQuery = `
-				SELECT u.id, u."full_name", u.rank, u.battery FROM "user" u
-				WHERE u."is_superadmin" = false AND u.verified = true AND u.battery = ANY($1)
-				AND NOT EXISTS (SELECT 1 FROM attendance_record ar WHERE ar.session_id = $2 AND ar.user_id = u.id)
-			`
-			userArgs = []any{sessionBatteries, sessionID}
-		}
-	}
-
-	rows, err := h.db.Pool.Query(ctx, userQuery, userArgs...)
-	if err != nil {
-		http.Error(w, "Failed to fetch missing users", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
+	// The shared service bounds each query to ten rows for Telegram. The web
+	// dashboard historically returned the complete list, so walk all pages here
+	// and keep the existing JSON response shape.
+	page := 1
 	var missingUsers []UserInfo
-	for rows.Next() {
-		var user UserInfo
-		var fullName, rank, battery *string
-		err := rows.Scan(&user.ID, &fullName, &rank, &battery)
+	for {
+		result, err := h.service.Missing(r.Context(), sessionID, actor, search, page, 10)
 		if err != nil {
-			continue
+			if errors.Is(err, reportservice.ErrSessionNotFound) {
+				http.Error(w, "Session not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "Failed to fetch missing users", http.StatusInternalServerError)
+			}
+			return
 		}
-		user.FullName = fullName
-		user.Rank = rank
-		user.Battery = battery
-		missingUsers = append(missingUsers, user)
+		for _, row := range result.Rows {
+			fullName, rank, battery := row.Name, row.Rank, row.Battery
+			missingUsers = append(missingUsers, UserInfo{
+				ID:       row.ID,
+				FullName: &fullName,
+				Rank:     &rank,
+				Battery:  &battery,
+			})
+		}
+		if !result.HasNext {
+			break
+		}
+		page++
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(missingUsers); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
