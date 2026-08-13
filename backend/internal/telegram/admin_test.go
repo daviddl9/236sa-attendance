@@ -11,21 +11,31 @@ import (
 )
 
 type routerAdminStore struct {
-	actor      AdminActor
-	actorFound bool
-	contexts   map[int64]AdminContext
-	events     []ActiveEvent
-	created    []AdminDraft
-	status     AttendancePage
-	marks      []AdminUser
-	actorErr   error
-	statusErr  error
-	markErr    error
-	undoErr    error
-	closeErr   error
-	contextErr error
-	undoCalls  []string
-	markCalls  []string
+	actor                     AdminActor
+	actorFound                bool
+	contexts                  map[int64]AdminContext
+	events                    []ActiveEvent
+	created                   []AdminDraft
+	status                    AttendancePage
+	marks                     []AdminUser
+	actorErr                  error
+	statusErr                 error
+	markErr                   error
+	undoErr                   error
+	closeErr                  error
+	contextErr                error
+	undoCalls                 []string
+	markCalls                 []string
+	clearCalls                int
+	conditionalClearCalls     int
+	replaceContextOnClose     bool
+	replacementContextOnClose AdminContext
+	statusCalls               []adminStatusCall
+}
+
+type adminStatusCall struct {
+	query string
+	page  int
 }
 
 func (s *routerAdminStore) Actor(_ context.Context, pairing Pairing) (AdminActor, bool, error) {
@@ -72,6 +82,7 @@ func (s *routerAdminStore) SaveContext(_ context.Context, next AdminContext) err
 }
 
 func (s *routerAdminStore) ClearContext(_ context.Context, telegramID int64) error {
+	s.clearCalls++
 	if s.contextErr != nil {
 		return s.contextErr
 	}
@@ -84,6 +95,7 @@ func (s *routerAdminStore) ClearContext(_ context.Context, telegramID int64) err
 }
 
 func (s *routerAdminStore) ClearContextForSession(_ context.Context, telegramID int64, sessionID string, expectedVersion int64) error {
+	s.conditionalClearCalls++
 	current, err := s.LoadContext(context.Background(), telegramID)
 	if err != nil {
 		return err
@@ -91,7 +103,8 @@ func (s *routerAdminStore) ClearContextForSession(_ context.Context, telegramID 
 	if current.SessionID != sessionID || current.Version != expectedVersion {
 		return ErrAdminContextConflict
 	}
-	return s.ClearContext(context.Background(), telegramID)
+	s.contexts[telegramID] = AdminContext{TelegramID: telegramID, State: "idle", Version: current.Version + 1}
+	return nil
 }
 
 func (s *routerAdminStore) ActiveEvents(_ context.Context, _ AdminActor) ([]ActiveEvent, error) {
@@ -106,11 +119,22 @@ func (s *routerAdminStore) CreateEvent(_ context.Context, _ AdminActor, draft Ad
 	return s.events[len(s.events)-1], nil
 }
 
-func (s *routerAdminStore) CloseEvent(_ context.Context, _ AdminActor, _ string) error {
+func (s *routerAdminStore) CloseEvent(_ context.Context, actor AdminActor, _ string) error {
+	if s.replaceContextOnClose {
+		if s.contexts == nil {
+			s.contexts = map[int64]AdminContext{}
+		}
+		replacement := s.replacementContextOnClose
+		if replacement.TelegramID == 0 {
+			replacement.TelegramID = actor.Pairing.TelegramID
+		}
+		s.contexts[replacement.TelegramID] = replacement
+	}
 	return s.closeErr
 }
 
 func (s *routerAdminStore) Status(_ context.Context, _ AdminActor, _, query string, page int) (AttendancePage, error) {
+	s.statusCalls = append(s.statusCalls, adminStatusCall{query: query, page: page})
 	if s.statusErr != nil {
 		return AttendancePage{}, s.statusErr
 	}
@@ -324,7 +348,18 @@ func TestAdminCancelSelectionStatusSearchMarkUndoAndStale(t *testing.T) {
 	if err != nil || !strings.Contains(actionText(actions), "search:person") {
 		t.Fatalf("search actions=%#v err=%v", actions, err)
 	}
-	if _, _, err = router.HandleCallback(ctx, adminCallback("a:mark:event-1:person-a"), adminPairing()); err != nil {
+	actions, _, err = router.HandleCallback(ctx, adminCallback("a:mark:event-1:person-a"), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.markCalls) != 0 {
+		t.Fatalf("candidate tap called MarkManual: %v", store.markCalls)
+	}
+	confirmData := callbackData(actions, "Mark present")
+	if confirmData == "" {
+		t.Fatalf("confirmation actions=%#v", actions)
+	}
+	if _, _, err = router.HandleCallback(ctx, adminCallback(confirmData), adminPairing()); err != nil {
 		t.Fatal(err)
 	}
 	if len(store.markCalls) != 1 {
@@ -405,4 +440,299 @@ func TestAdminDurationsUseExactValuesAndCallbackBounds(t *testing.T) {
 	if time.Hour <= 0 {
 		t.Fatal("time package unavailable")
 	}
+}
+
+func TestAdminCompactCallbacksForRealisticHexIDs(t *testing.T) {
+	eventID := strings.Repeat("ab", 16)
+	targetID := strings.Repeat("cd", 16)
+	store := adminStoreWithTier(models.TierUnitCommander)
+	store.events = []ActiveEvent{{ID: eventID, Name: "Real event", TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	store.status = AttendancePage{
+		SessionName: "Real event", Total: 1, Missing: 1, Page: 1,
+		Rows: []AdminUser{{ID: targetID, Name: "Real target"}},
+	}
+	router := NewAdminRouter(store)
+	ctx := context.Background()
+
+	actions, _, err := router.HandleCallback(ctx, adminCallback("a:events"), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectData := callbackData(actions, "Real event")
+	if selectData == "" || len([]byte(selectData)) > 64 {
+		t.Fatalf("compact event callback = %q (len=%d)", selectData, len([]byte(selectData)))
+	}
+	_, args, ok := parseAdminCallback(selectData)
+	if !ok || len(args) != 1 {
+		t.Fatalf("parse compact event callback %q", selectData)
+	}
+	if got := callbackSession(args); got != eventID {
+		t.Fatalf("decoded event ID = %q, want %q", got, eventID)
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback(selectData), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	actions, _, err = router.HandleCallback(ctx, adminCallback(callbackData(actionsForSelected(store, router, ctx), "View status")), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markData := callbackData(actions, "Real target")
+	if markData == "" || len([]byte(markData)) > 64 {
+		t.Fatalf("compact mark callback = %q (len=%d)", markData, len([]byte(markData)))
+	}
+	_, markArgs, ok := parseAdminCallback(markData)
+	if !ok || len(markArgs) != 2 {
+		t.Fatalf("parse compact mark callback %q", markData)
+	}
+	gotSession, gotTarget, valid := callbackTarget(markArgs)
+	if !valid || gotSession != eventID || gotTarget != targetID {
+		t.Fatalf("decoded mark IDs = %q/%q valid=%v, want %q/%q", gotSession, gotTarget, valid, eventID, targetID)
+	}
+	for _, action := range actions {
+		if action.ReplyMarkup == nil {
+			continue
+		}
+		for _, row := range action.ReplyMarkup.InlineKeyboard {
+			for _, button := range row {
+				if button.CallbackData != "" && len([]byte(button.CallbackData)) > 64 {
+					t.Fatalf("generated callback exceeds Telegram limit: %q", button.CallbackData)
+				}
+			}
+		}
+	}
+}
+
+// actionsForSelected is intentionally tiny: it obtains the selected-event
+// menu without relying on callback data from the preceding assertion.
+func actionsForSelected(store *routerAdminStore, router *AdminRouter, ctx context.Context) []Action {
+	actions, _, _ := router.HandleCallback(ctx, adminCallback("a:event:"+store.events[0].ID), adminPairing())
+	return actions
+}
+
+func TestParseAdminCallbackRejectsOversizedInboundData(t *testing.T) {
+	if _, _, ok := parseAdminCallback("a:events:" + strings.Repeat("x", 62)); ok {
+		t.Fatal("oversized admin callback was accepted")
+	}
+	if _, _, ok := parseAdminCallback(strings.Repeat("a", 65)); ok {
+		t.Fatal("65-byte admin callback was accepted")
+	}
+	if _, _, ok := parseAdminCallback("a:events"); !ok {
+		t.Fatal("valid admin callback was rejected")
+	}
+}
+
+func TestAdminCandidateMarkRequiresConfirmation(t *testing.T) {
+	store := adminStoreWithTier(models.TierUnitCommander)
+	store.events = []ActiveEvent{{ID: "event-1", Name: "First Parade", TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	store.status = AttendancePage{SessionName: "First Parade", Total: 1, Missing: 1, Page: 1, Rows: []AdminUser{{ID: "person-a", Name: "Person A"}}}
+	router := NewAdminRouter(store)
+	ctx := context.Background()
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:event:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	actions, _, err := router.HandleCallback(ctx, adminCallback("a:status:event-1:1"), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidateData := callbackData(actions, "Person A")
+	if candidateData == "" {
+		t.Fatal("missing candidate callback")
+	}
+	actions, _, err = router.HandleCallback(ctx, adminCallback(candidateData), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.markCalls) != 0 {
+		t.Fatalf("first candidate tap called MarkManual: %v", store.markCalls)
+	}
+	pending, err := store.LoadContext(ctx, adminPairing().TelegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.State != adminStateConfirmingMark {
+		t.Fatalf("pending state = %q, want %q", pending.State, adminStateConfirmingMark)
+	}
+	confirmData := callbackData(actions, "Mark present")
+	if confirmData == "" {
+		t.Fatal("missing mark confirmation callback")
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback(confirmData), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.markCalls) != 1 || store.markCalls[0] != "event-1:person-a" {
+		t.Fatalf("confirm MarkManual calls = %v", store.markCalls)
+	}
+	selected, err := store.LoadContext(ctx, adminPairing().TelegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.State != adminStateSelected {
+		t.Fatalf("state after confirm = %q, want %q", selected.State, adminStateSelected)
+	}
+
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:status:event-1:1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	actions, _, err = router.HandleCallback(ctx, adminCallback(candidateData), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelData := callbackData(actions, "Cancel")
+	if cancelData == "" {
+		t.Fatal("missing mark cancellation callback")
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback(cancelData), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.markCalls) != 1 {
+		t.Fatalf("cancel called MarkManual: %v", store.markCalls)
+	}
+	selected, err = store.LoadContext(ctx, adminPairing().TelegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.State != adminStateSelected {
+		t.Fatalf("state after cancel = %q, want %q", selected.State, adminStateSelected)
+	}
+}
+
+func TestAdminCloseUsesConditionalContextClear(t *testing.T) {
+	store := adminStoreWithTier(models.TierUnitCommander)
+	store.events = []ActiveEvent{{ID: "event-1", Name: "Owned event", CreatedBy: adminPairing().UserID, TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	router := NewAdminRouter(store)
+	ctx := context.Background()
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:event:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:close:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:close-confirm:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if store.conditionalClearCalls != 1 || store.clearCalls != 0 {
+		t.Fatalf("conditional clear calls=%d unconditional=%d", store.conditionalClearCalls, store.clearCalls)
+	}
+
+	store = adminStoreWithTier(models.TierUnitCommander)
+	store.events = []ActiveEvent{{ID: "event-1", Name: "Owned event", CreatedBy: adminPairing().UserID, TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	router = NewAdminRouter(store)
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:event:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:close:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.LoadContext(ctx, adminPairing().TelegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.replaceContextOnClose = true
+	store.replacementContextOnClose = AdminContext{TelegramID: adminPairing().TelegramID, SessionID: "new-event", State: adminStateSelected, Version: current.Version + 1, Draft: AdminDraft{Name: "new search"}}
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:close-confirm:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := store.LoadContext(ctx, adminPairing().TelegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.SessionID != "new-event" || replacement.Draft.Name != "new search" || replacement.State != adminStateSelected {
+		t.Fatalf("newer replacement context was erased: %+v", replacement)
+	}
+}
+
+func TestCanCloseEventFailsClosedForBlankOwner(t *testing.T) {
+	actor := AdminActor{Pairing: adminPairing(), Tier: models.TierUnitCommander}
+	if canCloseEvent(actor, ActiveEvent{ID: "event-1"}) {
+		t.Fatal("blank owner was treated as owned")
+	}
+	if !canCloseEvent(actor, ActiveEvent{ID: "event-1", CreatedBy: actor.Pairing.UserID}) {
+		t.Fatal("legitimate owner could not close event")
+	}
+	if !canCloseEvent(AdminActor{Pairing: actor.Pairing, Tier: models.TierSuperadmin}, ActiveEvent{ID: "event-1"}) {
+		t.Fatal("superadmin blank-owner close was rejected")
+	}
+}
+
+func TestAdminUnavailableSelectionClearsAndReturnsActiveMenu(t *testing.T) {
+	store := adminStoreWithTier(models.TierUnitCommander)
+	store.events = []ActiveEvent{{ID: "event-1", Name: "First Parade", TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	router := NewAdminRouter(store)
+	ctx := context.Background()
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:event:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	store.events = nil
+	actions, _, err := router.HandleCallback(ctx, adminCallback("a:event:event-1"), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(actionText(actions), "Active events") || strings.Contains(actionText(actions), "no longer available") {
+		t.Fatalf("unavailable selection actions = %#v", actions)
+	}
+	selected, err := store.LoadContext(ctx, adminPairing().TelegramID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.SessionID != "" || selected.State != adminStateIdle {
+		t.Fatalf("unavailable selection context = %+v", selected)
+	}
+
+	store = adminStoreWithTier(models.TierUnitCommander)
+	expired := time.Now().Add(-time.Minute)
+	store.events = []ActiveEvent{{ID: "expired-event", Name: "Expired event", EndTime: &expired, TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	router = NewAdminRouter(store)
+	actions, _, err = router.HandleCallback(ctx, adminCallback("a:event:expired-event"), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(actionText(actions), "Active events") || strings.Contains(actionText(actions), "Expired event") {
+		t.Fatalf("expired selection actions = %#v", actions)
+	}
+}
+
+func TestAdminSearchQuerySurvivesPaginationRefresh(t *testing.T) {
+	store := adminStoreWithTier(models.TierUnitCommander)
+	store.events = []ActiveEvent{{ID: "event-1", Name: "First Parade", TelegramLink: "https://t.me/synthetic?start=opaque"}}
+	store.status = AttendancePage{SessionName: "First Parade", Total: 20, Missing: 20, Page: 1, HasNext: true, Rows: []AdminUser{{ID: "person-a", Name: "Person A"}}}
+	router := NewAdminRouter(store)
+	ctx := context.Background()
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:event:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback("a:search:event-1"), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := router.HandleMessage(ctx, adminMessage("  person   "), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	actions, _, err := router.HandleCallback(ctx, adminCallback(callbackData(lastStatusAction(store, router, ctx), "Next")), adminPairing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.statusCalls) < 2 {
+		t.Fatalf("status calls = %#v", store.statusCalls)
+	}
+	last := store.statusCalls[len(store.statusCalls)-1]
+	if last.query != "person" || last.page != 2 {
+		t.Fatalf("pagination status call = %+v, want query person page 2", last)
+	}
+	refreshData := callbackData(actions, "Refresh")
+	if refreshData == "" {
+		t.Fatalf("pagination actions=%#v", actions)
+	}
+	if _, _, err := router.HandleCallback(ctx, adminCallback(refreshData), adminPairing()); err != nil {
+		t.Fatal(err)
+	}
+	last = store.statusCalls[len(store.statusCalls)-1]
+	if last.query != "person" || last.page != 2 {
+		t.Fatalf("refresh status call = %+v, want query person page 2", last)
+	}
+	if strings.Contains(actionText(actions), "person   ") {
+		t.Fatalf("untrimmed query rendered: %q", actionText(actions))
+	}
+}
+
+func lastStatusAction(store *routerAdminStore, router *AdminRouter, ctx context.Context) []Action {
+	return []Action{statusMessage(adminPairing().TelegramID, "event-1", store.status, "person")}
 }

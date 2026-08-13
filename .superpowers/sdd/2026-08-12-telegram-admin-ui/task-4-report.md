@@ -44,3 +44,31 @@ All passed. PostgreSQL Telegram admin integration tests were compile-checked/ski
 ## Commit
 
 `feat: add Telegram commander admin menus` (final SHA is included in the worker acceptance report).
+
+## Task 4 review-fix addendum
+
+### Findings fixed
+
+- Encoded generated 16-byte hex session and roster IDs as tagged raw URL-safe base64 in every generated admin callback, while retaining full IDs in context/service calls. Receipt parsing decodes and validates compact/plain IDs, requires callback session IDs to match the persisted selected session, and rejects admin callback data over Telegram's 64-byte limit. Mark, undo, status, pagination, QR, close, and selection buttons now remain within the limit for realistic 32-character IDs.
+- Replaced router close cleanup with `ClearContextForSession` using the selected session and expected optimistic context version. `ErrAdminContextConflict` is treated as a safe no-op, preserving a newer draft or selection.
+- Unit-commanders now fail closed when `CreatedBy` is blank; superadmins retain cross-owner close behavior.
+- Stale/closed/expired selection callbacks conditionally clear only the matching selected context and return the active-event menu without disclosing resource existence.
+- Added the candidate confirmation state machine: candidate taps persist `confirming_mark` and emit `Mark present`/`Cancel`; only confirmation invokes `MarkManual`, with selected-session/target rechecks and selected-state restoration.
+- Persisted bounded, trimmed search text through `draft_name` so status Next/Prev/Refresh callbacks reuse the active query without a migration.
+
+### Regression coverage
+
+Updated pure-router tests cover realistic 32-character IDs and callback sizes/round trips, oversized inbound callbacks, conditional close cleanup with newer-context replacement, blank-owner fail-closed behavior plus legitimate ownership, unavailable selection routing/context cleanup, first-tap-vs-confirm mark semantics, cancellation, and search-query pagination.
+
+### Validation
+
+```sh
+go test ./backend/internal/telegram -run 'Admin|Menu|Wizard|Status|Mark|Close' -count=1
+go test ./backend/internal/telegram -count=1
+go test ./...
+go test -race ./backend/internal/telegram -count=1
+go vet ./backend/internal/telegram ./backend/internal/handlers
+git diff --check
+```
+
+All commands passed. PostgreSQL integration tests remained skipped because `TEST_DATABASE_URL` was not configured; no production data or credentials were used.

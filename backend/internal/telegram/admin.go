@@ -2,6 +2,8 @@ package telegram
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -26,8 +28,10 @@ const (
 	adminStateOwnMarks         = "reviewing_own_marks"
 	adminStateConfirmingClose  = "confirming_close"
 
-	adminDraftTTL = 15 * time.Minute
-	adminPageSize = 10
+	adminDraftTTL       = 15 * time.Minute
+	adminPageSize       = 10
+	adminSearchMaxRunes = 80
+	adminCompactIDTag   = "h"
 )
 
 const (
@@ -165,7 +169,11 @@ func (r *AdminRouter) HandleCallback(ctx context.Context, query *CallbackQuery, 
 		if len(args) != 1 {
 			return nil, true, nil
 		}
-		return r.selectEvent(ctx, chatID, pairing, actor, args[0])
+		sessionID, ok := decodeAdminCallbackID(args[0])
+		if !ok {
+			return nil, true, nil
+		}
+		return r.selectEvent(ctx, chatID, pairing, actor, sessionID)
 	case "scope":
 		if len(args) != 1 {
 			return nil, true, nil
@@ -203,6 +211,18 @@ func (r *AdminRouter) HandleCallback(ctx context.Context, query *CallbackQuery, 
 			return nil, true, nil
 		}
 		return r.mark(ctx, chatID, pairing, actor, sessionID, targetID)
+	case "mark-confirm", "confirm-mark", "mark_confirm", "confirm_mark":
+		sessionID, targetID, valid := callbackTarget(args)
+		if !valid {
+			return nil, true, nil
+		}
+		return r.confirmMark(ctx, chatID, pairing, actor, sessionID, targetID)
+	case "mark-cancel", "cancel-mark", "mark_cancel", "cancel_mark":
+		sessionID, targetID, valid := callbackTarget(args)
+		if !valid {
+			return nil, true, nil
+		}
+		return r.cancelMark(ctx, chatID, pairing, actor, sessionID, targetID)
 	case "marks", "own-marks":
 		sessionID, page, valid := callbackSessionPage(args)
 		if !valid {
@@ -216,23 +236,22 @@ func (r *AdminRouter) HandleCallback(ctx context.Context, query *CallbackQuery, 
 		}
 		return r.undo(ctx, chatID, pairing, actor, sessionID, targetID)
 	case "close":
-		if len(args) == 1 && (args[0] == "confirm" || args[0] == "yes") {
-			return r.confirmClose(ctx, chatID, pairing, actor, "")
-		}
-		if len(args) == 1 && (args[0] == "no" || args[0] == "cancel") {
-			return r.cancelClose(ctx, chatID, pairing, actor, "")
+		// Confirmation/cancellation must always carry the selected session;
+		// callbacks without it cannot be rebound to whatever is currently open.
+		if len(args) == 1 && (args[0] == "confirm" || args[0] == "yes" || args[0] == "no" || args[0] == "cancel") {
+			return nil, true, nil
 		}
 		if len(args) == 2 && (args[0] == "confirm" || args[0] == "yes") {
-			return r.confirmClose(ctx, chatID, pairing, actor, args[1])
+			return r.confirmClose(ctx, chatID, pairing, actor, callbackSession(args))
 		}
 		if len(args) == 2 && (args[0] == "no" || args[0] == "cancel") {
-			return r.cancelClose(ctx, chatID, pairing, actor, args[1])
+			return r.cancelClose(ctx, chatID, pairing, actor, callbackSession(args))
 		}
 		if len(args) == 2 && (args[1] == "confirm" || args[1] == "yes") {
-			return r.confirmClose(ctx, chatID, pairing, actor, args[0])
+			return r.confirmClose(ctx, chatID, pairing, actor, callbackSession(args))
 		}
 		if len(args) == 2 && (args[1] == "no" || args[1] == "cancel") {
-			return r.cancelClose(ctx, chatID, pairing, actor, args[0])
+			return r.cancelClose(ctx, chatID, pairing, actor, callbackSession(args))
 		}
 		return r.askClose(ctx, chatID, pairing, actor, callbackSession(args))
 	case "close-confirm", "confirm-close", "close_confirm", "confirm_close":
@@ -326,6 +345,16 @@ func (r *AdminRouter) saveContext(ctx context.Context, next AdminContext) error 
 func (r *AdminRouter) clearContext(ctx context.Context, telegramID int64) error {
 	err := r.store.ClearContext(ctx, telegramID)
 	if errors.Is(err, ErrAdminContextConflict) {
+		return nil
+	}
+	return err
+}
+
+func (r *AdminRouter) clearContextForSession(ctx context.Context, telegramID int64, sessionID string, expectedVersion int64) error {
+	err := r.store.ClearContextForSession(ctx, telegramID, sessionID, expectedVersion)
+	if errors.Is(err, ErrAdminContextConflict) {
+		// A newer draft or selection won the race. Its context is authoritative;
+		// closing an older event must never erase it.
 		return nil
 	}
 	return err
@@ -553,11 +582,21 @@ func (r *AdminRouter) activeEventsAction(ctx context.Context, chatID int64, acto
 	events, err := r.store.ActiveEvents(ctx, actor)
 	if err != nil {
 		if errors.Is(err, ErrAdminUnavailable) {
-			return r.safeAction(chatID), true, nil
+			// Resource availability is intentionally opaque. Returning an empty
+			// active-event menu is still the role-appropriate safe destination;
+			// it does not reveal whether the stale event existed.
+			return []Action{activeEventsMessage(chatID, nil, actor)}, true, nil
 		}
 		return nil, true, err
 	}
-	return []Action{activeEventsMessage(chatID, events, actor)}, true, nil
+	available := make([]ActiveEvent, 0, len(events))
+	for _, event := range events {
+		if event.EndTime != nil && !event.EndTime.IsZero() && !event.EndTime.After(r.clock()) {
+			continue
+		}
+		available = append(available, event)
+	}
+	return []Action{activeEventsMessage(chatID, available, actor)}, true, nil
 }
 
 func (r *AdminRouter) selectEvent(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, sessionID string) ([]Action, bool, error) {
@@ -565,14 +604,23 @@ func (r *AdminRouter) selectEvent(ctx context.Context, chatID int64, pairing Pai
 		return nil, true, nil
 	}
 	event, found, err := r.findActiveEvent(ctx, actor, sessionID)
+	if found && event.EndTime != nil && !event.EndTime.IsZero() && !event.EndTime.After(r.clock()) {
+		found = false
+	}
 	if err != nil {
 		if errors.Is(err, ErrAdminUnavailable) {
-			return r.safeAction(chatID), true, nil
+			if clearErr := r.clearUnavailableSelection(ctx, pairing, sessionID); clearErr != nil {
+				return nil, true, clearErr
+			}
+			return r.activeEventsAction(ctx, chatID, actor)
 		}
 		return nil, true, err
 	}
 	if !found {
-		return r.safeAction(chatID), true, nil
+		if clearErr := r.clearUnavailableSelection(ctx, pairing, sessionID); clearErr != nil {
+			return nil, true, clearErr
+		}
+		return r.activeEventsAction(ctx, chatID, actor)
 	}
 	adminContext, err := r.loadContext(ctx, pairing.TelegramID)
 	if err != nil {
@@ -604,12 +652,28 @@ func (r *AdminRouter) findActiveEvent(ctx context.Context, actor AdminActor, ses
 	return ActiveEvent{}, false, nil
 }
 
+func (r *AdminRouter) clearUnavailableSelection(ctx context.Context, pairing Pairing, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	adminContext, err := r.loadContext(ctx, pairing.TelegramID)
+	if err != nil {
+		return err
+	}
+	// Only clear the context that points at the unavailable event. A stale tap
+	// must not erase a newer selection or an in-progress draft.
+	if adminContext.SessionID != sessionID {
+		return nil
+	}
+	return r.clearContextForSession(ctx, adminContext.TelegramID, sessionID, adminContext.Version)
+}
+
 func (r *AdminRouter) selectedContext(ctx context.Context, pairing Pairing, expectedID string) (AdminContext, bool, error) {
 	adminContext, err := r.loadContext(ctx, pairing.TelegramID)
 	if err != nil {
 		return AdminContext{}, false, err
 	}
-	if adminContext.SessionID == "" || (expectedID != "" && adminContext.SessionID != expectedID) {
+	if adminContext.SessionID == "" || strings.TrimSpace(expectedID) == "" || adminContext.SessionID != expectedID {
 		return adminContext, false, nil
 	}
 	return adminContext, true, nil
@@ -625,9 +689,11 @@ func (r *AdminRouter) selectedEvent(ctx context.Context, pairing Pairing, actor 
 		return adminContext, ActiveEvent{}, false, err
 	}
 	if !found {
-		// A closed/expired event is treated as unavailable and its selected
-		// context is cleared. ClearContext has no resource-specific disclosure.
-		_ = r.clearContext(ctx, pairing.TelegramID)
+		// A closed/expired event is treated as unavailable. Clear only the
+		// selected session/version we observed; a newer draft or selection wins.
+		if clearErr := r.clearContextForSession(ctx, adminContext.TelegramID, adminContext.SessionID, adminContext.Version); clearErr != nil {
+			return adminContext, ActiveEvent{}, false, clearErr
+		}
 		return adminContext, ActiveEvent{}, false, nil
 	}
 	return adminContext, event, true, nil
@@ -652,26 +718,36 @@ func (r *AdminRouter) statusAction(ctx context.Context, chatID int64, pairing Pa
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok {
+	if !ok || (adminContext.State != adminStateSelected && adminContext.State != adminStateViewingStatus) {
 		return r.safeAction(chatID), true, nil
 	}
 	if page < 1 {
 		page = 1
 	}
-	result, err := r.store.Status(ctx, actor, adminContext.SessionID, strings.TrimSpace(query), page)
+	requestedQuery := normalizeAdminSearchQuery(query)
+	storedQuery := ""
+	if adminContext.State == adminStateViewingStatus {
+		storedQuery = normalizeAdminSearchQuery(adminContext.Draft.Name)
+	}
+	effectiveQuery := requestedQuery
+	if effectiveQuery == "" {
+		effectiveQuery = storedQuery
+	}
+	result, err := r.store.Status(ctx, actor, adminContext.SessionID, effectiveQuery, page)
 	if err != nil {
 		if errors.Is(err, ErrAdminUnavailable) {
 			return r.safeAction(chatID), true, nil
 		}
 		return nil, true, err
 	}
-	if query != "" {
+	if adminContext.State != adminStateViewingStatus || adminContext.Draft.Name != effectiveQuery {
 		adminContext.State = adminStateViewingStatus
+		adminContext.Draft.Name = effectiveQuery
 		if saveErr := r.saveContext(ctx, adminContext); saveErr != nil && !errors.Is(saveErr, ErrAdminContextConflict) {
 			return nil, true, saveErr
 		}
 	}
-	return []Action{statusMessage(chatID, adminContext.SessionID, result, query)}, true, nil
+	return []Action{statusMessage(chatID, adminContext.SessionID, result, effectiveQuery)}, true, nil
 }
 
 func (r *AdminRouter) startSearch(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, expectedID string) ([]Action, bool, error) {
@@ -679,10 +755,11 @@ func (r *AdminRouter) startSearch(ctx context.Context, chatID int64, pairing Pai
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok {
+	if !ok || (adminContext.State != adminStateSelected && adminContext.State != adminStateViewingStatus) {
 		return r.safeAction(chatID), true, nil
 	}
 	adminContext.State = adminStateSearchingName
+	adminContext.Draft.Name = ""
 	if err := r.saveContext(ctx, adminContext); err != nil {
 		if errors.Is(err, ErrAdminContextConflict) {
 			return nil, true, nil
@@ -693,7 +770,7 @@ func (r *AdminRouter) startSearch(ctx context.Context, chatID int64, pairing Pai
 }
 
 func (r *AdminRouter) receiveSearch(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, adminContext AdminContext, input string) ([]Action, bool, error) {
-	query := strings.TrimSpace(input)
+	query := normalizeAdminSearchQuery(input)
 	if query == "" {
 		return []Action{messageAction(chatID, "Send a name to search, or use /cancel.", nil)}, true, nil
 	}
@@ -705,19 +782,54 @@ func (r *AdminRouter) receiveSearch(ctx context.Context, chatID int64, pairing P
 		return nil, true, err
 	}
 	adminContext.State = adminStateViewingStatus
+	adminContext.Draft.Name = query
 	if saveErr := r.saveContext(ctx, adminContext); saveErr != nil && !errors.Is(saveErr, ErrAdminContextConflict) {
 		return nil, true, saveErr
 	}
 	return []Action{statusMessage(chatID, adminContext.SessionID, result, query)}, true, nil
 }
 
-func (r *AdminRouter) mark(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, expectedSessionID, targetID string) ([]Action, bool, error) {
+func (r *AdminRouter) mark(ctx context.Context, chatID int64, pairing Pairing, _ AdminActor, expectedSessionID, targetID string) ([]Action, bool, error) {
 	adminContext, ok, err := r.selectedContext(ctx, pairing, expectedSessionID)
 	if err != nil {
 		return nil, true, err
 	}
-	if !ok || strings.TrimSpace(targetID) == "" {
+	if !ok || strings.TrimSpace(targetID) == "" ||
+		(adminContext.State != adminStateSelected && adminContext.State != adminStateViewingStatus) {
 		return r.safeAction(chatID), true, nil
+	}
+	// Keep the candidate target in the durable selected-event context. The
+	// confirmation callback must match both this target and the selected
+	// session; callback data alone is never authorization.
+	adminContext.State = adminStateConfirmingMark
+	adminContext.Draft.Name = targetID
+	if err := r.saveContext(ctx, adminContext); err != nil {
+		if errors.Is(err, ErrAdminContextConflict) {
+			return nil, true, nil
+		}
+		return nil, true, err
+	}
+	return []Action{messageAction(chatID, "Mark this soldier present?", markConfirmMarkup(adminContext.SessionID, targetID))}, true, nil
+}
+
+func (r *AdminRouter) confirmMark(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, expectedSessionID, targetID string) ([]Action, bool, error) {
+	adminContext, ok, err := r.selectedContext(ctx, pairing, expectedSessionID)
+	if err != nil {
+		return nil, true, err
+	}
+	if !ok || adminContext.State != adminStateConfirmingMark || adminContext.Draft.Name != targetID || strings.TrimSpace(targetID) == "" {
+		return r.safeAction(chatID), true, nil
+	}
+
+	// Reserve the confirmation before calling the shared mutation service. A
+	// redelivered tap therefore cannot invoke MarkManual twice concurrently.
+	adminContext.State = adminStateSelected
+	adminContext.Draft.Name = ""
+	if err := r.saveContext(ctx, adminContext); err != nil {
+		if errors.Is(err, ErrAdminContextConflict) {
+			return nil, true, nil
+		}
+		return nil, true, err
 	}
 	if err := r.store.MarkManual(ctx, actor, adminContext.SessionID, targetID); err != nil {
 		if errors.Is(err, ErrAdminUnavailable) {
@@ -726,6 +838,28 @@ func (r *AdminRouter) mark(ctx context.Context, chatID int64, pairing Pairing, a
 		return nil, true, err
 	}
 	return []Action{messageAction(chatID, "Soldier marked present.", markResultMarkup(adminContext.SessionID, targetID))}, true, nil
+}
+
+func (r *AdminRouter) cancelMark(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, expectedSessionID, targetID string) ([]Action, bool, error) {
+	adminContext, event, ok, err := r.selectedEvent(ctx, pairing, actor, expectedSessionID)
+	if err != nil {
+		if errors.Is(err, ErrAdminUnavailable) {
+			return r.safeAction(chatID), true, nil
+		}
+		return nil, true, err
+	}
+	if !ok || adminContext.State != adminStateConfirmingMark || adminContext.Draft.Name != targetID || strings.TrimSpace(targetID) == "" {
+		return r.safeAction(chatID), true, nil
+	}
+	adminContext.State = adminStateSelected
+	adminContext.Draft.Name = ""
+	if err := r.saveContext(ctx, adminContext); err != nil {
+		if errors.Is(err, ErrAdminContextConflict) {
+			return nil, true, nil
+		}
+		return nil, true, err
+	}
+	return []Action{selectedEventMessage(chatID, actor, event)}, true, nil
 }
 
 func (r *AdminRouter) ownMarks(ctx context.Context, chatID int64, pairing Pairing, actor AdminActor, expectedSessionID string, page int) ([]Action, bool, error) {
@@ -810,7 +944,7 @@ func (r *AdminRouter) confirmClose(ctx context.Context, chatID int64, pairing Pa
 		}
 		return nil, true, err
 	}
-	if err := r.clearContext(ctx, pairing.TelegramID); err != nil {
+	if err := r.clearContextForSession(ctx, adminContext.TelegramID, adminContext.SessionID, adminContext.Version); err != nil {
 		return nil, true, err
 	}
 	return []Action{messageAction(chatID, "Event closed.", adminMenuMarkup(actor))}, true, nil
@@ -869,11 +1003,10 @@ func canCloseEvent(actor AdminActor, event ActiveEvent) bool {
 	if actor.Tier < models.TierUnitCommander {
 		return false
 	}
-	if event.CreatedBy == "" {
-		// The store remains the authoritative ownership check at confirmation;
-		// a blank optional field cannot be used to reject an otherwise valid
-		// production event.
-		return true
+	if strings.TrimSpace(event.CreatedBy) == "" || strings.TrimSpace(actor.Pairing.UserID) == "" {
+		// Ownership is fail-closed for unit commanders. Superadmins were
+		// handled above and do not require a creator match.
+		return false
 	}
 	return event.CreatedBy == actor.Pairing.UserID
 }
@@ -890,7 +1023,7 @@ func activeEventsMessage(chatID int64, events []ActiveEvent, actor AdminActor) A
 		} else {
 			text += "\n" + event.Name
 		}
-		if data, ok := adminCallbackData("a", "event", event.ID); ok {
+		if data, ok := adminCallbackData("a", "event", encodeAdminCallbackID(event.ID)); ok {
 			markup.InlineKeyboard = append(markup.InlineKeyboard, []InlineKeyboardButton{{Text: eventButtonText(event), CallbackData: data}})
 		}
 	}
@@ -909,23 +1042,23 @@ func selectedEventMessage(chatID int64, actor AdminActor, event ActiveEvent) Act
 		text += "\nEnds " + end
 	}
 	rows := [][]InlineKeyboardButton{}
-	if data, ok := adminCallbackData("a", "qr", event.ID); ok {
+	if data, ok := adminCallbackData("a", "qr", encodeAdminCallbackID(event.ID)); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Send QR + link", CallbackData: data}})
 	}
-	if data, ok := adminCallbackData("a", "status", event.ID, "1"); ok {
+	if data, ok := adminCallbackData("a", "status", encodeAdminCallbackID(event.ID), "1"); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "View status", CallbackData: data}})
 	}
-	if data, ok := adminCallbackData("a", "missing", event.ID, "1"); ok {
+	if data, ok := adminCallbackData("a", "missing", encodeAdminCallbackID(event.ID), "1"); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Missing soldiers", CallbackData: data}})
 	}
-	if data, ok := adminCallbackData("a", "search", event.ID); ok {
+	if data, ok := adminCallbackData("a", "search", encodeAdminCallbackID(event.ID)); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Search soldier", CallbackData: data}})
 	}
-	if data, ok := adminCallbackData("a", "marks", event.ID, "1"); ok {
+	if data, ok := adminCallbackData("a", "marks", encodeAdminCallbackID(event.ID), "1"); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "My manual marks", CallbackData: data}})
 	}
 	if canCloseEvent(actor, event) {
-		if data, ok := adminCallbackData("a", "close", event.ID); ok {
+		if data, ok := adminCallbackData("a", "close", encodeAdminCallbackID(event.ID)); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Close event", CallbackData: data}})
 		}
 	}
@@ -936,6 +1069,7 @@ func selectedEventMessage(chatID int64, actor AdminActor, event ActiveEvent) Act
 }
 
 func statusMessage(chatID int64, sessionID string, page AttendancePage, query string) Action {
+	query = normalizeAdminSearchQuery(query)
 	name := strings.TrimSpace(page.SessionName)
 	if name == "" {
 		name = "Attendance status"
@@ -962,26 +1096,26 @@ func statusMessage(chatID int64, sessionID string, page AttendancePage, query st
 		if label == "" {
 			label = user.ID
 		}
-		data, ok := adminCallbackData("a", "mark", sessionID, user.ID)
+		data, ok := adminCallbackData("a", "mark", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(user.ID))
 		if !ok {
 			continue
 		}
 		rows = append(rows, []InlineKeyboardButton{{Text: "Mark " + label, CallbackData: data}})
 	}
 	if page.HasPrevious || page.Page > 1 {
-		if data, ok := adminCallbackData("a", "status", sessionID, strconv.Itoa(maxAdminPage(page.Page-1))); ok {
+		if data, ok := adminCallbackData("a", "status", encodeAdminCallbackID(sessionID), strconv.Itoa(maxAdminPage(page.Page-1))); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Prev", CallbackData: data}})
 		}
 	}
 	if page.HasNext {
-		if data, ok := adminCallbackData("a", "status", sessionID, strconv.Itoa(maxAdminPage(page.Page+1))); ok {
+		if data, ok := adminCallbackData("a", "status", encodeAdminCallbackID(sessionID), strconv.Itoa(maxAdminPage(page.Page+1))); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Next", CallbackData: data}})
 		}
 	}
-	if data, ok := adminCallbackData("a", "refresh", sessionID, strconv.Itoa(maxAdminPage(page.Page))); ok {
+	if data, ok := adminCallbackData("a", "refresh", encodeAdminCallbackID(sessionID), strconv.Itoa(maxAdminPage(page.Page))); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Refresh", CallbackData: data}})
 	}
-	if data, ok := adminCallbackData("a", "event", sessionID); ok {
+	if data, ok := adminCallbackData("a", "event", encodeAdminCallbackID(sessionID)); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Back", CallbackData: data}})
 	}
 	return Action{Kind: SendMessage, ChatID: chatID, Text: text, ReplyMarkup: &InlineKeyboardMarkup{InlineKeyboard: rows}}
@@ -999,21 +1133,21 @@ func ownMarksMessage(chatID int64, sessionID string, users []AdminUser, page int
 		if label == "" {
 			label = user.ID
 		}
-		if data, ok := adminCallbackData("a", "undo", sessionID, user.ID); ok {
+		if data, ok := adminCallbackData("a", "undo", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(user.ID)); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Undo " + label, CallbackData: data}})
 		}
 	}
 	if page > 1 {
-		if data, ok := adminCallbackData("a", "marks", sessionID, strconv.Itoa(page-1)); ok {
+		if data, ok := adminCallbackData("a", "marks", encodeAdminCallbackID(sessionID), strconv.Itoa(page-1)); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Prev", CallbackData: data}})
 		}
 	}
 	if len(users) == adminPageSize {
-		if data, ok := adminCallbackData("a", "marks", sessionID, strconv.Itoa(page+1)); ok {
+		if data, ok := adminCallbackData("a", "marks", encodeAdminCallbackID(sessionID), strconv.Itoa(page+1)); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Next", CallbackData: data}})
 		}
 	}
-	if data, ok := adminCallbackData("a", "status", sessionID, "1"); ok {
+	if data, ok := adminCallbackData("a", "status", encodeAdminCallbackID(sessionID), "1"); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Back", CallbackData: data}})
 	}
 	if len(users) == 0 {
@@ -1079,10 +1213,21 @@ func creationConfirmMarkup() *InlineKeyboardMarkup {
 
 func closeConfirmMarkup(sessionID string) *InlineKeyboardMarkup {
 	rows := [][]InlineKeyboardButton{}
-	if data, ok := adminCallbackData("a", "close-confirm", sessionID); ok {
+	if data, ok := adminCallbackData("a", "close-confirm", encodeAdminCallbackID(sessionID)); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Confirm close", CallbackData: data}})
 	}
-	if data, ok := adminCallbackData("a", "close-cancel", sessionID); ok {
+	if data, ok := adminCallbackData("a", "close-cancel", encodeAdminCallbackID(sessionID)); ok {
+		rows = append(rows, []InlineKeyboardButton{{Text: "Cancel", CallbackData: data}})
+	}
+	return &InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func markConfirmMarkup(sessionID, targetID string) *InlineKeyboardMarkup {
+	rows := [][]InlineKeyboardButton{}
+	if data, ok := adminCallbackData("a", "mark-confirm", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(targetID)); ok {
+		rows = append(rows, []InlineKeyboardButton{{Text: "Mark present", CallbackData: data}})
+	}
+	if data, ok := adminCallbackData("a", "mark-cancel", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(targetID)); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "Cancel", CallbackData: data}})
 	}
 	return &InlineKeyboardMarkup{InlineKeyboard: rows}
@@ -1091,11 +1236,11 @@ func closeConfirmMarkup(sessionID string) *InlineKeyboardMarkup {
 func markResultMarkup(sessionID, targetID string) *InlineKeyboardMarkup {
 	rows := [][]InlineKeyboardButton{}
 	if targetID != "" {
-		if data, ok := adminCallbackData("a", "undo", sessionID, targetID); ok {
+		if data, ok := adminCallbackData("a", "undo", encodeAdminCallbackID(sessionID), encodeAdminCallbackID(targetID)); ok {
 			rows = append(rows, []InlineKeyboardButton{{Text: "Undo", CallbackData: data}})
 		}
 	}
-	if data, ok := adminCallbackData("a", "marks", sessionID, "1"); ok {
+	if data, ok := adminCallbackData("a", "marks", encodeAdminCallbackID(sessionID), "1"); ok {
 		rows = append(rows, []InlineKeyboardButton{{Text: "My manual marks", CallbackData: data}})
 	}
 	return &InlineKeyboardMarkup{InlineKeyboard: rows}
@@ -1181,6 +1326,9 @@ func telegramCommand(text string) string {
 }
 
 func parseAdminCallback(data string) (string, []string, bool) {
+	if len([]byte(data)) > 64 {
+		return "", nil, false
+	}
 	parts := strings.Split(data, ":")
 	if len(parts) < 2 || parts[0] != "a" || parts[1] == "" {
 		return "", nil, false
@@ -1193,45 +1341,114 @@ func parseAdminCallback(data string) (string, []string, bool) {
 	return parts[1], parts[2:], true
 }
 
+// encodeAdminCallbackID keeps the full database ID out of generated Telegram
+// callback data. Session and roster IDs generated by the application are
+// 16-byte hex values; raw URL base64 represents those bytes in 22 characters
+// instead of the original 32. Non-generated test/legacy IDs remain readable.
+func encodeAdminCallbackID(value string) string {
+	value = strings.TrimSpace(value)
+	decoded, err := hex.DecodeString(value)
+	if err == nil && len(decoded) == 16 {
+		return adminCompactIDTag + base64.RawURLEncoding.EncodeToString(decoded)
+	}
+	return value
+}
+
+func decodeAdminCallbackID(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if strings.HasPrefix(value, adminCompactIDTag) {
+		encoded := strings.TrimPrefix(value, adminCompactIDTag)
+		if len(encoded) != base64.RawURLEncoding.EncodedLen(16) {
+			return "", false
+		}
+		decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil || len(decoded) != 16 {
+			return "", false
+		}
+		return hex.EncodeToString(decoded), true
+	}
+	// Accept the untagged form too, so callbacks produced by an equivalent
+	// raw-base64 encoder remain readable during rolling upgrades.
+	if len(value) == base64.RawURLEncoding.EncodedLen(16) {
+		if decoded, err := base64.RawURLEncoding.DecodeString(value); err == nil && len(decoded) == 16 {
+			return hex.EncodeToString(decoded), true
+		}
+	}
+	if len([]byte(value)) > 64 {
+		return "", false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_' {
+			continue
+		}
+		return "", false
+	}
+	return value, true
+}
+
 func callbackSession(args []string) string {
-	if len(args) == 0 {
+	var raw string
+	switch {
+	case len(args) == 1:
+		raw = args[0]
+	case len(args) == 2 && (args[0] == "confirm" || args[0] == "yes" || args[0] == "cancel" || args[0] == "no"):
+		raw = args[1]
+	case len(args) == 2 && (args[1] == "confirm" || args[1] == "yes" || args[1] == "cancel" || args[1] == "no"):
+		raw = args[0]
+	default:
 		return ""
 	}
-	if len(args) == 1 {
-		return args[0]
+	decoded, ok := decodeAdminCallbackID(raw)
+	if !ok {
+		return ""
 	}
-	if args[0] == "confirm" || args[0] == "yes" || args[0] == "cancel" || args[0] == "no" {
-		return args[1]
-	}
-	return args[0]
+	return decoded
 }
 
 func callbackSessionPage(args []string) (string, int, bool) {
-	if len(args) == 0 {
-		return "", 1, true
-	}
-	if len(args) == 1 {
-		page, err := strconv.Atoi(args[0])
-		if err == nil {
-			return "", page, true
-		}
-		return args[0], 1, true
-	}
-	page, err := strconv.Atoi(args[len(args)-1])
-	if err != nil {
+	if len(args) != 2 {
 		return "", 0, false
 	}
-	return strings.Join(args[:len(args)-1], ":"), page, page > 0
+	page, err := strconv.Atoi(args[1])
+	if err != nil || page < 1 {
+		return "", 0, false
+	}
+	sessionID, ok := decodeAdminCallbackID(args[0])
+	return sessionID, page, ok
 }
 
 func callbackTarget(args []string) (string, string, bool) {
-	if len(args) < 1 || len(args) > 2 {
+	if len(args) != 2 {
 		return "", "", false
 	}
-	if len(args) == 1 {
-		return "", args[0], args[0] != ""
+	sessionID, sessionOK := decodeAdminCallbackID(args[0])
+	targetID, targetOK := decodeAdminCallbackID(args[1])
+	return sessionID, targetID, sessionOK && targetOK
+}
+
+func normalizeAdminSearchQuery(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return ""
 	}
-	return args[0], args[1], args[0] != "" && args[1] != ""
+	// Keep user-provided search text bounded and harmless when it is echoed
+	// into a Telegram message. Telegram callbacks never carry this value.
+	filtered := strings.Map(func(char rune) rune {
+		if char < 0x20 || char == 0x7f {
+			return ' '
+		}
+		return char
+	}, query)
+	filtered = strings.TrimSpace(filtered)
+	runes := []rune(filtered)
+	if len(runes) > adminSearchMaxRunes {
+		filtered = string(runes[:adminSearchMaxRunes])
+	}
+	return strings.TrimSpace(filtered)
 }
 
 func adminCallbackData(parts ...string) (string, bool) {
