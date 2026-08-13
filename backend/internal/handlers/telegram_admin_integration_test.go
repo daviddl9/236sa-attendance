@@ -633,10 +633,18 @@ func openTelegramAdminDB(t *testing.T) (*database.DB, string) {
 	prefix := fmt.Sprintf("tg-admin-%d", time.Now().UnixNano())
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM telegram_chat_context WHERE telegram_id BETWEEN $1 AND $2`, telegramAdminID(prefix, 0), telegramAdminID(prefix, 100))
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM attendance_session WHERE id LIKE $1 OR created_by LIKE $1`, prefix+"-%")
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM telegram_pairing WHERE id LIKE $1`, prefix+"-%")
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM "user" WHERE id LIKE $1`, prefix+"-%")
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM telegram_chat_context WHERE telegram_id BETWEEN $1 AND $2`, telegramAdminID(prefix, 0), telegramAdminID(prefix, 100)); err != nil {
+			t.Errorf("cleanup Telegram admin contexts: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM attendance_session WHERE id LIKE $1 OR created_by LIKE $1`, prefix+"-%"); err != nil {
+			t.Errorf("cleanup Telegram admin sessions: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM telegram_pairing WHERE id LIKE $1`, prefix+"-%"); err != nil {
+			t.Errorf("cleanup Telegram admin pairings: %v", err)
+		}
+		if _, err := db.Pool.Exec(ctx, `DELETE FROM "user" WHERE id LIKE $1`, prefix+"-%"); err != nil {
+			t.Errorf("cleanup Telegram admin users: %v", err)
+		}
 		db.Close()
 	})
 	return db, prefix

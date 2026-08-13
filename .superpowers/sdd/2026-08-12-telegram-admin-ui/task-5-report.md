@@ -61,3 +61,38 @@ A first full-suite attempt had one transient reports integration failure while t
 - The required full validation used the already-running disposable PostgreSQL instance at port 55471; no production database or Telegram API was contacted.
 - No real Telegram user-flow smoke test was performed, by design; the fake transport covers outbound action shape and delivery.
 - Task 4 runtime wiring remains unchanged and should be reviewed together with this E2E when the branch is accepted.
+
+## Fix addendum — Task 5 review findings
+
+Date: 2026-08-13
+
+The review follow-up remains test-only. The Tier 3 creation flow now reloads the actual `attendance_session` row and asserts the trimmed name, `battery_specific` scope, exactly `[Alpha]` batteries, active status, creator ID, nonzero future `end_time`, nonempty `deeplink_code`, and equality between the persisted code and the Telegram URL `start` payload. Existing URL-button, QR PNG, and delivery assertions remain.
+
+The E2E now seeds independent Bravo-only and unit-wide active events. Tier 2 active-event output must include the authorized created/Alpha and unit-wide events while excluding the Bravo-only event; unit-wide missing output must include the Alpha target and exclude the Bravo target. It also forces Tier 2 `a:create` and a forged `a:close:<encoded-id>` callback, requiring the generic unavailable response, unchanged session count/status, and no event-name disclosure. Existing battery-specific manual mark/undo checks remain.
+
+After superadmin close, a new store instance reloads PostgreSQL context and asserts `State == idle` and an empty `SessionID`, alongside the closed database status. Shared Telegram-admin synthetic cleanup now reports SQL cleanup errors through the test instead of discarding them. Fixture event IDs are short enough for callback-size coverage while their prefixed creator/target rows remain isolated and cleanup-safe.
+
+TDD validation:
+
+```text
+First focused run after adding the assertions:
+  FAIL at the new unit-wide Tier 2 status assertion because long synthetic fixture IDs exceeded callback data bounds and yielded no mark buttons.
+
+After shortening only the synthetic fixture event IDs:
+TEST_DATABASE_URL='postgres://postgres:pw@localhost:55471/app?sslmode=disable' go test ./internal/handlers ./internal/telegram -run 'Telegram.*Admin|Admin.*E2E' -count=1
+  PASS
+
+TEST_DATABASE_URL='postgres://postgres:pw@localhost:55471/app?sslmode=disable' go test ./... -count=1
+  PASS
+
+TEST_DATABASE_URL='postgres://postgres:pw@localhost:55471/app?sslmode=disable' go test ./... -race -count=1
+  PASS
+
+go vet ./...
+  PASS
+
+git diff --check
+  PASS
+```
+
+Code changes for this follow-up are limited to `backend/internal/handlers/telegram_admin_e2e_test.go` and `backend/internal/handlers/telegram_admin_integration_test.go`; this addendum is the only documentation change, and no production authorization or behavior was modified.

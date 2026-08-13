@@ -135,6 +135,13 @@ func TestTelegramAdminE2EThroughBotHandleUpdate(t *testing.T) {
 	seedTelegramAdminPairing(t, db, prefix+"-ps", superadminTelegramID, superadminID)
 	seedTelegramAdminPairing(t, db, prefix+"-px", soldierTelegramID, soldierID)
 
+	// These independent active fixtures exercise Tier 2's event and roster
+	// boundaries instead of relying only on the event created by the wizard.
+	bravoOnlyEventID := fmt.Sprintf("%d-b", telegramAdminID(prefix, 101))
+	unitWideEventID := fmt.Sprintf("%d-u", telegramAdminID(prefix, 102))
+	seedAdminSession(t, db, bravoOnlyEventID, "TG E2E Bravo-only Event", models.SessionScopeBatterySpecific, []string{models.BatteryBravo}, otherCreatorID, time.Hour)
+	seedAdminSession(t, db, unitWideEventID, "TG E2E Unit-wide Event", models.SessionScopeUnitWide, nil, otherCreatorID, time.Hour)
+
 	store := NewTelegramAdminStore(db, nil)
 	sender := &telegramAdminE2ESender{}
 	dispatcher := telegram.NewDispatcher(sender, 128)
@@ -174,6 +181,48 @@ func TestTelegramAdminE2EThroughBotHandleUpdate(t *testing.T) {
 	parsedLink, err := url.Parse(link)
 	if err != nil || parsedLink.Query().Get("start") == "" {
 		t.Fatalf("created Telegram link = %q, want opaque start code", link)
+	}
+	var (
+		persistedName      string
+		persistedScope     string
+		persistedBatteries []string
+		persistedStatus    string
+		persistedCreator   string
+		persistedEndTime   *time.Time
+		persistedDeepLink  *string
+	)
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT name, scope, batteries, status, created_by, end_time, deeplink_code
+		FROM attendance_session WHERE id = $1
+	`, createdID).Scan(
+		&persistedName, &persistedScope, &persistedBatteries, &persistedStatus,
+		&persistedCreator, &persistedEndTime, &persistedDeepLink,
+	); err != nil {
+		t.Fatalf("load persisted created session: %v", err)
+	}
+	if persistedName != "TG E2E Battery Parade" {
+		t.Fatalf("persisted session name = %q, want trimmed event name", persistedName)
+	}
+	if persistedScope != models.SessionScopeBatterySpecific {
+		t.Fatalf("persisted session scope = %q, want battery_specific", persistedScope)
+	}
+	if len(persistedBatteries) != 1 || persistedBatteries[0] != models.BatteryAlpha {
+		t.Fatalf("persisted session batteries = %v, want exactly [%s]", persistedBatteries, models.BatteryAlpha)
+	}
+	if persistedStatus != models.SessionStatusActive {
+		t.Fatalf("persisted session status = %q, want active", persistedStatus)
+	}
+	if persistedCreator != creatorID {
+		t.Fatalf("persisted session creator = %q, want %q", persistedCreator, creatorID)
+	}
+	if persistedEndTime == nil || persistedEndTime.IsZero() || !persistedEndTime.After(time.Now()) {
+		t.Fatalf("persisted session end_time = %v, want nonzero future time", persistedEndTime)
+	}
+	if persistedDeepLink == nil || strings.TrimSpace(*persistedDeepLink) == "" {
+		t.Fatalf("persisted session deeplink_code = %v, want nonempty code", persistedDeepLink)
+	}
+	if parsedLink.Query().Get("start") != *persistedDeepLink {
+		t.Fatalf("Telegram URL start payload = %q, want stored deeplink_code %q", parsedLink.Query().Get("start"), *persistedDeepLink)
 	}
 	if photoAction.ReplyMarkup == nil || telegramAdminE2EURLFromMarkup(photoAction.ReplyMarkup) != link {
 		t.Fatalf("photo markup = %#v, want URL button %q", photoAction.ReplyMarkup, link)
@@ -239,12 +288,38 @@ func TestTelegramAdminE2EThroughBotHandleUpdate(t *testing.T) {
 	if telegramAdminE2EHasButton(tierTwoMenu, "Create event") {
 		t.Fatalf("tier-two menu = %#v, must not expose Create event", tierTwoMenu)
 	}
+	tierTwoSessionCount := countTelegramAdminSessions(t, db, creatorID)
 	tierTwoForbiddenCreate := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, "a:create"))
-	if strings.Contains(telegramAdminE2EActionText(tierTwoForbiddenCreate), "TG E2E Battery Parade") {
-		t.Fatalf("tier-two forbidden create leaked event data: %#v", tierTwoForbiddenCreate)
+	if !strings.Contains(telegramAdminE2EActionText(tierTwoForbiddenCreate), "That action is no longer available.") || strings.Contains(telegramAdminE2EActionText(tierTwoForbiddenCreate), "TG E2E Battery Parade") {
+		t.Fatalf("tier-two forbidden create = %#v, want safe response without event data", tierTwoForbiddenCreate)
+	}
+	if got := countTelegramAdminSessions(t, db, creatorID); got != tierTwoSessionCount {
+		t.Fatalf("tier-two forbidden create changed session count from %d to %d", tierTwoSessionCount, got)
 	}
 	tierTwoEvents := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, "a:events"))
+	if !telegramAdminE2EHasButton(tierTwoEvents, "TG E2E Battery Parade") || !telegramAdminE2EHasButton(tierTwoEvents, "TG E2E Unit-wide Event") || telegramAdminE2EHasButton(tierTwoEvents, "TG E2E Bravo-only Event") {
+		t.Fatalf("tier-two active events = %#v, want created/Unit-wide but not Bravo-only", tierTwoEvents)
+	}
 	tierTwoSelect := telegramAdminE2EButton(t, tierTwoEvents, "TG E2E Battery Parade")
+	selectParts := strings.Split(tierTwoSelect.CallbackData, ":")
+	if len(selectParts) != 3 {
+		t.Fatalf("tier-two event selection callback = %q", tierTwoSelect.CallbackData)
+	}
+	forgedTierTwoClose := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, "a:close:"+selectParts[2]))
+	if !strings.Contains(telegramAdminE2EActionText(forgedTierTwoClose), "That action is no longer available.") || strings.Contains(telegramAdminE2EActionText(forgedTierTwoClose), "TG E2E Battery Parade") {
+		t.Fatalf("tier-two forged close = %#v, want safe response without event data", forgedTierTwoClose)
+	}
+	assertTelegramAdminSessionStatus(t, db, createdID, models.SessionStatusActive)
+
+	unitWideSelect := telegramAdminE2EButton(t, tierTwoEvents, "TG E2E Unit-wide Event")
+	unitWideSelected := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, unitWideSelect.CallbackData))
+	unitWideStatusButton := telegramAdminE2EButton(t, unitWideSelected, "View status")
+	unitWideStatus := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, unitWideStatusButton.CallbackData))
+	unitWideStatusText := telegramAdminE2EActionText(unitWideStatus)
+	if !strings.Contains(unitWideStatusText, "PTE E2E ALPHA TARGET") || strings.Contains(unitWideStatusText, "PTE E2E BRAVO TARGET") {
+		t.Fatalf("tier-two unit-wide status = %q, want Alpha but not Bravo rows", unitWideStatusText)
+	}
+
 	tierTwoSelected := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, tierTwoSelect.CallbackData))
 	if telegramAdminE2EHasButton(tierTwoSelected, "Close event") {
 		t.Fatalf("tier-two selected event = %#v, must not expose Close event", tierTwoSelected)
@@ -346,6 +421,14 @@ func TestTelegramAdminE2EThroughBotHandleUpdate(t *testing.T) {
 		t.Fatalf("superadmin close = %#v", closed)
 	}
 	assertTelegramAdminSessionStatus(t, db, createdID, models.SessionStatusClosed)
+	closedContextStore := NewTelegramAdminStore(db, nil)
+	superadminContext, err := closedContextStore.LoadContext(ctx, superadminTelegramID)
+	if err != nil {
+		t.Fatalf("reload superadmin context after close: %v", err)
+	}
+	if superadminContext.State != "idle" || superadminContext.SessionID != "" {
+		t.Fatalf("superadmin context after close = %+v, want idle state with empty session", superadminContext)
+	}
 
 	// The old Tier 2 mark callback is stale after the superadmin close. It is
 	// acknowledged safely without presenting a confirmation or exposing names.
