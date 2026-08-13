@@ -327,7 +327,8 @@ func newTelegramRuntime(db *database.DB, config telegram.Config, hub *sse.Hub) (
 		log.Println("Telegram bot disabled: client could not be initialized")
 		return handlers.NewTelegramHandler(nil, config.WebhookSecret, nil), nil
 	}
-	bot := telegram.NewBot(handlers.NewTelegramPairingStoreWithHub(db, hub))
+	store := handlers.NewTelegramPairingStoreWithHub(db, hub)
+	bot := telegram.NewBotWithAdmin(store, store, telegram.NewAdminRouter(store))
 	dispatcher := telegram.NewDispatcher(client, 512)
 	return handlers.NewTelegramHandler(bot, config.WebhookSecret, dispatcher), dispatcher
 }

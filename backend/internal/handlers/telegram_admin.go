@@ -379,6 +379,7 @@ func activeEvent(session models.AttendanceSession) telegram.ActiveEvent {
 	return telegram.ActiveEvent{
 		ID: session.ID, Name: session.Name, Scope: session.Scope,
 		Batteries: batteries, EndTime: session.EndTime, TelegramLink: session.TelegramLink,
+		CreatedBy: session.CreatedBy,
 	}
 }
 

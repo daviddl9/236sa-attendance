@@ -43,6 +43,10 @@ type ActiveEvent struct {
 	Batteries    []string
 	EndTime      *time.Time
 	TelegramLink string
+	// CreatedBy is optional in the Telegram projection. The PostgreSQL store
+	// populates it for local ownership presentation; CloseEvent remains the
+	// authoritative recheck for every close mutation.
+	CreatedBy string
 }
 
 type AttendancePage struct {
