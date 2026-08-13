@@ -305,6 +305,14 @@ func TestTelegramAdminE2EThroughBotHandleUpdate(t *testing.T) {
 	if len(selectParts) != 3 {
 		t.Fatalf("tier-two event selection callback = %q", tierTwoSelect.CallbackData)
 	}
+	// Establish the selected-event context before exercising the forged close.
+	// Otherwise the safe response could be caused by a missing selection rather
+	// than Tier 2's close authorization boundary.
+	tierTwoSelectedBeforeClose := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, tierTwoSelect.CallbackData))
+	if !telegramAdminE2EHasButton(tierTwoSelectedBeforeClose, "View status") || telegramAdminE2EHasButton(tierTwoSelectedBeforeClose, "Close event") {
+		t.Fatalf("tier-two selected event before forged close = %#v, want selected menu without Close event", tierTwoSelectedBeforeClose)
+	}
+	assertTelegramAdminSessionStatus(t, db, createdID, models.SessionStatusActive)
 	forgedTierTwoClose := driveTelegramAdminE2E(t, reloadedBot, dispatcher, sender, telegramAdminE2ECallbackUpdate(tierTwoTelegramID, "a:close:"+selectParts[2]))
 	if !strings.Contains(telegramAdminE2EActionText(forgedTierTwoClose), "That action is no longer available.") || strings.Contains(telegramAdminE2EActionText(forgedTierTwoClose), "TG E2E Battery Parade") {
 		t.Fatalf("tier-two forged close = %#v, want safe response without event data", forgedTierTwoClose)

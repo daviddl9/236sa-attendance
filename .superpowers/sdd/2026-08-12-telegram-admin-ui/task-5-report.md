@@ -96,3 +96,7 @@ git diff --check
 ```
 
 Code changes for this follow-up are limited to `backend/internal/handlers/telegram_admin_e2e_test.go` and `backend/internal/handlers/telegram_admin_integration_test.go`; this addendum is the only documentation change, and no production authorization or behavior was modified.
+
+## Fix addendum — selected Tier 2 forged-close evidence
+
+The E2E now selects the authorized battery-specific event and verifies its selected-event menu before sending `a:close:<same encoded event ID>` as Tier 2. It asserts the generic safe response and active database status, proving the denial exercises close authorization rather than missing selected context. The focused PostgreSQL E2E and full Go test suites pass.
