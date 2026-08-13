@@ -736,3 +736,19 @@ func TestAdminSearchQuerySurvivesPaginationRefresh(t *testing.T) {
 func lastStatusAction(store *routerAdminStore, router *AdminRouter, ctx context.Context) []Action {
 	return []Action{statusMessage(adminPairing().TelegramID, "event-1", store.status, "person")}
 }
+
+func TestDecodeAdminCallbackIDPreservesRawIDBeginningWithH(t *testing.T) {
+	raw := "hAQIDBAUGBwgJCgsMDQ4PEQ"
+	got, ok := decodeAdminCallbackID(raw)
+	if !ok || got != raw {
+		t.Fatalf("decoded raw ID = %q, valid=%v, want %q", got, ok, raw)
+	}
+}
+
+func TestDecodeAdminCallbackIDPreserves22CharacterRawID(t *testing.T) {
+	raw := "AQIDBAUGBwgJCgsMDQ4PEQ"
+	got, ok := decodeAdminCallbackID(raw)
+	if !ok || got != raw {
+		t.Fatalf("decoded raw ID = %q, valid=%v, want %q", got, ok, raw)
+	}
+}
