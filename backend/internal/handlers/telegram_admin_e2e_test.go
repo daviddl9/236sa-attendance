@@ -15,6 +15,7 @@ import (
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 )
 
@@ -632,6 +633,143 @@ func TestTelegramAdminE2ESelfConfirmationPairing(t *testing.T) {
 	}
 	if telegramAdminE2EHasButton(noMatch, "Yes, that's me") || strings.Contains(telegramAdminE2EActionText(noMatch), pairName) {
 		t.Fatalf("no-match reply disclosed a roster name: %#v", noMatch)
+	}
+}
+
+// TestTelegramAdminE2EPairingNegativePaths exercises the remaining negative
+// pairing and attendance boundaries through the same Bot.HandleUpdate path:
+// proposal expiry, rate limiting, ambiguous strong matches, and a paired
+// soldier hitting a closed, out-of-scope, or unknown deep link.
+func TestTelegramAdminE2EPairingNegativePaths(t *testing.T) {
+	t.Setenv("TELEGRAM_BOT_USERNAME", "synthetic_tg_admin_bot")
+	db, prefix := openTelegramAdminDB(t)
+	ctx := context.Background()
+
+	soldierID := prefix + "-soldier"
+	soldierTelegramID := telegramAdminID(prefix, 50)
+	expiryTelegramID := telegramAdminID(prefix, 51)
+	rateLimitTelegramID := telegramAdminID(prefix, 52)
+	ambiguousTelegramID := telegramAdminID(prefix, 53)
+	soldierName := "E2E NEG SOLDIER " + strings.ToUpper(prefix)
+	ambigShort := "E2E AMBIG " + strings.ToUpper(prefix) + " MIN"
+	ambigLong := "E2E AMBIG " + strings.ToUpper(prefix) + " MING"
+
+	seedUser(t, db, soldierID, soldierName, models.RankPTE, models.BatteryAlpha, "", true)
+	seedUser(t, db, prefix+"-amb-min", ambigShort, models.RankPTE, models.BatteryAlpha, "", true)
+	seedUser(t, db, prefix+"-amb-ming", ambigLong, models.RankPTE, models.BatteryAlpha, "", true)
+	seedTelegramAdminPairing(t, db, prefix+"-ps", soldierTelegramID, soldierID)
+
+	store := NewTelegramAdminStore(db, nil)
+	sender := &telegramAdminE2ESender{}
+	dispatcher := telegram.NewDispatcher(sender, 128)
+	defer dispatcher.Close()
+	bot := telegram.NewBotWithAdmin(store, store, telegram.NewAdminRouter(store))
+
+	var pairingCount int
+
+	// A proposal older than the 5-minute expiry cannot be confirmed.
+	expiryProposal := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(expiryTelegramID, soldierName))
+	expiryYes := telegramAdminE2EButton(t, expiryProposal, "Yes, that's me")
+	expiryAttempt := strings.Split(expiryYes.CallbackData, ":")[2]
+	if _, err := db.Pool.Exec(ctx, `UPDATE telegram_pairing_attempt SET "createdAt" = NOW() - INTERVAL '6 minutes' WHERE id = $1`, expiryAttempt); err != nil {
+		t.Fatal(err)
+	}
+	expired := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2ECallbackUpdate(expiryTelegramID, expiryYes.CallbackData))
+	if !strings.Contains(telegramAdminE2EActionText(expired), telegram.PairingStaleReply) {
+		t.Fatalf("expired confirmation = %#v, want stale reply", expired)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, expiryTelegramID).Scan(&pairingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pairingCount != 0 {
+		t.Fatalf("pairing rows after expired confirm = %d, want 0", pairingCount)
+	}
+
+	// After five attempts in the window, even a matching name is refused.
+	for i := 0; i < 5; i++ {
+		refused := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(rateLimitTelegramID, "NOBODY "+strings.ToUpper(prefix)+fmt.Sprintf(" %d", i)))
+		if len(refused) != 1 || refused[0].Kind != telegram.SendMessage || refused[0].Text != telegram.NoMatchReply {
+			t.Fatalf("rate-limit attempt %d actions = %#v, want no-match reply", i, refused)
+		}
+	}
+	rateLimited := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(rateLimitTelegramID, soldierName))
+	if len(rateLimited) != 1 || rateLimited[0].Text != telegram.NoMatchReply {
+		t.Fatalf("rate-limited attempt = %#v, want no-match reply", rateLimited)
+	}
+	if telegramAdminE2EHasButton(rateLimited, "Yes, that's me") {
+		t.Fatalf("rate-limited attempt exposed a proposal: %#v", rateLimited)
+	}
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM telegram_pairing WHERE telegram_id = $1`, rateLimitTelegramID).Scan(&pairingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pairingCount != 0 {
+		t.Fatalf("pairing rows after rate limit = %d, want 0", pairingCount)
+	}
+
+	// Two strong but close matches are ambiguous: no proposal and no name.
+	ambiguous := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(ambiguousTelegramID, ambigShort))
+	if len(ambiguous) != 1 || ambiguous[0].Kind != telegram.SendMessage || ambiguous[0].Text != telegram.NoMatchReply {
+		t.Fatalf("ambiguous actions = %#v, want no-match reply", ambiguous)
+	}
+	ambiguousText := telegramAdminE2EActionText(ambiguous)
+	if telegramAdminE2EHasButton(ambiguous, "Yes, that's me") || strings.Contains(ambiguousText, ambigShort) || strings.Contains(ambiguousText, ambigLong) {
+		t.Fatalf("ambiguous reply disclosed a name: %#v", ambiguous)
+	}
+
+	// A paired soldier hitting a closed, out-of-scope, or unknown deep link is
+	// refused without recording attendance. Real 22-character codes are used so
+	// the session lookup path is exercised, not just the format check.
+	closedCode, err := deeplink.GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outOfScopeCode, err := deeplink.GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknownCode, err := deeplink.GenerateCode() // valid format, never stored
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamperedCode := "e2etampered" + strings.ToLower(strings.ReplaceAll(prefix, "-", ""))
+	seedSessionWithCode(t, db, prefix+"-closed", "TG E2E Closed Session", models.SessionScopeUnitWide, nil, soldierID, "closed", closedCode)
+	seedSessionWithCode(t, db, prefix+"-oos", "TG E2E Bravo Session", models.SessionScopeBatterySpecific, []string{models.BatteryBravo}, soldierID, "active", outOfScopeCode)
+
+	closed := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(soldierTelegramID, "/start "+closedCode))
+	if !strings.Contains(telegramAdminE2EActionText(closed), telegram.AttendanceClosedReply) {
+		t.Fatalf("closed-session /start = %#v, want closed reply", closed)
+	}
+	outOfScope := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(soldierTelegramID, "/start "+outOfScopeCode))
+	if !strings.Contains(telegramAdminE2EActionText(outOfScope), telegram.AttendanceOutOfScopeReply) {
+		t.Fatalf("out-of-scope /start = %#v, want out-of-scope reply", outOfScope)
+	}
+	unknown := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(soldierTelegramID, "/start "+unknownCode))
+	if !strings.Contains(telegramAdminE2EActionText(unknown), telegram.AttendanceInvalidReply) {
+		t.Fatalf("unknown-code /start = %#v, want invalid reply", unknown)
+	}
+	tampered := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(soldierTelegramID, "/start "+tamperedCode))
+	if !strings.Contains(telegramAdminE2EActionText(tampered), telegram.AttendanceInvalidReply) {
+		t.Fatalf("tampered-code /start = %#v, want invalid reply", tampered)
+	}
+	var recordCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM attendance_record WHERE session_id IN ($1, $2)`, prefix+"-closed", prefix+"-oos").Scan(&recordCount); err != nil {
+		t.Fatal(err)
+	}
+	if recordCount != 0 {
+		t.Fatalf("attendance rows from refused deep links = %d, want 0", recordCount)
+	}
+}
+
+func seedSessionWithCode(t *testing.T, db *database.DB, id, name, scope string, batteries []string, creatorID, status, code string) {
+	t.Helper()
+	if batteries == nil {
+		batteries = []string{}
+	}
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time, end_time, deeplink_code)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW() + INTERVAL '1 hour', $9)
+	`, id, name, id+"-qr", id+"-secret", scope, batteries, status, creatorID, code); err != nil {
+		t.Fatalf("seed Telegram admin session %s: %v", id, err)
 	}
 }
 
