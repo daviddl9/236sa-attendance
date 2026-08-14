@@ -53,7 +53,7 @@ func TestLegacyAuthResolvesByNameAndHash(t *testing.T) {
 	h := NewAuthHandler(db)
 	seedLegacyUser(t, db, prefix+"-a", prefix+" TAN WEI MING", "1234A", bcrypt.MinCost)
 
-	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" TAN WEI MING", "1234A")
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" TAN WEI MING", "1234A", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestLegacyAuthAcceptsLowercaseTypedSecret(t *testing.T) {
 	h := NewAuthHandler(db)
 	seedLegacyUser(t, db, prefix+"-b", prefix+" LIM AH KOW", "5678B", bcrypt.MinCost)
 
-	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" LIM AH KOW", "5678b")
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" LIM AH KOW", "5678b", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestLegacyAuthRejectsWrongSecret(t *testing.T) {
 	h := NewAuthHandler(db)
 	seedLegacyUser(t, db, prefix+"-c", prefix+" GOH ZHENHAO", "1111C", bcrypt.MinCost)
 
-	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" GOH ZHENHAO", "9999Z")
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" GOH ZHENHAO", "9999Z", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestLegacyAuthUnknownNameReturnsNoMatch(t *testing.T) {
 	db, prefix := openLegacyDB(t)
 	h := NewAuthHandler(db)
 
-	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" NOBODY AT ALL", "1234A")
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" NOBODY AT ALL", "1234A", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,11 +115,11 @@ func TestLegacyAuthDistinguishesPeopleSharingAName(t *testing.T) {
 	seedLegacyUser(t, db, prefix+"-d1", shared, "1234A", bcrypt.MinCost)
 	seedLegacyUser(t, db, prefix+"-d2", shared, "5678B", bcrypt.MinCost)
 
-	first, err := h.authenticateLegacyByName(context.Background(), shared, "1234A")
+	first, err := h.authenticateLegacyByName(context.Background(), shared, "1234A", "")
 	if err != nil || first == nil || first.id != prefix+"-d1" {
 		t.Fatalf("expected the first namesake to authenticate, got %v err=%v", first, err)
 	}
-	second, err := h.authenticateLegacyByName(context.Background(), shared, "5678B")
+	second, err := h.authenticateLegacyByName(context.Background(), shared, "5678B", "")
 	if err != nil || second == nil || second.id != prefix+"-d2" {
 		t.Fatalf("expected the second namesake to authenticate, got %v err=%v", second, err)
 	}
@@ -135,7 +135,7 @@ func TestLegacyAuthRefusesWhenTwoNamesakesShareASecret(t *testing.T) {
 	seedLegacyUser(t, db, prefix+"-e1", shared, "4321X", bcrypt.MinCost)
 	seedLegacyUser(t, db, prefix+"-e2", shared, "4321X", bcrypt.MinCost)
 
-	matched, err := h.authenticateLegacyByName(context.Background(), shared, "4321X")
+	matched, err := h.authenticateLegacyByName(context.Background(), shared, "4321X", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestLegacyAuthUpgradesWeakHashOnSuccess(t *testing.T) {
 	h := NewAuthHandler(db)
 	seedLegacyUser(t, db, prefix+"-f", prefix+" LOW COST USER", "2468D", bcrypt.MinCost)
 
-	if _, err := h.authenticateLegacyByName(context.Background(), prefix+" LOW COST USER", "2468D"); err != nil {
+	if _, err := h.authenticateLegacyByName(context.Background(), prefix+" LOW COST USER", "2468D", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -169,5 +169,63 @@ func TestLegacyAuthUpgradesWeakHashOnSuccess(t *testing.T) {
 	// The upgraded hash must still verify the same secret.
 	if !comparePassword(stored, "2468D") {
 		t.Fatal("upgraded hash no longer verifies the original secret")
+	}
+}
+
+func TestCanonicalDOBNormalizesFormats(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"06.11.1986", "1986-11-06", true},
+		{"06/11/1986", "1986-11-06", true},
+		{"06-11-1986", "1986-11-06", true},
+		{"1986-11-06", "1986-11-06", true},
+		{"06111986", "1986-11-06", true},
+		{"19861106", "1986-11-06", true},
+		{"", "", false},
+		{"not-a-date", "", false},
+		{"31132000", "", false}, // month 13 is invalid
+	}
+	for _, c := range cases {
+		got, ok := canonicalDOB(c.in)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Fatalf("canonicalDOB(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestLegacyAuthResolvesByNameAndDOB(t *testing.T) {
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUserWithDOB(t, db, prefix+"-dob", prefix+" TAN WEI MING", "06.11.1986")
+
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" TAN WEI MING", "", "06.11.1986")
+	if err != nil || matched == nil || matched.id != prefix+"-dob" {
+		t.Fatalf("expected DOB to authenticate, got %v err=%v", matched, err)
+	}
+
+	// A wrong DOB must not authenticate.
+	matched, err = h.authenticateLegacyByName(context.Background(), prefix+" TAN WEI MING", "", "01.01.2000")
+	if err != nil || matched != nil {
+		t.Fatalf("wrong DOB must not authenticate, got %v err=%v", matched, err)
+	}
+
+	// A missing DOB falls back to the password path, which must fail here.
+	matched, err = h.authenticateLegacyByName(context.Background(), prefix+" TAN WEI MING", "1234A", "")
+	if err != nil || matched != nil {
+		t.Fatalf("password fallback must not match a DOB-only user, got %v err=%v", matched, err)
+	}
+}
+
+func seedLegacyUserWithDOB(t *testing.T, db *database.DB, id, fullName, dob string) {
+	t.Helper()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO "user" (id, "full_name", rank, battery, dob, extras, verified, "is_superadmin", "createdAt", "updatedAt")
+		VALUES ($1, $2, 'CPL', 'Bravo', $3, '{}'::jsonb, true, false, NOW(), NOW())
+	`, id, fullName, dob)
+	if err != nil {
+		t.Fatalf("seed %s: %v", id, err)
 	}
 }
