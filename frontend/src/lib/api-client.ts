@@ -43,7 +43,8 @@ export type AuthResponse = SignInAuthenticatedResponse;
 
 export interface SignInRequest {
   identifier: string;
-  password: string;
+  password?: string;
+  dob?: string;
 }
 
 export interface SignUpRequest {

@@ -399,10 +399,11 @@ func (r *AdminRouter) startCreate(ctx context.Context, chatID int64, pairing Pai
 	if err != nil {
 		return nil, true, err
 	}
-	if adminContext.State != adminStateIdle || adminContext.SessionID != "" {
-		return nil, true, nil
-	}
+	// "Create event" is a top-level menu action. Any prior selection or
+	// in-progress draft is superseded by an explicit tap, so the wizard
+	// always starts fresh instead of silently doing nothing.
 	adminContext.State = adminStateCreatingName
+	adminContext.SessionID = ""
 	adminContext.Draft = AdminDraft{}
 	expires := r.clock().Add(adminDraftTTL)
 	adminContext.ExpiresAt = &expires

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ func NewAuthHandler(db *database.DB) *AuthHandler {
 type SignInRequest struct {
 	Identifier string `json:"identifier"` // Username, or legacy full name during rollout.
 	Password   string `json:"password"`
+	Dob        string `json:"dob"` // Legacy roster login: date of birth.
 }
 
 // SignInOutcome is the machine-readable result of a sign-in attempt.
@@ -72,6 +74,7 @@ type userRow struct {
 	createdAt              time.Time
 	updatedAt              time.Time
 	password               string
+	dob                    string
 }
 
 type pendingRegistrationRow struct {
@@ -82,7 +85,7 @@ const passwordHashCost = 12
 
 // signInUserColumns is the SELECT list shared by the sign-in lookups so the
 // primary query and the word-subset fallback scan an identical set of columns.
-const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password`
+const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password, u.dob`
 
 // scanUserRow scans signInUserColumns (in order) into ur. It accepts a pgx.Row,
 // which both Pool.QueryRow and Pool.Query rows satisfy.
@@ -90,6 +93,7 @@ func scanUserRow(row pgx.Row, ur *userRow) error {
 	return row.Scan(
 		&ur.id, &ur.fullName, &ur.rank, &ur.battery, &ur.isSuperadmin,
 		&ur.tierOverride, &ur.verified, &ur.passwordChangeRequired, &ur.createdAt, &ur.updatedAt, &ur.password,
+		&ur.dob,
 	)
 }
 
@@ -100,8 +104,10 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Identifier = strings.TrimSpace(req.Identifier)
-	if req.Identifier == "" || req.Password == "" {
-		http.Error(w, "Identifier and password are required", http.StatusBadRequest)
+	req.Password = strings.TrimSpace(req.Password)
+	req.Dob = strings.TrimSpace(req.Dob)
+	if req.Identifier == "" || (req.Password == "" && req.Dob == "") {
+		http.Error(w, "Identifier and password or date of birth are required", http.StatusBadRequest)
 		return
 	}
 
@@ -143,7 +149,7 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 	// Identity is established by the bcrypt hash in `password`, never by a stored
 	// copy of the secret itself. Pre-008 credentials were uppercased before
 	// hashing, so the typed value is tried as-is and uppercased.
-	matched, legacyErr := h.authenticateLegacyByName(ctx, req.Identifier, req.Password)
+	matched, legacyErr := h.authenticateLegacyByName(ctx, req.Identifier, req.Password, req.Dob)
 	if legacyErr != nil {
 		log.Printf("[SignIn] Error querying legacy user: %v", legacyErr)
 		http.Error(w, "Failed to query user", http.StatusInternalServerError)
@@ -168,7 +174,7 @@ const maxLegacyNameCandidates = 5
 // when none or more than one does. An ambiguous match is treated as a failure:
 // two people sharing a name and a secret must never silently resolve to one of
 // them.
-func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, password string) (*userRow, error) {
+func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, password, dob string) (*userRow, error) {
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT `+signInUserColumns+`
 		FROM "user" u
@@ -192,10 +198,29 @@ func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, 
 		return nil, err
 	}
 
-	// Try the value as typed, and uppercased only when that differs. bcrypt at the
-	// current cost is deliberately slow, so verifying the same string twice against
-	// every candidate would double sign-in latency and hand an attacker a cheap way
-	// to make the server do expensive work.
+	// Date-of-birth path is the primary roster credential: it is compared against
+	// the seeded dob column after normalizing both sides. An ambiguous name match
+	// (two people sharing a name and a DOB) is treated as a failure, mirroring the
+	// password path below.
+	if dob != "" {
+		var matched *userRow
+		for i := range candidates {
+			if !dobMatches(candidates[i].dob, dob) {
+				continue
+			}
+			if matched != nil {
+				return nil, nil
+			}
+			matched = &candidates[i]
+		}
+		return matched, nil
+	}
+
+	// Password fallback for rows that have no seeded DOB (e.g. accounts created
+	// after the roster import). Try the value as typed, and uppercased only when
+	// that differs. bcrypt at the current cost is deliberately slow, so verifying
+	// the same string twice against every candidate would double sign-in latency
+	// and hand an attacker a cheap way to make the server do expensive work.
 	attempts := []string{password}
 	if upper := strings.ToUpper(password); upper != password {
 		attempts = append(attempts, upper)
@@ -218,6 +243,50 @@ func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, 
 	}
 	h.upgradeLegacyHash(ctx, matched.id, matched.password, password)
 	return matched, nil
+}
+
+// dobMatches compares a stored DOB against user input after normalizing both to
+// a canonical YYYY-MM-DD form. Accepts DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY,
+// YYYY-MM-DD and 8-digit forms.
+func dobMatches(stored, input string) bool {
+	canonical, ok := canonicalDOB(stored)
+	if !ok {
+		return false
+	}
+	typed, ok := canonicalDOB(input)
+	if !ok {
+		return false
+	}
+	return canonical == typed
+}
+
+// canonicalDOB normalizes a date-of-birth string to YYYY-MM-DD. It strips
+// separators and accepts either DDMMYYYY (the roster/Excel form) or YYYYMMDD.
+func canonicalDOB(value string) (string, bool) {
+	digits := strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' {
+			return r
+		}
+		return -1
+	}, strings.TrimSpace(value))
+	if len(digits) != 8 {
+		return "", false
+	}
+	if y, err := strconv.Atoi(digits[0:4]); err == nil && y >= 1900 && y <= 2100 {
+		if m, err := strconv.Atoi(digits[4:6]); err == nil && m >= 1 && m <= 12 {
+			if d, err := strconv.Atoi(digits[6:8]); err == nil && d >= 1 && d <= 31 {
+				return digits[0:4] + "-" + digits[4:6] + "-" + digits[6:8], true
+			}
+		}
+	}
+	if d, err := strconv.Atoi(digits[0:2]); err == nil && d >= 1 && d <= 31 {
+		if m, err := strconv.Atoi(digits[2:4]); err == nil && m >= 1 && m <= 12 {
+			if y, err := strconv.Atoi(digits[4:8]); err == nil && y >= 1900 && y <= 2100 {
+				return digits[4:8] + "-" + digits[2:4] + "-" + digits[0:2], true
+			}
+		}
+	}
+	return "", false
 }
 
 // upgradeLegacyHash rehashes a verified credential at the current cost. Pre-008

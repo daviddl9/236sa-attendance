@@ -752,3 +752,31 @@ func TestDecodeAdminCallbackIDPreserves22CharacterRawID(t *testing.T) {
 		t.Fatalf("decoded raw ID = %q, valid=%v, want %q", got, ok, raw)
 	}
 }
+
+func TestAdminCreateEventStartsFromSelectedSession(t *testing.T) {
+	store := adminStoreWithTier(models.TierUnitCommander)
+	router := NewAdminRouter(store)
+	ctx := context.Background()
+
+	// Simulate a commander who still has an event selected (stale context).
+	store.contexts = map[int64]AdminContext{
+		adminPairing().TelegramID: {
+			TelegramID: adminPairing().TelegramID,
+			SessionID:  "event-1",
+			State:      adminStateSelected,
+			Version:    3,
+		},
+	}
+
+	actions, handled, err := router.HandleCallback(ctx, adminCallback("a:create"), adminPairing())
+	if err != nil {
+		t.Fatalf("create from selected session: %v", err)
+	}
+	if !handled || !strings.Contains(actionText(actions), "event name") {
+		t.Fatalf("create from selected session actions=%#v handled=%v", actions, handled)
+	}
+	loaded, _ := store.LoadContext(ctx, adminPairing().TelegramID)
+	if loaded.State != adminStateCreatingName || loaded.SessionID != "" {
+		t.Fatalf("context state=%q session=%q, want creating_name with cleared selection", loaded.State, loaded.SessionID)
+	}
+}
