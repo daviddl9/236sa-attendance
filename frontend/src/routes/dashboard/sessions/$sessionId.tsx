@@ -590,21 +590,28 @@ function SessionDetailPage() {
                       <p className="text-sm text-muted-foreground">Total Users</p>
                       <p className="text-2xl font-bold">{stats.total}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setListTab('present');
-                        scrollToCard('attendance-users-card');
-                      }}
-                      className="text-left group"
-                      aria-label="View present users list"
-                    >
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        Present
-                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
-                      </p>
-                      <p className="text-2xl font-bold">{stats.present}</p>
-                    </button>
+                    {isCommander ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setListTab('present');
+                          scrollToCard('attendance-users-card');
+                        }}
+                        className="text-left group"
+                        aria-label="View present users list"
+                      >
+                        <p className="text-sm text-muted-foreground flex items-center gap-1">
+                          Present
+                          <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                        </p>
+                        <p className="text-2xl font-bold">{stats.present}</p>
+                      </button>
+                    ) : (
+                      <div className="text-left">
+                        <p className="text-sm text-muted-foreground">Present</p>
+                        <p className="text-2xl font-bold">{stats.present}</p>
+                      </div>
+                    )}
                     <div className="col-span-2">
                       <p className="text-sm text-muted-foreground">Attendance Rate</p>
                       <p className="text-2xl font-bold">
@@ -613,21 +620,28 @@ function SessionDetailPage() {
                     </div>
                   </div>
                   <div className="pt-4 border-t">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setListTab('missing');
-                        scrollToCard('attendance-users-card');
-                      }}
-                      className="text-left group"
-                      aria-label="View missing users list"
-                    >
-                      <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
-                        Missing Users
-                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
-                      </p>
-                      <p className="text-lg font-semibold">{stats.missing}</p>
-                    </button>
+                    {isCommander ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setListTab('missing');
+                          scrollToCard('attendance-users-card');
+                        }}
+                        className="text-left group"
+                        aria-label="View missing users list"
+                      >
+                        <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
+                          Missing Users
+                          <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                        </p>
+                        <p className="text-lg font-semibold">{stats.missing}</p>
+                      </button>
+                    ) : (
+                      <div className="text-left">
+                        <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
+                        <p className="text-lg font-semibold">{stats.missing}</p>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -686,7 +700,7 @@ function SessionDetailPage() {
           </Card>
         )}
 
-        {analytics && (
+        {isCommander && analytics && (
           <Card
             id="attendance-users-card"
             tabIndex={-1}
