@@ -43,6 +43,7 @@ import {
   Search,
   Trash2,
   ChevronRight,
+  Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link, useNavigate } from '@tanstack/react-router';
@@ -70,6 +71,10 @@ function SessionDetailPage() {
   const [includeAbsentList, setIncludeAbsentList] = useState(true);
   const [includePresentList, setIncludePresentList] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [saveGroupDialogOpen, setSaveGroupDialogOpen] = useState(false);
+  const [duplicateName, setDuplicateName] = useState('');
+  const [saveGroupName, setSaveGroupName] = useState('');
   const [presentBatteryFilter, setPresentBatteryFilter] = useState('');
   const [presentSearchQuery, setPresentSearchQuery] = useState('');
   const [unmarkTarget, setUnmarkTarget] = useState<UserInfo | null>(null);
@@ -185,6 +190,33 @@ function SessionDetailPage() {
 
   const canClose = user?.isSuperadmin || session?.createdBy === user?.id;
   const canDelete = isSuperadmin(user);
+
+  const duplicateMutation = useMutation({
+    mutationFn: (name: string) => apiClient.duplicateSession(sessionId, { name, participantIds: [] }),
+    onSuccess: (newSession) => {
+      toast.success('Session duplicated');
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      setDuplicateDialogOpen(false);
+      navigate({ to: '/dashboard/sessions/$sessionId', params: { sessionId: newSession.id } });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to duplicate session');
+      setDuplicateDialogOpen(false);
+    },
+  });
+
+  const saveGroupMutation = useMutation({
+    mutationFn: (name: string) => apiClient.saveSessionAsGroup(sessionId, { name, participantIds: [] }),
+    onSuccess: () => {
+      toast.success('Saved as reusable group');
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+      setSaveGroupDialogOpen(false);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to save group');
+      setSaveGroupDialogOpen(false);
+    },
+  });
 
   // The attendance QR points at the workers.dev dashboard so a soldier can
   // scan, sign in, and monitor their attendance immediately. The token is the
@@ -394,6 +426,34 @@ function SessionDetailPage() {
             <Badge variant={session.status === 'active' ? 'default' : 'secondary'}>
               {session.status.toUpperCase()}
             </Badge>
+            {isCommander && (
+              <>
+                <Button
+                  variant="outline"
+                  className="h-9 px-3"
+                  onClick={() => {
+                    setDuplicateName(`${session.name} (copy)`);
+                    setDuplicateDialogOpen(true);
+                  }}
+                  aria-label="Duplicate session"
+                >
+                  <Copy className="h-4 w-4" />
+                  <span className="sr-only sm:not-sr-only sm:ml-2">Duplicate</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-9 px-3"
+                  onClick={() => {
+                    setSaveGroupName(session.name);
+                    setSaveGroupDialogOpen(true);
+                  }}
+                  aria-label="Save as group"
+                >
+                  <Users className="h-4 w-4" />
+                  <span className="sr-only sm:not-sr-only sm:ml-2">Save as Group</span>
+                </Button>
+              </>
+            )}
             {session.status === 'active' && canClose && (
               <Button
                 variant="destructive"
@@ -731,6 +791,64 @@ function SessionDetailPage() {
                 disabled={deleteMutation.isPending}
               >
                 {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={duplicateDialogOpen} onOpenChange={setDuplicateDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Duplicate Session</DialogTitle>
+              <DialogDescription>
+                Create a new session with the same participants as "{session.name}".
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor="duplicate-name">Session name</Label>
+              <Input
+                id="duplicate-name"
+                value={duplicateName}
+                onChange={(e) => setDuplicateName(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDuplicateDialogOpen(false)}>Cancel</Button>
+              <Button
+                onClick={() => duplicateMutation.mutate(duplicateName.trim())}
+                disabled={duplicateMutation.isPending || !duplicateName.trim()}
+              >
+                <Copy className="mr-2 h-4 w-4" />
+                Duplicate
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={saveGroupDialogOpen} onOpenChange={setSaveGroupDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Save as Reusable Group</DialogTitle>
+              <DialogDescription>
+                Save "{session.name}"'s participants as a reusable group so you can start future sessions in one click.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor="save-group-name">Group name</Label>
+              <Input
+                id="save-group-name"
+                value={saveGroupName}
+                onChange={(e) => setSaveGroupName(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setSaveGroupDialogOpen(false)}>Cancel</Button>
+              <Button
+                onClick={() => saveGroupMutation.mutate(saveGroupName.trim())}
+                disabled={saveGroupMutation.isPending || !saveGroupName.trim()}
+              >
+                <Users className="mr-2 h-4 w-4" />
+                Save Group
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -30,6 +30,12 @@ const navItems: NavItem[] = [
     minTier: 2,
   },
   {
+    label: "Groups",
+    href: "/dashboard/groups",
+    icon: Users,
+    minTier: 3,
+  },
+  {
     label: "Scan QR",
     href: "/dashboard/attendance/scan",
     icon: ScanLine,
