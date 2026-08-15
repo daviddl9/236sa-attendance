@@ -69,7 +69,7 @@ function SignInContent() {
               <Input
                 id="identifier"
                 type="text"
-                placeholder="Your full name, or any part of it"
+                placeholder="Your full name"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 disabled={loading}
