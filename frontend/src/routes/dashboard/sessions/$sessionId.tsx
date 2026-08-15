@@ -578,18 +578,25 @@ function SessionDetailPage() {
                       <p className="text-sm text-muted-foreground">Total Users</p>
                       <p className="text-2xl font-bold">{stats.total}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => scrollToCard('present-users-card')}
-                      className="text-left group"
-                      aria-label="View present users list"
-                    >
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        Present
-                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
-                      </p>
-                      <p className="text-2xl font-bold">{stats.present}</p>
-                    </button>
+                    {isCommander ? (
+                      <button
+                        type="button"
+                        onClick={() => scrollToCard('present-users-card')}
+                        className="text-left group"
+                        aria-label="View present users list"
+                      >
+                        <p className="text-sm text-muted-foreground flex items-center gap-1">
+                          Present
+                          <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                        </p>
+                        <p className="text-2xl font-bold">{stats.present}</p>
+                      </button>
+                    ) : (
+                      <div className="text-left">
+                        <p className="text-sm text-muted-foreground">Present</p>
+                        <p className="text-2xl font-bold">{stats.present}</p>
+                      </div>
+                    )}
                     <div className="col-span-2">
                       <p className="text-sm text-muted-foreground">Attendance Rate</p>
                       <p className="text-2xl font-bold">
@@ -598,18 +605,25 @@ function SessionDetailPage() {
                     </div>
                   </div>
                   <div className="pt-4 border-t">
-                    <button
-                      type="button"
-                      onClick={() => scrollToCard('missing-users-card')}
-                      className="text-left group"
-                      aria-label="View missing users list"
-                    >
-                      <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
-                        Missing Users
-                        <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
-                      </p>
-                      <p className="text-lg font-semibold">{stats.missing}</p>
-                    </button>
+                    {isCommander ? (
+                      <button
+                        type="button"
+                        onClick={() => scrollToCard('missing-users-card')}
+                        className="text-left group"
+                        aria-label="View missing users list"
+                      >
+                        <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
+                          Missing Users
+                          <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
+                        </p>
+                        <p className="text-lg font-semibold">{stats.missing}</p>
+                      </button>
+                    ) : (
+                      <div className="text-left">
+                        <p className="text-sm text-muted-foreground mb-2">Missing Users</p>
+                        <p className="text-lg font-semibold">{stats.missing}</p>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -668,7 +682,7 @@ function SessionDetailPage() {
           </Card>
         )}
 
-        {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
+        {isCommander && analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
           <Card id="missing-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'missing-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -715,7 +729,7 @@ function SessionDetailPage() {
           </Card>
         )}
 
-        {analytics && (
+        {isCommander && analytics && (
           <Card id="present-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'present-users-card' && 'ring-2 ring-primary transition-shadow')}>
             <CardHeader>
               <div className="flex items-center justify-between">
