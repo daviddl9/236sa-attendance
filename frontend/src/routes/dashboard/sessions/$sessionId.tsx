@@ -374,41 +374,47 @@ function SessionDetailPage() {
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-4 p-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4 min-w-0">
             <Link to="/dashboard/sessions">
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" aria-label="Back to sessions">
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             </Link>
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight">{session.name}</h1>
-              <p className="text-muted-foreground">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-3xl font-semibold tracking-tight truncate">
+                {session.name}
+              </h1>
+              <p className="text-muted-foreground text-sm truncate">
                 {new Date(session.startTime).toLocaleString()}
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={session.status === 'active' ? 'default' : 'secondary'}>
               {session.status.toUpperCase()}
             </Badge>
             {session.status === 'active' && canClose && (
               <Button
                 variant="destructive"
+                className="h-9 w-9 px-0 sm:h-auto sm:w-auto sm:px-4"
                 onClick={() => closeMutation.mutate()}
                 disabled={closeMutation.isPending}
+                aria-label="Close session"
               >
-                <X className="mr-2 h-4 w-4" />
-                Close Session
+                <X className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only sm:ml-2">Close Session</span>
               </Button>
             )}
             {canDelete && (
               <Button
                 variant="destructive"
+                className="h-9 w-9 px-0 sm:h-auto sm:w-auto sm:px-4"
                 onClick={() => setDeleteDialogOpen(true)}
+                aria-label="Delete session"
               >
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete Session
+                <Trash2 className="h-4 w-4" />
+                <span className="sr-only sm:not-sr-only sm:ml-2">Delete Session</span>
               </Button>
             )}
           </div>
