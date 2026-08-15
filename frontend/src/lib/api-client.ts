@@ -260,6 +260,35 @@ export interface CreateCustomSessionRequest {
   endTime?: string | null;
 }
 
+// Reusable participant groups
+export interface ParticipantGroup {
+  id: string;
+  name: string;
+  createdBy: string;
+  memberCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GroupResponse {
+  id: string;
+  name: string;
+  createdBy: string;
+  memberCount?: number;
+  createdAt: string;
+  updatedAt: string;
+  memberIds?: string[];
+}
+
+export interface CreateGroupRequest {
+  name: string;
+  participantIds: string[];
+}
+
+export interface GroupListResponse {
+  groups: ParticipantGroup[];
+}
+
 export interface AttendanceSession {
   id: string;
   name: string;
@@ -970,6 +999,73 @@ export class APIClient {
 
   async createCustomSession(data: CreateCustomSessionRequest): Promise<SessionResponse> {
     return this.request<SessionResponse>('/api/sessions/custom/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Reusable participant groups
+  async listGroups(): Promise<GroupListResponse> {
+    return this.request<GroupListResponse>('/api/groups', { method: 'GET' });
+  }
+
+  async getGroup(id: string): Promise<GroupResponse> {
+    return this.request<GroupResponse>(`/api/groups/${id}`, { method: 'GET' });
+  }
+
+  async createGroup(data: CreateGroupRequest): Promise<GroupResponse> {
+    return this.request<GroupResponse>('/api/groups', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteGroup(id: string): Promise<void> {
+    const response = await fetch(`${this.baseURL}/api/groups/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new APIError(text || response.statusText, response.status, response.statusText);
+    }
+  }
+
+  async previewGroupFromExcel(file: File, password?: string): Promise<CustomSessionPreviewResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (password) formData.append('password', password);
+
+    const response = await fetch(`${this.baseURL}/api/groups/preview`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new APIError(text || response.statusText, response.status, response.statusText);
+    }
+
+    return response.json() as Promise<CustomSessionPreviewResponse>;
+  }
+
+  async createSessionFromGroup(groupId: string, data: CreateCustomSessionRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>(`/api/groups/${groupId}/sessions`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async saveSessionAsGroup(sessionId: string, data: CreateGroupRequest): Promise<GroupResponse> {
+    return this.request<GroupResponse>(`/api/sessions/${sessionId}/group`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async duplicateSession(sessionId: string, data: CreateCustomSessionRequest): Promise<SessionResponse> {
+    return this.request<SessionResponse>(`/api/sessions/${sessionId}/duplicate`, {
       method: 'POST',
       body: JSON.stringify(data),
     });

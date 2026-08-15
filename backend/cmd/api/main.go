@@ -179,6 +179,7 @@ func main() {
 
 				// Session routes
 				sessionHandler := handlers.NewSessionHandler(db, sseHub)
+				groupHandler := handlers.NewGroupHandler(db)
 				r.Route("/sessions", func(r chi.Router) {
 					// List/active: Tier 2+
 					r.With(middleware.RequireBatteryNCO(db)).Get("/", sessionHandler.ListSessions)
@@ -202,6 +203,20 @@ func main() {
 					// Custom participant sessions: Tier 3+
 					r.With(middleware.RequireUnitCommander(db)).Post("/custom/preview", sessionHandler.PreviewCustomSession)
 					r.With(middleware.RequireUnitCommander(db)).Post("/custom/create", sessionHandler.CreateCustomSession)
+
+					// Reusable groups & duplication: Tier 3+
+					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/group", groupHandler.SaveSessionAsGroup)
+					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/duplicate", groupHandler.DuplicateSession)
+				})
+
+				// Reusable participant groups: Tier 3+
+				r.Route("/groups", func(r chi.Router) {
+					r.With(middleware.RequireUnitCommander(db)).Get("/", groupHandler.ListGroups)
+					r.With(middleware.RequireUnitCommander(db)).Post("/", groupHandler.CreateGroup)
+					r.With(middleware.RequireUnitCommander(db)).Post("/preview", groupHandler.PreviewGroupFromExcel)
+					r.With(middleware.RequireUnitCommander(db)).Get("/{id}", groupHandler.GetGroup)
+					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}", groupHandler.DeleteGroup)
+					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/sessions", groupHandler.CreateSessionFromGroup)
 				})
 
 				// Reports routes

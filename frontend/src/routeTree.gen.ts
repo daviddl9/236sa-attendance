@@ -22,6 +22,7 @@ import { Route as DashboardUsersIndexRouteImport } from './routes/dashboard/user
 import { Route as DashboardStatusesIndexRouteImport } from './routes/dashboard/statuses/index'
 import { Route as DashboardSessionsIndexRouteImport } from './routes/dashboard/sessions/index'
 import { Route as DashboardReportsIndexRouteImport } from './routes/dashboard/reports/index'
+import { Route as DashboardGroupsIndexRouteImport } from './routes/dashboard/groups/index'
 import { Route as DashboardUsersImportDocumentRouteImport } from './routes/dashboard/users/import-document'
 import { Route as DashboardUsersBulkUploadRouteImport } from './routes/dashboard/users/bulk-upload'
 import { Route as DashboardUsersUserIdRouteImport } from './routes/dashboard/users/$userId'
@@ -96,6 +97,11 @@ const DashboardSessionsIndexRoute = DashboardSessionsIndexRouteImport.update({
 const DashboardReportsIndexRoute = DashboardReportsIndexRouteImport.update({
   id: '/dashboard/reports/',
   path: '/dashboard/reports/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardGroupsIndexRoute = DashboardGroupsIndexRouteImport.update({
+  id: '/dashboard/groups/',
+  path: '/dashboard/groups/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardUsersImportDocumentRoute =
@@ -174,6 +180,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/users/$userId': typeof DashboardUsersUserIdRoute
   '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
   '/dashboard/users/import-document': typeof DashboardUsersImportDocumentRoute
+  '/dashboard/groups': typeof DashboardGroupsIndexRoute
   '/dashboard/reports': typeof DashboardReportsIndexRoute
   '/dashboard/sessions': typeof DashboardSessionsIndexRoute
   '/dashboard/statuses': typeof DashboardStatusesIndexRoute
@@ -199,6 +206,7 @@ export interface FileRoutesByTo {
   '/dashboard/users/$userId': typeof DashboardUsersUserIdRoute
   '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
   '/dashboard/users/import-document': typeof DashboardUsersImportDocumentRoute
+  '/dashboard/groups': typeof DashboardGroupsIndexRoute
   '/dashboard/reports': typeof DashboardReportsIndexRoute
   '/dashboard/sessions': typeof DashboardSessionsIndexRoute
   '/dashboard/statuses': typeof DashboardStatusesIndexRoute
@@ -225,6 +233,7 @@ export interface FileRoutesById {
   '/dashboard/users/$userId': typeof DashboardUsersUserIdRoute
   '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
   '/dashboard/users/import-document': typeof DashboardUsersImportDocumentRoute
+  '/dashboard/groups/': typeof DashboardGroupsIndexRoute
   '/dashboard/reports/': typeof DashboardReportsIndexRoute
   '/dashboard/sessions/': typeof DashboardSessionsIndexRoute
   '/dashboard/statuses/': typeof DashboardStatusesIndexRoute
@@ -252,6 +261,7 @@ export interface FileRouteTypes {
     | '/dashboard/users/$userId'
     | '/dashboard/users/bulk-upload'
     | '/dashboard/users/import-document'
+    | '/dashboard/groups'
     | '/dashboard/reports'
     | '/dashboard/sessions'
     | '/dashboard/statuses'
@@ -277,6 +287,7 @@ export interface FileRouteTypes {
     | '/dashboard/users/$userId'
     | '/dashboard/users/bulk-upload'
     | '/dashboard/users/import-document'
+    | '/dashboard/groups'
     | '/dashboard/reports'
     | '/dashboard/sessions'
     | '/dashboard/statuses'
@@ -302,6 +313,7 @@ export interface FileRouteTypes {
     | '/dashboard/users/$userId'
     | '/dashboard/users/bulk-upload'
     | '/dashboard/users/import-document'
+    | '/dashboard/groups/'
     | '/dashboard/reports/'
     | '/dashboard/sessions/'
     | '/dashboard/statuses/'
@@ -328,6 +340,7 @@ export interface RootRouteChildren {
   DashboardUsersUserIdRoute: typeof DashboardUsersUserIdRoute
   DashboardUsersBulkUploadRoute: typeof DashboardUsersBulkUploadRoute
   DashboardUsersImportDocumentRoute: typeof DashboardUsersImportDocumentRoute
+  DashboardGroupsIndexRoute: typeof DashboardGroupsIndexRoute
   DashboardReportsIndexRoute: typeof DashboardReportsIndexRoute
   DashboardSessionsIndexRoute: typeof DashboardSessionsIndexRoute
   DashboardStatusesIndexRoute: typeof DashboardStatusesIndexRoute
@@ -429,6 +442,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardReportsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/groups/': {
+      id: '/dashboard/groups/'
+      path: '/dashboard/groups'
+      fullPath: '/dashboard/groups'
+      preLoaderRoute: typeof DashboardGroupsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/users/import-document': {
       id: '/dashboard/users/import-document'
       path: '/dashboard/users/import-document'
@@ -520,6 +540,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardUsersUserIdRoute: DashboardUsersUserIdRoute,
   DashboardUsersBulkUploadRoute: DashboardUsersBulkUploadRoute,
   DashboardUsersImportDocumentRoute: DashboardUsersImportDocumentRoute,
+  DashboardGroupsIndexRoute: DashboardGroupsIndexRoute,
   DashboardReportsIndexRoute: DashboardReportsIndexRoute,
   DashboardSessionsIndexRoute: DashboardSessionsIndexRoute,
   DashboardStatusesIndexRoute: DashboardStatusesIndexRoute,
