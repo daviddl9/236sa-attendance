@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { Badge } from '../../../components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '../../../components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../../components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -83,6 +83,7 @@ function SessionDetailPage() {
   const [saveGroupName, setSaveGroupName] = useState('');
   const [presentBatteryFilter, setPresentBatteryFilter] = useState('');
   const [presentSearchQuery, setPresentSearchQuery] = useState('');
+  const [listTab, setListTab] = useState<'missing' | 'present' | null>(null);
   const [unmarkTarget, setUnmarkTarget] = useState<UserInfo | null>(null);
   const [highlightedCard, setHighlightedCard] = useState<string | null>(null);
   const [scannedDialogOpen, setScannedDialogOpen] = useState(!!scanned);
@@ -155,6 +156,17 @@ function SessionDetailPage() {
       u.rank?.toLowerCase().includes(presentSearchQuery.toLowerCase());
     return matchesBattery && matchesSearch;
   });
+
+  // Tab not yet chosen by the user: default to Missing, or Present when there
+  // is nobody missing (avoids opening the page on an empty list).
+  const effectiveTab: 'missing' | 'present' =
+    listTab ?? (missingUsers.length === 0 ? 'present' : 'missing');
+  const activeSearch = effectiveTab === 'missing' ? searchQuery : presentSearchQuery;
+  const setActiveSearch = effectiveTab === 'missing' ? setSearchQuery : setPresentSearchQuery;
+  const activeBatteryFilter =
+    effectiveTab === 'missing' ? batteryFilter : presentBatteryFilter;
+  const setActiveBatteryFilter =
+    effectiveTab === 'missing' ? setBatteryFilter : setPresentBatteryFilter;
 
   const manualMarkMutation = useMutation({
     mutationFn: (userId: string) => {
@@ -580,7 +592,10 @@ function SessionDetailPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => scrollToCard('present-users-card')}
+                      onClick={() => {
+                        setListTab('present');
+                        scrollToCard('attendance-users-card');
+                      }}
                       className="text-left group"
                       aria-label="View present users list"
                     >
@@ -600,7 +615,10 @@ function SessionDetailPage() {
                   <div className="pt-4 border-t">
                     <button
                       type="button"
-                      onClick={() => scrollToCard('missing-users-card')}
+                      onClick={() => {
+                        setListTab('missing');
+                        scrollToCard('attendance-users-card');
+                      }}
                       className="text-left group"
                       aria-label="View missing users list"
                     >
@@ -668,65 +686,27 @@ function SessionDetailPage() {
           </Card>
         )}
 
-        {analytics && analytics.missingUsers && analytics.missingUsers.length > 0 && (
-          <Card id="missing-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'missing-users-card' && 'ring-2 ring-primary transition-shadow')}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Missing Users</CardTitle>
-                  <CardDescription>Users who have not marked attendance</CardDescription>
-                </div>
-                {isCommander && (
-                  <Select
-                    value={batteryFilter || 'all'}
-                    onValueChange={(value) => setBatteryFilter(value === 'all' ? '' : value)}
-                  >
-                    <SelectTrigger className="w-[150px]">
-                      <SelectValue placeholder="All Batteries" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Batteries</SelectItem>
-                      <SelectItem value="HQ">HQ</SelectItem>
-                      <SelectItem value="Alpha">Alpha</SelectItem>
-                      <SelectItem value="Bravo">Bravo</SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search by name or rank..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              <UserTable
-                users={filteredMissingUsers}
-                showActions={false}
-                emptyMessage={searchQuery ? 'No matching users' : 'No missing users'}
-                onMark={canMarkAttendance ? (userId) => manualMarkMutation.mutate(userId) : undefined}
-                markingUserId={markingUserId ?? undefined}
-              />
-            </CardContent>
-          </Card>
-        )}
-
         {analytics && (
-          <Card id="present-users-card" tabIndex={-1} className={cn('outline-none', highlightedCard === 'present-users-card' && 'ring-2 ring-primary transition-shadow')}>
+          <Card
+            id="attendance-users-card"
+            tabIndex={-1}
+            className={cn(
+              'outline-none',
+              highlightedCard === 'attendance-users-card' && 'ring-2 ring-primary transition-shadow'
+            )}
+          >
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <CardTitle>Present Users</CardTitle>
-                  <CardDescription>Users who have marked attendance</CardDescription>
+                  <CardTitle>Attendance</CardTitle>
+                  <CardDescription>View who is missing or present</CardDescription>
                 </div>
                 {isCommander && (
                   <Select
-                    value={presentBatteryFilter || 'all'}
-                    onValueChange={(value) => setPresentBatteryFilter(value === 'all' ? '' : value)}
+                    value={activeBatteryFilter || 'all'}
+                    onValueChange={(value) =>
+                      setActiveBatteryFilter(value === 'all' ? '' : value)
+                    }
                   >
                     <SelectTrigger className="w-[150px]">
                       <SelectValue placeholder="All Batteries" />
@@ -742,29 +722,49 @@ function SessionDetailPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search by name or rank..."
-                  value={presentSearchQuery}
-                  onChange={(e) => setPresentSearchQuery(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              <UserTable
-                users={filteredPresentUsers}
-                showActions={false}
-                emptyMessage={presentSearchQuery ? 'No matching users' : 'No one marked yet'}
-                onUnmark={
-                  canUnmarkAttendance
-                    ? (userId) => {
-                        const target = presentUsers.find((u) => u.id === userId);
-                        if (target) setUnmarkTarget(target);
-                      }
-                    : undefined
-                }
-                unmarkingUserId={unmarkMutation.isPending ? unmarkMutation.variables : undefined}
-              />
+              <Tabs
+                value={effectiveTab}
+                onValueChange={(value) => setListTab(value as 'missing' | 'present')}
+              >
+                <TabsList>
+                  <TabsTrigger value="missing">Missing ({missingUsers.length})</TabsTrigger>
+                  <TabsTrigger value="present">Present ({presentUsers.length})</TabsTrigger>
+                </TabsList>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by name or rank..."
+                    value={activeSearch}
+                    onChange={(e) => setActiveSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                <TabsContent value="missing" className="space-y-3">
+                  <UserTable
+                    users={filteredMissingUsers}
+                    showActions={false}
+                    emptyMessage={searchQuery ? 'No matching users' : 'No missing users'}
+                    onMark={canMarkAttendance ? (userId) => manualMarkMutation.mutate(userId) : undefined}
+                    markingUserId={markingUserId ?? undefined}
+                  />
+                </TabsContent>
+                <TabsContent value="present" className="space-y-3">
+                  <UserTable
+                    users={filteredPresentUsers}
+                    showActions={false}
+                    emptyMessage={presentSearchQuery ? 'No matching users' : 'No one marked yet'}
+                    onUnmark={
+                      canUnmarkAttendance
+                        ? (userId) => {
+                            const target = presentUsers.find((u) => u.id === userId);
+                            if (target) setUnmarkTarget(target);
+                          }
+                        : undefined
+                    }
+                    unmarkingUserId={unmarkMutation.isPending ? unmarkMutation.variables : undefined}
+                  />
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         )}
