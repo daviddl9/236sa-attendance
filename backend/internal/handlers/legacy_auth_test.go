@@ -229,3 +229,114 @@ func seedLegacyUserWithDOB(t *testing.T, db *database.DB, id, fullName, dob stri
 		t.Fatalf("seed %s: %v", id, err)
 	}
 }
+
+func TestLegacyAuthWordSubsetResolvesByDOB(t *testing.T) {
+	// A soldier whose roster name is "D David Livingston" can sign in by typing
+	// any subset of their name's words ("David Livingston") plus their DOB.
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUserWithDOB(t, db, prefix+"-ws-dob", prefix+" D David Livingston", "06.11.1986")
+
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "06.11.1986")
+	if err != nil || matched == nil || matched.id != prefix+"-ws-dob" {
+		t.Fatalf("expected word-subset DOB sign-in, got %v err=%v", matched, err)
+	}
+
+	// Reordered and lowercase words also work.
+	matched, err = h.authenticateLegacyByName(context.Background(), "livingston "+prefix+" david", "", "06.11.1986")
+	if err != nil || matched == nil || matched.id != prefix+"-ws-dob" {
+		t.Fatalf("expected reordered word-subset sign-in, got %v err=%v", matched, err)
+	}
+
+	// A wrong DOB must still fail.
+	matched, err = h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "01.01.2000")
+	if err != nil || matched != nil {
+		t.Fatalf("wrong DOB must not authenticate via word-subset, got %v err=%v", matched, err)
+	}
+}
+
+func TestLegacyAuthWordSubsetRejectsPartialWords(t *testing.T) {
+	// The fallback matches whole words only: "Alex" must not match "Alexander".
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUserWithDOB(t, db, prefix+"-ws-part", prefix+" Alexander Tan", "06.11.1986")
+
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" Alex", "", "06.11.1986")
+	if err != nil || matched != nil {
+		t.Fatalf("a partial word must not authenticate, got %v err=%v", matched, err)
+	}
+}
+
+func TestLegacyAuthWordSubsetAmbiguousFailsClosed(t *testing.T) {
+	// Two people whose names both contain the typed words and who share a DOB
+	// must fail closed: the fallback can never silently resolve to one of them.
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUserWithDOB(t, db, prefix+"-ws-amb1", prefix+" D David Livingston", "06.11.1986")
+	seedLegacyUserWithDOB(t, db, prefix+"-ws-amb2", prefix+" David Livingston Tan", "06.11.1986")
+
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "06.11.1986")
+	if err != nil || matched != nil {
+		t.Fatalf("ambiguous word-subset must fail closed, got %v err=%v", matched, err)
+	}
+}
+
+func TestLegacyAuthWordSubsetDOBDisambiguates(t *testing.T) {
+	// When several people share the typed name words, the DOB picks out exactly
+	// one of them.
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUserWithDOB(t, db, prefix+"-ws-d1", prefix+" D David Livingston", "06.11.1986")
+	seedLegacyUserWithDOB(t, db, prefix+"-ws-d2", prefix+" David Livingston Tan", "01.01.1990")
+
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "06.11.1986")
+	if err != nil || matched == nil || matched.id != prefix+"-ws-d1" {
+		t.Fatalf("expected DOB to disambiguate to the first person, got %v err=%v", matched, err)
+	}
+	matched, err = h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "01.01.1990")
+	if err != nil || matched == nil || matched.id != prefix+"-ws-d2" {
+		t.Fatalf("expected DOB to disambiguate to the second person, got %v err=%v", matched, err)
+	}
+}
+
+func TestLegacyAuthWordSubsetResolvesByPassword(t *testing.T) {
+	// Rows without a seeded DOB (e.g. accounts created after the roster import)
+	// can still use the word-subset fallback with their password.
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUser(t, db, prefix+"-ws-pw", prefix+" D David Livingston", "1234A", bcrypt.MinCost)
+
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "1234A", "")
+	if err != nil || matched == nil || matched.id != prefix+"-ws-pw" {
+		t.Fatalf("expected word-subset password sign-in, got %v err=%v", matched, err)
+	}
+
+	// A wrong password must still fail.
+	matched, err = h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "9999Z", "")
+	if err != nil || matched != nil {
+		t.Fatalf("wrong password must not authenticate via word-subset, got %v err=%v", matched, err)
+	}
+}
+
+func TestLegacyAuthExactNameTakesPrecedenceOverFallback(t *testing.T) {
+	// When the typed name exactly matches a roster row, that row is the only
+	// candidate: the fallback must not resolve to a different person whose name
+	// merely contains the typed words.
+	db, prefix := openLegacyDB(t)
+	h := NewAuthHandler(db)
+	seedLegacyUserWithDOB(t, db, prefix+"-exact", prefix+" David Livingston", "01.01.1990")
+	seedLegacyUserWithDOB(t, db, prefix+"-superset", prefix+" D David Livingston", "06.11.1986")
+
+	// Exact name + its DOB authenticates the exact row.
+	matched, err := h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "01.01.1990")
+	if err != nil || matched == nil || matched.id != prefix+"-exact" {
+		t.Fatalf("expected the exact-name row to authenticate, got %v err=%v", matched, err)
+	}
+
+	// The same typed name with the superset row's DOB must fail: the exact name
+	// matched someone, so the fallback is not consulted.
+	matched, err = h.authenticateLegacyByName(context.Background(), prefix+" David Livingston", "", "06.11.1986")
+	if err != nil || matched != nil {
+		t.Fatalf("fallback must not run when an exact name matched, got %v err=%v", matched, err)
+	}
+}

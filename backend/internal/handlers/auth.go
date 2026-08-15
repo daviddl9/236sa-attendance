@@ -85,7 +85,10 @@ const passwordHashCost = 12
 
 // signInUserColumns is the SELECT list shared by the sign-in lookups so the
 // primary query and the word-subset fallback scan an identical set of columns.
-const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", u.password, u.dob`
+// password and dob are nullable in the schema, so they are coalesced to '' —
+// scanUserRow targets plain strings, and the verification logic already treats
+// an empty value as "no match" for both the DOB and password paths.
+const signInUserColumns = `u.id, u."full_name", u.rank, u.battery, u."is_superadmin", u.tier_override, u.verified, u.password_change_required, u."createdAt", u."updatedAt", COALESCE(u.password, ''), COALESCE(u.dob, '')`
 
 // scanUserRow scans signInUserColumns (in order) into ur. It accepts a pgx.Row,
 // which both Pool.QueryRow and Pool.Query rows satisfy.
@@ -169,12 +172,49 @@ func (h *AuthHandler) SignIn(w http.ResponseWriter, r *http.Request) {
 // bcrypt comparison, so an unbounded loop would be a denial-of-service lever.
 const maxLegacyNameCandidates = 5
 
+// maxWordSubsetCandidates bounds the word-subset fallback scan. The roster is a
+// few hundred rows, so the fallback loads every row whose name shares the
+// longest typed word and filters them in Go; this ceiling keeps the scan (and
+// the rows held in memory) bounded however the roster grows.
+const maxWordSubsetCandidates = 1000
+
 // authenticateLegacyByName resolves a pre-008 credential using the full name and
 // the bcrypt hash alone. It returns the single row whose hash verifies, or nil
 // when none or more than one does. An ambiguous match is treated as a failure:
 // two people sharing a name and a secret must never silently resolve to one of
 // them.
+//
+// The exact full-name lookup is the hot path and is unchanged. When it misses,
+// a word-subset fallback lets personnel sign in with any subset of their name's
+// words in any order ("David Livingston" for "D David Livingston"), so roster
+// formatting (leading initials, surname-first with commas) never locks anyone
+// out. The fallback runs only when the exact name matched nobody, so a wrong
+// secret against an exact name costs nothing extra, and it fails closed on
+// ambiguity.
 func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, password, dob string) (*userRow, error) {
+	// Primary: exact full-name match.
+	candidates, err := h.legacyCandidatesByExactName(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	if matched := h.verifyLegacy(ctx, candidates, password, dob); matched != nil {
+		return matched, nil
+	}
+
+	// Fallback: word-subset of the name, only when the exact name missed.
+	if len(candidates) == 0 {
+		fallback, err := h.legacyCandidatesByWordSubset(ctx, identifier)
+		if err != nil {
+			return nil, err
+		}
+		return h.verifyLegacy(ctx, fallback, password, dob), nil
+	}
+	return nil, nil
+}
+
+// legacyCandidatesByExactName returns up to maxLegacyNameCandidates rows whose
+// full name equals identifier, case-insensitively.
+func (h *AuthHandler) legacyCandidatesByExactName(ctx context.Context, identifier string) ([]userRow, error) {
 	rows, err := h.db.Pool.Query(ctx, `
 		SELECT `+signInUserColumns+`
 		FROM "user" u
@@ -197,11 +237,73 @@ func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return candidates, nil
+}
 
+// legacyCandidatesByWordSubset returns rows whose full name contains every word
+// of identifier (case-insensitive, any order). The SQL scan is anchored on the
+// longest typed word so it stays small; nameMatchesIdentifier does the exact
+// word-subset check in Go. The caller verifies the second factor and requires a
+// single match, so people sharing name words can never silently resolve to one
+// of them.
+func (h *AuthHandler) legacyCandidatesByWordSubset(ctx context.Context, identifier string) ([]userRow, error) {
+	words := nameTokens(identifier)
+	if len(words) == 0 {
+		return nil, nil
+	}
+	// The longest word is the most selective ILIKE anchor.
+	anchor := words[0]
+	for _, w := range words[1:] {
+		if len(w) > len(anchor) {
+			anchor = w
+		}
+	}
+	rows, err := h.db.Pool.Query(ctx, `
+		SELECT `+signInUserColumns+`
+		FROM "user" u
+		WHERE u."full_name" ILIKE '%' || $1 || '%'
+		LIMIT $2
+	`, anchor, maxWordSubsetCandidates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var matches []userRow
+	for rows.Next() {
+		var candidate userRow
+		if err := scanUserRow(rows, &candidate); err != nil {
+			return nil, err
+		}
+		if nameMatchesIdentifier(candidate.fullName, identifier) {
+			matches = append(matches, candidate)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return matches, nil
+}
+
+// verifyLegacy returns the single candidate whose second factor (DOB or
+// password) verifies, or nil when none or more than one does. On a password
+// success it also retires a weak legacy hash. An ambiguous match is treated as a
+// failure: two people sharing a name and a secret must never silently resolve
+// to one of them.
+func (h *AuthHandler) verifyLegacy(ctx context.Context, candidates []userRow, password, dob string) *userRow {
+	matched := verifyLegacyCandidates(candidates, password, dob)
+	if matched != nil && dob == "" {
+		h.upgradeLegacyHash(ctx, matched.id, matched.password, password)
+	}
+	return matched
+}
+
+// verifyLegacyCandidates checks the second factor — DOB or password — against
+// the candidate rows and returns the single row that verifies, or nil when none
+// or more than one does.
+func verifyLegacyCandidates(candidates []userRow, password, dob string) *userRow {
 	// Date-of-birth path is the primary roster credential: it is compared against
-	// the seeded dob column after normalizing both sides. An ambiguous name match
-	// (two people sharing a name and a DOB) is treated as a failure, mirroring the
-	// password path below.
+	// the seeded dob column after normalizing both sides.
 	if dob != "" {
 		var matched *userRow
 		for i := range candidates {
@@ -209,18 +311,22 @@ func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, 
 				continue
 			}
 			if matched != nil {
-				return nil, nil
+				return nil
 			}
 			matched = &candidates[i]
 		}
-		return matched, nil
+		return matched
 	}
 
 	// Password fallback for rows that have no seeded DOB (e.g. accounts created
 	// after the roster import). Try the value as typed, and uppercased only when
-	// that differs. bcrypt at the current cost is deliberately slow, so verifying
-	// the same string twice against every candidate would double sign-in latency
-	// and hand an attacker a cheap way to make the server do expensive work.
+	// that differs. bcrypt at the current cost is deliberately slow, so the
+	// candidate list is capped at maxLegacyNameCandidates — the same ceiling as
+	// the exact-name path — to keep an unbounded loop from becoming a
+	// denial-of-service lever.
+	if len(candidates) > maxLegacyNameCandidates {
+		candidates = candidates[:maxLegacyNameCandidates]
+	}
 	attempts := []string{password}
 	if upper := strings.ToUpper(password); upper != password {
 		attempts = append(attempts, upper)
@@ -232,17 +338,13 @@ func (h *AuthHandler) authenticateLegacyByName(ctx context.Context, identifier, 
 				continue
 			}
 			if matched != nil {
-				return nil, nil
+				return nil
 			}
 			matched = &candidates[i]
 			break
 		}
 	}
-	if matched == nil {
-		return nil, nil
-	}
-	h.upgradeLegacyHash(ctx, matched.id, matched.password, password)
-	return matched, nil
+	return matched
 }
 
 // dobMatches compares a stored DOB against user input after normalizing both to

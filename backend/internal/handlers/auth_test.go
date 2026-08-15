@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -138,6 +139,85 @@ func TestNameMatchesIdentifier(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := nameMatchesIdentifier(tt.fullName, tt.identifier); got != tt.want {
 				t.Fatalf("nameMatchesIdentifier(fullName, %q) = %v, want %v", tt.identifier, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestVerifyLegacyCandidatesDOB(t *testing.T) {
+	row := func(id, dob string) userRow { return userRow{id: id, dob: dob} }
+	tests := []struct {
+		name       string
+		candidates []userRow
+		dob        string
+		wantID     string // "" means no match
+	}{
+		{"single matching DOB", []userRow{row("a", "06.11.1986")}, "1986-11-06", "a"},
+		{"stored and typed formats differ", []userRow{row("a", "06.11.1986")}, "06111986", "a"},
+		{"no matching DOB", []userRow{row("a", "06.11.1986")}, "01.01.2000", ""},
+		{"no candidates", nil, "06.11.1986", ""},
+		{"ambiguous shared name and DOB", []userRow{row("a", "06.11.1986"), row("b", "06.11.1986")}, "06.11.1986", ""},
+		{"DOB disambiguates namesakes", []userRow{row("a", "06.11.1986"), row("b", "01.01.1990")}, "06.11.1986", "a"},
+		{"invalid typed DOB", []userRow{row("a", "06.11.1986")}, "not-a-date", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := verifyLegacyCandidates(tt.candidates, "", tt.dob)
+			if tt.wantID == "" {
+				if got != nil {
+					t.Fatalf("verifyLegacyCandidates() = %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.id != tt.wantID {
+				t.Fatalf("verifyLegacyCandidates() = %+v, want id %q", got, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestVerifyLegacyCandidatesPassword(t *testing.T) {
+	hash := func(t *testing.T, s string) string {
+		t.Helper()
+		h, err := bcrypt.GenerateFromPassword([]byte(s), bcrypt.MinCost)
+		if err != nil {
+			t.Fatalf("hash: %v", err)
+		}
+		return string(h)
+	}
+	row := func(id, password string) userRow { return userRow{id: id, password: password} }
+	tests := []struct {
+		name       string
+		candidates []userRow
+		password   string
+		wantID     string // "" means no match
+	}{
+		{"single match", []userRow{row("a", hash(t, "1234A"))}, "1234A", "a"},
+		{"lowercase typed against uppercased hash", []userRow{row("a", hash(t, "5678B"))}, "5678b", "a"},
+		{"wrong password", []userRow{row("a", hash(t, "1234A"))}, "9999Z", ""},
+		{"no candidates", nil, "1234A", ""},
+		{"ambiguous shared name and password", []userRow{row("a", hash(t, "4321X")), row("b", hash(t, "4321X"))}, "4321X", ""},
+		{"password disambiguates namesakes", []userRow{row("a", hash(t, "1234A")), row("b", hash(t, "5678B"))}, "5678B", "b"},
+		{"candidate list is capped before bcrypt", func() []userRow {
+			rows := make([]userRow, 0, maxLegacyNameCandidates+1)
+			for i := 0; i < maxLegacyNameCandidates; i++ {
+				rows = append(rows, row(fmt.Sprintf("wrong-%d", i), hash(t, "0000A")))
+			}
+			// The only correct match sits beyond the cap and must be unreachable.
+			return append(rows, row("right", hash(t, "1234A")))
+		}(), "1234A", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := verifyLegacyCandidates(tt.candidates, tt.password, "")
+			if tt.wantID == "" {
+				if got != nil {
+					t.Fatalf("verifyLegacyCandidates() = %+v, want nil", got)
+				}
+				return
+			}
+			if got == nil || got.id != tt.wantID {
+				t.Fatalf("verifyLegacyCandidates() = %+v, want id %q", got, tt.wantID)
 			}
 		})
 	}
