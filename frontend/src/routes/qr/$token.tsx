@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '../../lib/api-client';
+import { apiClient, API_URL } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
 import {
   Dialog,
@@ -55,8 +55,7 @@ function QRScanPage() {
 
       // Call backend API - backend will handle authentication and redirects
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-        const response = await fetch(`${apiUrl}/api/qr/${token}`, {
+        const response = await fetch(`${API_URL}/api/qr/${token}`, {
           method: 'GET',
           credentials: 'include',
           redirect: 'manual',
@@ -64,7 +63,9 @@ function QRScanPage() {
 
         // Handle opaque redirects (CORS) - backend returned a redirect
         if (response.type === 'opaqueredirect') {
-          window.location.href = `/attendance/marked?session=${sessionId}`;
+          // Attendance marked (or already marked) - land on the session page
+          // with the confirmation modal, matching the in-app camera scan flow.
+          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
           return;
         }
 
@@ -92,7 +93,7 @@ function QRScanPage() {
 
         // If successful (shouldn't happen, backend always redirects)
         if (response.ok) {
-          setStatus('success');
+          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
         } else {
           // For non-redirect errors, try to get error text
           const errorText = await response.text().catch(() => '');

@@ -125,8 +125,8 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 	}
 	switch outcome {
 	case attendance.AlreadyMarked:
-		// Already marked - redirect to success page.
-		http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
+		// Already marked - land on the session page with the confirmation modal.
+		http.Redirect(w, r, fmt.Sprintf("%s/dashboard/sessions/%s?scanned=true", frontendURL, sessionID), http.StatusFound)
 		return
 	case attendance.SessionClosed:
 		http.Error(w, "Session is not active", http.StatusBadRequest)
@@ -152,8 +152,9 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 	// Broadcast SSE event for live updates after the mark commits.
 	h.broadcastAttendanceMarked(ctx, sessionID, user, models.MarkingMethodQRScan, markedAt)
 
-	// Redirect to success page
-	http.Redirect(w, r, fmt.Sprintf("%s/attendance/marked?session=%s", frontendURL, sessionID), http.StatusFound)
+	// Land on the session page with the confirmation modal, matching the
+	// in-app camera scan flow.
+	http.Redirect(w, r, fmt.Sprintf("%s/dashboard/sessions/%s?scanned=true", frontendURL, sessionID), http.StatusFound)
 }
 
 func getEnv(key, defaultValue string) string {

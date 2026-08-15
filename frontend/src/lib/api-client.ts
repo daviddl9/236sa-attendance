@@ -1,5 +1,6 @@
-// API client for Go backend
-const API_URL = import.meta.env.VITE_API_URL || '';
+// API client for Go backend. Empty string means same-origin (the Vite dev
+// server proxies /api, and production serves the SPA and API from one origin).
+export const API_URL = import.meta.env.VITE_API_URL || '';
 
 // Access tiers (must match backend models.AccessTier)
 export type AccessTier = 1 | 2 | 3 | 4;
