@@ -1,5 +1,5 @@
 // API client for Go backend
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 // Access tiers (must match backend models.AccessTier)
 export type AccessTier = 1 | 2 | 3 | 4;
