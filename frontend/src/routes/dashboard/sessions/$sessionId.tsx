@@ -186,19 +186,18 @@ function SessionDetailPage() {
   const canClose = user?.isSuperadmin || session?.createdBy === user?.id;
   const canDelete = isSuperadmin(user);
 
-  // Session QR codes are Telegram deep links. The backend supplies the
-  // configured link only to authorized QR viewers, so the browser never needs
-  // a bot token or the raw deep-link code. Keep the existing web scanner as a
-  // fallback for disabled/legacy sessions.
+  // The attendance QR points at the workers.dev dashboard so a soldier can
+  // scan, sign in, and monitor their attendance immediately. The token is the
+  // opaque session:secret pair, never the raw deep-link code or bot token.
+  const attendanceOrigin = 'https://236sa-attendance.ddl-tdh.workers.dev';
   const qrCodeUrl = session
-    ? session.telegramLink ||
-      (session.qrCode
-        ? (() => {
-            const parts = session.qrCode.split(':');
-            const secret = parts.length >= 2 ? parts[1] : '';
-            return `${window.location.origin}/qr/${session.id}:${secret}`;
-          })()
-        : '')
+    ? session.qrCode
+      ? (() => {
+          const parts = session.qrCode.split(':');
+          const secret = parts.length >= 2 ? parts[1] : '';
+          return `${attendanceOrigin}/qr/${session.id}:${secret}`;
+        })()
+      : ''
     : '';
 
   const handleDownloadQR = () => {
@@ -419,8 +418,8 @@ function SessionDetailPage() {
           {isCommander && (
             <Card>
               <CardHeader>
-                <CardTitle>Telegram QR Code</CardTitle>
-                <CardDescription>Scan this QR code in Telegram to mark attendance</CardDescription>
+                <CardTitle>Attendance QR Code</CardTitle>
+                <CardDescription>Scan this QR code to mark and monitor your attendance</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col items-center gap-4">
                 {session && qrCodeUrl ? (
