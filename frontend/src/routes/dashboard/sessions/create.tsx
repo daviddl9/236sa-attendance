@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, type ParticipantMatch, type UnmatchedRow } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -44,6 +44,14 @@ function CreateSessionPage() {
   const [matched, setMatched] = useState<ParticipantMatch[]>([]);
   const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
   const [previewDone, setPreviewDone] = useState(false);
+  const [listSource, setListSource] = useState<'excel' | 'group'>('excel');
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => apiClient.listGroups(),
+  });
+  const groups = groupsData?.groups ?? [];
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; scope: string; batteries?: string[] }) =>
@@ -64,6 +72,17 @@ function CreateSessionPage() {
       }),
     onSuccess: (data) => {
       toast.success('Session created');
+      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      navigate({ to: '/dashboard/sessions/$sessionId', params: { sessionId: data.id } });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to create session'),
+  });
+
+  const createFromGroupMutation = useMutation({
+    mutationFn: (groupId: string) =>
+      apiClient.createSessionFromGroup(groupId, { name, participantIds: [] }),
+    onSuccess: (data) => {
+      toast.success('Session created from group');
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       navigate({ to: '/dashboard/sessions/$sessionId', params: { sessionId: data.id } });
     },
@@ -109,6 +128,14 @@ function CreateSessionPage() {
     }
 
     if (scope === 'custom_list') {
+      if (listSource === 'group') {
+        if (!selectedGroupId) {
+          toast.error('Please pick a saved group');
+          return;
+        }
+        createFromGroupMutation.mutate(selectedGroupId);
+        return;
+      }
       if (!previewDone || matched.length === 0) {
         toast.error('Please upload and preview a participant list first');
         return;
@@ -128,7 +155,8 @@ function CreateSessionPage() {
     });
   };
 
-  const isPending = createMutation.isPending || createCustomMutation.isPending;
+  const isPending =
+    createMutation.isPending || createCustomMutation.isPending || createFromGroupMutation.isPending;
 
   return (
     <DashboardLayout>
@@ -174,6 +202,7 @@ function CreateSessionPage() {
                       setPreviewDone(false);
                       setMatched([]);
                       setUnmatched([]);
+                      setSelectedGroupId('');
                     }
                   }}
                 >
@@ -211,42 +240,95 @@ function CreateSessionPage() {
               {scope === 'custom_list' && (
                 <div className="grid gap-3">
                   <Label>Participant List *</Label>
-                  <p className="text-xs text-muted-foreground -mt-1">
-                    Upload an Excel file with a <strong>Full Name</strong> column (and optionally <strong>NRIC Last 5</strong>).
-                  </p>
 
                   <div className="flex gap-2">
                     <Button
                       type="button"
-                      variant="outline"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={previewLoading}
+                      variant={listSource === 'excel' ? 'default' : 'outline'}
+                      onClick={() => setListSource('excel')}
                       className="gap-2"
                     >
                       <Upload className="h-4 w-4" />
-                      {previewLoading ? 'Parsing...' : 'Upload Excel'}
+                      Upload Excel
                     </Button>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".xlsx,.xls"
-                      className="hidden"
-                      onChange={handleFileChange}
-                    />
-                    {previewDone && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Users className="h-4 w-4" />
-                        {matched.length} matched
-                        {unmatched.length > 0 && (
-                          <span className="text-destructive font-medium">
-                            · {unmatched.length} unmatched
-                          </span>
-                        )}
-                      </div>
-                    )}
+                    <Button
+                      type="button"
+                      variant={listSource === 'group' ? 'default' : 'outline'}
+                      onClick={() => setListSource('group')}
+                      className="gap-2"
+                    >
+                      <Users className="h-4 w-4" />
+                      Saved Group
+                    </Button>
                   </div>
 
-                  {previewDone && matched.length > 0 && (
+                  {listSource === 'excel' ? (
+                    <>
+                      <p className="text-xs text-muted-foreground -mt-1">
+                        Upload an Excel file with a <strong>Full Name</strong> column (and optionally <strong>NRIC Last 5</strong>).
+                      </p>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={previewLoading}
+                          className="gap-2"
+                        >
+                          <Upload className="h-4 w-4" />
+                          {previewLoading ? 'Parsing...' : 'Upload Excel'}
+                        </Button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".xlsx,.xls"
+                          className="hidden"
+                          onChange={handleFileChange}
+                        />
+                        {previewDone && (
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Users className="h-4 w-4" />
+                            {matched.length} matched
+                            {unmatched.length > 0 && (
+                              <span className="text-destructive font-medium">
+                                · {unmatched.length} unmatched
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="grid gap-2">
+                      <p className="text-xs text-muted-foreground -mt-1">
+                        Pick a saved group to reuse its roster.
+                      </p>
+                      <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a group" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {groups.length === 0 && (
+                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                              No saved groups yet.
+                            </div>
+                          )}
+                          {groups.map((g) => (
+                            <SelectItem key={g.id} value={g.id}>
+                              {g.name} ({g.memberCount ?? 0})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {selectedGroupId && (
+                        <p className="text-xs text-muted-foreground">
+                          This session will include all members of the selected group.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {listSource === 'excel' && previewDone && matched.length > 0 && (
                     <div className="rounded-md border p-3 space-y-1 max-h-48 overflow-y-auto">
                       <p className="text-xs font-medium text-muted-foreground mb-2">
                         Matched participants ({matched.length})
@@ -265,7 +347,7 @@ function CreateSessionPage() {
                     </div>
                   )}
 
-                  {previewDone && unmatched.length > 0 && (
+                  {listSource === 'excel' && previewDone && unmatched.length > 0 && (
                     <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 space-y-1">
                       <div className="flex items-center gap-2 text-sm font-medium text-destructive mb-2">
                         <AlertCircle className="h-4 w-4" />
@@ -284,7 +366,13 @@ function CreateSessionPage() {
               <div className="flex justify-end gap-2 pt-4">
                 <Button
                   type="submit"
-                  disabled={isPending || (scope === 'custom_list' && (!previewDone || unmatched.length > 0))}
+                  disabled={
+                    isPending ||
+                    (scope === 'custom_list' &&
+                      (listSource === 'group'
+                        ? !selectedGroupId
+                        : !previewDone || unmatched.length > 0))
+                  }
                 >
                   <Save className="mr-2 h-4 w-4" />
                   {isPending ? 'Creating...' : 'Create Session'}
