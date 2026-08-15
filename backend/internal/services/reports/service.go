@@ -314,7 +314,18 @@ func (s *Service) scopedRosterWith(ctx context.Context, q queryer, sessionID str
 		args = append(args, sessionID)
 		where = append(where, "sp.session_id = $1", `u.verified = true`)
 	} else {
-		where = append(where, `u."is_superadmin" = false`, `u.verified = true`)
+		// Superadmins are excluded from the roster unless they have actually
+		// marked attendance for this session. This keeps officers who don't
+		// attend out of every session's missing list while still showing a
+		// commander's own scan in present users.
+		placeholder := len(args) + 1
+		where = append(where,
+			fmt.Sprintf(`(u."is_superadmin" = false OR EXISTS (
+				SELECT 1 FROM attendance_record marked
+				WHERE marked.session_id = $%d AND marked.user_id = u.id
+			))`, placeholder),
+			`u.verified = true`)
+		args = append(args, sessionID)
 		switch meta.scope {
 		case models.SessionScopeUnitWide:
 		case models.SessionScopeBatterySpecific:

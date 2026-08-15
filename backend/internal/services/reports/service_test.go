@@ -90,6 +90,63 @@ func TestMissingPaginatesSearchResultsDeterministicallyAndClampsPageSize(t *test
 	}
 }
 
+func TestSuperadminAppearsInRosterOnlyWhenMarked(t *testing.T) {
+	db, prefix := openReportsServiceDB(t)
+	actorID := prefix + "-actor"
+	seedReportUser(t, db, actorID, "COMMANDER", "3SG", "Alpha", false)
+	markedAdmin := prefix + "-marked-admin"
+	unmarkedAdmin := prefix + "-unmarked-admin"
+	regular := prefix + "-regular"
+	seedReportUser(t, db, markedAdmin, "Marked Admin", "CPT", "Alpha", true)
+	seedReportUser(t, db, unmarkedAdmin, "Unmarked Admin", "CPT", "Alpha", true)
+	seedReportUser(t, db, regular, "Regular Soldier", "PTE", "Alpha", false)
+
+	sessionID := prefix + "-session"
+	seedReportSession(t, db, sessionID, models.SessionScopeUnitWide, nil, actorID)
+	seedReportRecord(t, db, sessionID, markedAdmin, "qr_scan", "")
+
+	svc := NewService(db)
+	actor := &models.User{ID: actorID, Rank: stringPtr(models.Rank3SG), Battery: stringPtr(models.BatteryAlpha)}
+
+	roster, err := svc.EligibleUsers(context.Background(), sessionID, actor)
+	if err != nil {
+		t.Fatalf("EligibleUsers() error = %v", err)
+	}
+	ids := rowIDs(roster)
+	if !containsString(ids, markedAdmin) {
+		t.Fatalf("marked superadmin %s missing from roster: %v", markedAdmin, ids)
+	}
+	if containsString(ids, unmarkedAdmin) {
+		t.Fatalf("unmarked superadmin %s should not be in roster: %v", unmarkedAdmin, ids)
+	}
+	if !containsString(ids, regular) {
+		t.Fatalf("regular user %s missing from roster: %v", regular, ids)
+	}
+
+	summary, err := svc.Summary(context.Background(), sessionID, actor)
+	if err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+	// The marked superadmin is counted as present; the unmarked one is not in
+	// the roster at all. Absolute totals are not asserted because other test
+	// packages share this database and may seed additional Alpha users.
+	if summary.Present != 1 {
+		t.Fatalf("summary.Present = %d, want 1 (only the marked superadmin has a record)", summary.Present)
+	}
+	if summary.Missing != summary.Total-1 {
+		t.Fatalf("summary = %+v, want Missing = Total-1", summary)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func openReportsServiceDB(t *testing.T) (*database.DB, string) {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
