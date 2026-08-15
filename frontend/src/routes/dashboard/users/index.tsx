@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, type UserProfile } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '../../../components/ui/dialog';
 import { useMemo, useState } from 'react';
-import { Plus, Search, Trash2, Upload, X } from 'lucide-react';
+import { Plus, Search, Trash2, Upload, X, Users, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
 import { UserTable } from '../../../components/users/user-table';
@@ -79,6 +79,12 @@ function UsersPage() {
       }
     },
   });
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => apiClient.listGroups(),
+  });
+  const groups = groupsData?.groups ?? [];
 
   const deleteMutation = useMutation({
     mutationFn: (userId: string) => apiClient.deleteUser(userId),
@@ -210,6 +216,41 @@ function UsersPage() {
                 <Upload className="mr-2 h-4 w-4" />
                 Bulk Upload
               </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-md border bg-muted/20 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Users className="h-4 w-4" />
+              Reusable groups
+            </div>
+            <Link
+              to="/dashboard/groups"
+              className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Manage
+              <ChevronRight className="h-3 w-3" />
+            </Link>
+          </div>
+          {groups.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No saved groups yet. Create one from the Groups page to reuse a roster across sessions.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {groups.map((g) => (
+                <Link
+                  key={g.id}
+                  to="/dashboard/groups"
+                  className="inline-flex items-center gap-1.5 rounded-full border bg-background px-3 py-1 text-xs hover:bg-accent"
+                >
+                  <Users className="h-3 w-3 text-muted-foreground" />
+                  {g.name}
+                  <span className="text-muted-foreground">({g.memberCount ?? 0})</span>
+                </Link>
+              ))}
             </div>
           )}
         </div>
