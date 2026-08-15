@@ -23,7 +23,7 @@ func openGroupServiceDB(t *testing.T) (*database.DB, string) {
 	prefix := fmt.Sprintf("grp-%d", os.Getpid())
 	t.Cleanup(func() {
 		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM attendance_session WHERE id LIKE $1`, prefix+"-%")
-		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM participant_group WHERE id LIKE $1`, prefix+"-%")
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM participant_group WHERE created_by LIKE $1`, prefix+"-%")
 		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM "user" WHERE id LIKE $1`, prefix+"-%")
 		db.Close()
 	})
