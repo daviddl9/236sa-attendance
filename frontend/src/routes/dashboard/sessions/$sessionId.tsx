@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../../lib/api-client';
 import { cn } from '../../../lib/utils';
 import DashboardLayout from '../../../components/dashboard/layout';
@@ -35,6 +35,7 @@ import { Label } from '../../../components/ui/label';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ArrowLeft,
+  CheckCircle2,
   Download,
   X,
   FileDown,
@@ -55,10 +56,15 @@ import { useSessionSSE } from '../../../hooks/use-session-sse';
 
 export const Route = createFileRoute('/dashboard/sessions/$sessionId')({
   component: SessionDetailPage,
+  validateSearch: (search: Record<string, unknown>): { scanned?: boolean } => {
+    const scanned = search.scanned === 'true' || search.scanned === true;
+    return scanned ? { scanned: true } : {};
+  },
 });
 
 function SessionDetailPage() {
   const { sessionId } = Route.useParams();
+  const { scanned } = Route.useSearch();
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -79,6 +85,27 @@ function SessionDetailPage() {
   const [presentSearchQuery, setPresentSearchQuery] = useState('');
   const [unmarkTarget, setUnmarkTarget] = useState<UserInfo | null>(null);
   const [highlightedCard, setHighlightedCard] = useState<string | null>(null);
+  const [scannedDialogOpen, setScannedDialogOpen] = useState(!!scanned);
+
+  // Dismiss the "Attendance Scanned" confirmation and drop the ?scanned param
+  // so a refresh/back doesn't re-show it.
+  const dismissScannedDialog = useCallback(() => {
+    setScannedDialogOpen(false);
+    navigate({
+      to: '/dashboard/sessions/$sessionId',
+      params: { sessionId },
+      search: (prev) => ({ ...prev, scanned: false }),
+      replace: true,
+    });
+  }, [navigate, sessionId]);
+
+  // Auto-dismiss the confirmation after 5 seconds.
+  useEffect(() => {
+    if (!scannedDialogOpen) return;
+    const timer = setTimeout(dismissScannedDialog, 5000);
+    return () => clearTimeout(timer);
+  }, [scannedDialogOpen, dismissScannedDialog]);
+
   const scrollToCard = (id: string) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -850,6 +877,35 @@ function SessionDetailPage() {
                 <Users className="mr-2 h-4 w-4" />
                 Save Group
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={scannedDialogOpen}
+          onOpenChange={(open) => {
+            if (open) {
+              setScannedDialogOpen(true);
+            } else {
+              dismissScannedDialog();
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <div className="flex justify-center mb-2">
+                <div className="rounded-full bg-green-100 dark:bg-green-900 p-3">
+                  <CheckCircle2 className="h-8 w-8 text-green-600 dark:text-green-400" />
+                </div>
+              </div>
+              <DialogTitle className="text-center text-xl">Attendance Scanned</DialogTitle>
+              <DialogDescription className="text-center">
+                Your attendance has been recorded for{' '}
+                <span className="font-semibold text-foreground">{session.name}</span>.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="justify-center">
+              <Button onClick={dismissScannedDialog}>OK</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
