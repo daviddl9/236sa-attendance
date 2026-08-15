@@ -12,7 +12,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
-import { apiClient } from '../lib/api-client';
+import { apiClient, API_URL } from '../lib/api-client';
 import { PublicFooter } from '../components/public-footer';
 import { Clock } from 'lucide-react';
 
@@ -52,15 +52,14 @@ function SignInContent() {
         return;
       }
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-        const response = await fetch(`${apiUrl}/api/qr/${search.qrToken}`, {
+        const response = await fetch(`${API_URL}/api/qr/${search.qrToken}`, {
           method: 'GET',
           credentials: 'include',
           redirect: 'manual',
         });
         if (response.type === 'opaqueredirect') {
           const sessionId = search.qrToken.split(':')[0];
-          window.location.href = `/attendance/marked?session=${sessionId}`;
+          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
           return;
         }
         if (response.status >= 300 && response.status < 400) {
@@ -77,7 +76,7 @@ function SignInContent() {
         }
         if (response.ok) {
           const sessionId = search.qrToken.split(':')[0];
-          window.location.href = `/attendance/marked?session=${sessionId}`;
+          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
           return;
         }
       } catch {

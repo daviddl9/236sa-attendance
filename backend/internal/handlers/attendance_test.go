@@ -129,6 +129,55 @@ func TestHandleQRScanClosedSessionAuthenticatesBeforeState(t *testing.T) {
 	}
 }
 
+func TestHandleQRScanAuthenticatedRedirectsToSessionPage(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	userID := prefix + "-qr-user"
+	sessionID := prefix + "-qr-session"
+	sessionToken := prefix + "-session-token"
+	secret := prefix + "-secret"
+	seedUser(t, db, userID, "QR USER", "PTE", "Alpha", "qr-user", true)
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time)
+		VALUES ($1, 'Active QR session', $2, $3, 'unit_wide', '{}', 'active', $4, NOW())
+	`, sessionID, sessionID+"-qr", secret, userID)
+	if err != nil {
+		t.Fatalf("seed active QR session: %v", err)
+	}
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO session (id, "expiresAt", token, "userId", "createdAt", "updatedAt")
+		VALUES ($1, NOW() + INTERVAL '1 hour', $2, $3, NOW(), NOW())
+	`, prefix+"-auth-session", sessionToken, userID)
+	if err != nil {
+		t.Fatalf("seed QR auth session: %v", err)
+	}
+
+	qrToken := sessionID + ":" + secret
+	req := httptest.NewRequest(http.MethodGet, "/api/qr/"+qrToken, nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: sessionToken})
+	rc := chi.NewRouteContext()
+	rc.URLParams.Add("token", qrToken)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
+	rec := httptest.NewRecorder()
+	NewAttendanceHandler(db, nil).HandleQRScan(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("QR response status = %d, want %d (body %q)", rec.Code, http.StatusFound, rec.Body.String())
+	}
+	location := rec.Header().Get("Location")
+	if !strings.Contains(location, "/dashboard/sessions/"+sessionID+"?scanned=true") {
+		t.Fatalf("QR redirect = %q, want session page with scanned=true", location)
+	}
+	var records int
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT count(*) FROM attendance_record WHERE session_id = $1 AND user_id = $2
+	`, sessionID, userID).Scan(&records); err != nil {
+		t.Fatalf("count QR records: %v", err)
+	}
+	if records != 1 {
+		t.Fatalf("QR records = %d, want 1", records)
+	}
+}
+
 func TestManualMarkAttendanceAllClosedReturnsLegacyError(t *testing.T) {
 	db, prefix := openRegistrationDB(t)
 	commanderID := prefix + "-commander"

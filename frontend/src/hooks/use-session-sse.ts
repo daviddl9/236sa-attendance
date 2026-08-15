@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { API_URL } from "../lib/api-client";
 
 // SSE Event types matching backend
 interface SSEEvent {
@@ -52,8 +53,7 @@ export function useSessionSSE(
         eventSourceRef.current.close();
       }
 
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8080";
-      const url = `${apiUrl}/api/sessions/${sessionId}/stream`;
+      const url = `${API_URL}/api/sessions/${sessionId}/stream`;
 
       const eventSource = new EventSource(url, { withCredentials: true });
       eventSourceRef.current = eventSource;

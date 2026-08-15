@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, API_URL } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -72,8 +72,7 @@ export default function FirstTimeSignInModal() {
       if (pendingQrToken) {
         sessionStorage.removeItem('pendingQrToken');
         try {
-          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080';
-          const response = await fetch(`${apiUrl}/api/qr/${pendingQrToken}`, {
+          const response = await fetch(`${API_URL}/api/qr/${pendingQrToken}`, {
             method: 'GET',
             credentials: 'include',
             redirect: 'manual',
@@ -84,8 +83,8 @@ export default function FirstTimeSignInModal() {
           // Handle opaque redirects (CORS) - backend returned a redirect
           if (response.type === 'opaqueredirect') {
             const sessionId = pendingQrToken.split(':')[0];
-            console.log('[Modal] Redirecting to marked page for session:', sessionId);
-            window.location.href = `/attendance/marked?session=${sessionId}`;
+            console.log('[Modal] Redirecting to session page for session:', sessionId);
+            window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
             return;
           }
 
@@ -105,10 +104,10 @@ export default function FirstTimeSignInModal() {
             }
           }
 
-          // If successful, redirect to marked page
+          // If successful, redirect to session page
           if (response.ok) {
             const sessionId = pendingQrToken.split(':')[0];
-            window.location.href = `/attendance/marked?session=${sessionId}`;
+            window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
             return;
           }
         } catch (qrError) {
