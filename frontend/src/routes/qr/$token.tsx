@@ -17,11 +17,29 @@ export const Route = createFileRoute('/qr/$token')({
   component: QRScanPage,
 });
 
+// Map backend error statuses to a message a soldier can act on. The backend
+// returns 404 when the session was deleted, 400 when it is no longer active,
+// and 403 when the user falls outside its scope.
+function errorMessageForStatus(status: number): string {
+  switch (status) {
+    case 404:
+      return 'This session no longer exists. It may have been deleted.';
+    case 403:
+      return "You're outside this session's scope.";
+    case 400:
+      return 'This session is not active.';
+    default:
+      return 'Failed to mark attendance. Please try again.';
+  }
+}
+
 function QRScanPage() {
   const { token } = Route.useParams();
   const navigate = useNavigate();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const [status, setStatus] = useState<'loading' | 'success' | 'error' | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorTarget, setErrorTarget] = useState<'sessions' | 'scan'>('scan');
   const sessionId = token.split(':')[0];
 
   // Try to fetch session details for display, but silently fail if user doesn't have permission
@@ -94,20 +112,27 @@ function QRScanPage() {
         // If successful (shouldn't happen, backend always redirects)
         if (response.ok) {
           window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
-        } else {
-          // For non-redirect errors, try to get error text
-          const errorText = await response.text().catch(() => '');
-          // If it's a 401/403, redirect to sign-in
-          if (response.status === 401 || response.status === 403) {
-            window.location.href = `/sign-in?redirect=/qr/${token}&qrToken=${token}`;
-            return;
-          }
-          throw new Error(errorText || 'Failed to mark attendance');
+          return;
         }
+
+        // The user is already authenticated here (the unauthenticated case is
+        // handled before the fetch), so only a genuine auth failure (expired
+        // cookie) should send them back to sign-in. Everything else — a
+        // deleted session, a closed session, or an out-of-scope user — is
+        // surfaced as an error instead of bouncing them to the login page.
+        if (response.status === 401) {
+          window.location.href = `/sign-in?redirect=/qr/${token}&qrToken=${token}`;
+          return;
+        }
+
+        setErrorMessage(errorMessageForStatus(response.status));
+        setErrorTarget(response.status === 404 ? 'sessions' : 'scan');
+        setStatus('error');
       } catch (error) {
         console.error('QR scan error:', error);
-        // On any error, redirect to sign-in as fallback
-        window.location.href = `/sign-in?redirect=/qr/${token}&qrToken=${token}`;
+        setErrorMessage('Failed to mark attendance. Please try again.');
+        setErrorTarget('scan');
+        setStatus('error');
       }
     };
 
@@ -117,6 +142,8 @@ function QRScanPage() {
   const handleClose = () => {
     if (status === 'success') {
       navigate({ to: '/dashboard' });
+    } else if (errorTarget === 'sessions') {
+      navigate({ to: '/dashboard/sessions' });
     } else {
       navigate({ to: '/dashboard/attendance/scan' });
     }
@@ -161,14 +188,18 @@ function QRScanPage() {
                 </div>
                 <DialogTitle className="text-center text-xl">Error</DialogTitle>
                 <DialogDescription className="text-center">
-                  Failed to mark attendance. Please try again.
+                  {errorMessage ?? 'Failed to mark attendance. Please try again.'}
                 </DialogDescription>
               </>
             )}
           </DialogHeader>
           <div className="flex justify-end pt-4">
             <Button onClick={handleClose}>
-              {status === 'success' ? 'Go to Dashboard' : 'Close'}
+              {status === 'success'
+                ? 'Go to Dashboard'
+                : errorTarget === 'sessions'
+                  ? 'Go to Sessions'
+                  : 'Close'}
             </Button>
           </div>
         </DialogContent>
