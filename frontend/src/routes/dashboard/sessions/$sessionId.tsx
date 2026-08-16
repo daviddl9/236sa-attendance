@@ -435,8 +435,14 @@ function SessionDetailPage() {
   if (!session) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center py-12">
+        <div className="flex flex-col items-center justify-center gap-4 py-12">
           <div className="text-muted-foreground">Session not found</div>
+          <Link to="/dashboard/sessions">
+            <Button variant="outline">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Sessions
+            </Button>
+          </Link>
         </div>
       </DashboardLayout>
     );
