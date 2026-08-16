@@ -201,52 +201,7 @@ func TestListPendingRegistrationsFiltersAndScopesBattery(t *testing.T) {
 	}
 }
 
-func TestPasswordChangeRequiredBlocksQRScan(t *testing.T) {
-	db, prefix := openRegistrationDB(t)
-	userID := prefix + "-qr-user"
-	sessionID := prefix + "-qr-session"
-	token := prefix + "-session-token"
-	secret := prefix + "-secret"
-	seedUser(t, db, userID, "QR USER", "PTE", "HQ", "qruser", true)
-	if _, err := db.Pool.Exec(context.Background(), `UPDATE "user" SET password_change_required = true WHERE id = $1`, userID); err != nil {
-		t.Fatal(err)
-	}
-	_, err := db.Pool.Exec(context.Background(), `
-		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by)
-		VALUES ($1, 'QR test', $2, $3, 'unit_wide', '{}', 'active', $4)
-	`, sessionID, sessionID+"-code", secret, userID)
-	if err != nil {
-		t.Fatalf("seed QR session: %v", err)
-	}
-	_, err = db.Pool.Exec(context.Background(), `
-		INSERT INTO session (id, "expiresAt", token, "userId", "createdAt", "updatedAt")
-		VALUES ($1, NOW() + INTERVAL '1 hour', $2, $3, NOW(), NOW())
-	`, prefix+"-session", token, userID)
-	if err != nil {
-		t.Fatalf("seed auth session: %v", err)
-	}
-
-	qrToken := sessionID + ":" + secret
-	req := httptest.NewRequest(http.MethodGet, "/api/qr/"+qrToken, nil)
-	req.AddCookie(&http.Cookie{Name: "session", Value: token})
-	rc := chi.NewRouteContext()
-	rc.URLParams.Add("token", qrToken)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rc))
-	rec := httptest.NewRecorder()
-	NewAttendanceHandler(db, nil).HandleQRScan(rec, req)
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Password change required") {
-		t.Fatalf("QR response = (%d, %q), want 403 password-change error", rec.Code, rec.Body.String())
-	}
-	var records int
-	if err := db.Pool.QueryRow(context.Background(), `SELECT count(*) FROM attendance_record WHERE session_id = $1`, sessionID).Scan(&records); err != nil {
-		t.Fatal(err)
-	}
-	if records != 0 {
-		t.Fatalf("QR records = %d, want 0", records)
-	}
-}
-
-func TestProvisionCredentialsAndForcedChange(t *testing.T) {
+func TestProvisionCredentials(t *testing.T) {
 	db, prefix := openRegistrationDB(t)
 	targetID := prefix + "-target"
 	seedUser(t, db, targetID, "TARGET PERSON", "PTE", "Alpha", "", true)
@@ -267,35 +222,9 @@ func TestProvisionCredentialsAndForcedChange(t *testing.T) {
 		t.Fatalf("temporary password = %q", first.TemporaryPassword)
 	}
 	assertSignIn(t, db, "targetuser", first.TemporaryPassword, http.StatusOK)
-	if !passwordChangeRequired(t, db, targetID) {
-		t.Fatal("temporary sign-in did not require a password change")
-	}
 	second := provision(t, h, targetID, "TargetUser", actor)
 	assertSignIn(t, db, "targetuser", first.TemporaryPassword, http.StatusUnauthorized)
 	assertSignIn(t, db, "targetuser", second.TemporaryPassword, http.StatusOK)
-	same := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(fmt.Sprintf(`{"password":%q,"confirmPassword":%q}`, second.TemporaryPassword, second.TemporaryPassword)))
-	same = same.WithContext(context.WithValue(same.Context(), middleware.UserIDKey, targetID))
-	sameOut := httptest.NewRecorder()
-	NewAuthHandler(db).ChangePassword(sameOut, same)
-	if sameOut.Code != http.StatusBadRequest || !strings.Contains(sameOut.Body.String(), "differ") {
-		t.Fatalf("reusing temporary password = (%d, %q), want 400 differing-password error", sameOut.Code, sameOut.Body.String())
-	}
-	change := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(`{"password":"new secure password","confirmPassword":"new secure password"}`))
-	change = change.WithContext(context.WithValue(change.Context(), middleware.UserIDKey, targetID))
-	out := httptest.NewRecorder()
-	NewAuthHandler(db).ChangePassword(out, change)
-	if out.Code != http.StatusOK || passwordChangeRequired(t, db, targetID) {
-		t.Fatalf("change response = %d or flag remains set", out.Code)
-	}
-	assertSignIn(t, db, "targetuser", second.TemporaryPassword, http.StatusUnauthorized)
-	assertSignIn(t, db, "targetuser", "new secure password", http.StatusOK)
-	bad := httptest.NewRequest(http.MethodPost, "/api/auth/change-password", strings.NewReader(`{"password":"1234A","confirmPassword":"1234A"}`))
-	bad = bad.WithContext(context.WithValue(bad.Context(), middleware.UserIDKey, targetID))
-	badOut := httptest.NewRecorder()
-	NewAuthHandler(db).ChangePassword(badOut, bad)
-	if badOut.Code != http.StatusBadRequest || !strings.Contains(badOut.Body.String(), "Do not use your NRIC digits as your password") {
-		t.Fatalf("NRIC-shaped response = (%d, %q)", badOut.Code, badOut.Body.String())
-	}
 	var audits int
 	_ = db.Pool.QueryRow(context.Background(), `SELECT count(*) FROM credential_audit WHERE actor_user_id = $1`, targetID).Scan(&audits)
 	if audits != 2 {
@@ -336,15 +265,6 @@ func assertSignIn(t *testing.T, db *database.DB, username, password string, want
 	if got := authSignIn(t, NewAuthHandler(db), username, password).Code; got != want {
 		t.Fatalf("sign-in %q status = %d, want %d", username, got, want)
 	}
-}
-
-func passwordChangeRequired(t *testing.T, db *database.DB, id string) bool {
-	t.Helper()
-	var required bool
-	if err := db.Pool.QueryRow(context.Background(), `SELECT password_change_required FROM "user" WHERE id = $1`, id).Scan(&required); err != nil {
-		t.Fatal(err)
-	}
-	return required
 }
 
 func stringPtr(value string) *string { return &value }

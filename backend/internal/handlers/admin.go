@@ -906,8 +906,8 @@ func createApprovedRegistration(ctx context.Context, tx pgx.Tx, pending pendingA
 	_, err := tx.Exec(ctx, `
 		INSERT INTO "user" (
 			id, username, "full_name", rank, battery, password, extras,
-			"is_superadmin", verified, password_change_required, "createdAt", "updatedAt"
-		) VALUES ($1,$2,$3,$4,$5,$6,'{}'::jsonb,false,true,false,NOW(),NOW())
+			"is_superadmin", verified, "createdAt", "updatedAt"
+		) VALUES ($1,$2,$3,$4,$5,$6,'{}'::jsonb,false,true,NOW(),NOW())
 	`, pending.ID, pending.Username, pending.Name, pending.Rank, pending.Battery, pending.PasswordHash)
 	return err
 }

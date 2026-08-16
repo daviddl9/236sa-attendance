@@ -110,7 +110,7 @@ func (h *AdminHandler) ProvisionCredentials(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	result, err := tx.Exec(ctx, `UPDATE "user"
-		SET username = $1, password = $2, password_change_required = true, "updatedAt" = NOW()
+		SET username = $1, password = $2, "updatedAt" = NOW()
 		WHERE id = $3`, req.Username, string(hash), targetID)
 	if err != nil {
 		http.Error(w, "Failed to provision credentials", http.StatusInternalServerError)
