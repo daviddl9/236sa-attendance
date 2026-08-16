@@ -16,7 +16,6 @@ export interface User {
   extras?: Record<string, string> | null;
   tierOverride?: 2 | 3 | null;
   verified: boolean;
-  passwordChangeRequired?: boolean;
   isSuperadmin: boolean;
   tier: AccessTier; // computed by server
   createdAt: string;
@@ -594,13 +593,6 @@ export class APIClient {
   async signOut(): Promise<SignOutResponse> {
     return this.request<SignOutResponse>('/api/auth/sign-out', {
       method: 'POST',
-    });
-  }
-
-  async changePassword(data: { password: string; confirmPassword: string }): Promise<{ message: string }> {
-    return this.request<{ message: string }>('/api/auth/change-password', {
-      method: 'POST',
-      body: JSON.stringify(data),
     });
   }
 

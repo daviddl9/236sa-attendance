@@ -79,16 +79,14 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 		if err == nil {
 			// User is authenticated - load user data
 			user = &models.User{}
-			var passwordChangeRequired bool
 			err = h.db.Pool.QueryRow(ctx, `
-				SELECT id, "full_name", rank, battery, is_superadmin, password_change_required, "createdAt", "updatedAt"
+				SELECT id, "full_name", rank, battery, is_superadmin, "createdAt", "updatedAt"
 				FROM "user" WHERE id = $1
 			`, userID).Scan(
 				&user.ID, &user.FullName, &user.Rank, &user.Battery,
-				&user.IsSuperadmin, &passwordChangeRequired,
+				&user.IsSuperadmin,
 				&user.CreatedAt, &user.UpdatedAt,
 			)
-			user.PasswordChangeRequired = passwordChangeRequired
 			if err != nil {
 				user = nil
 			}
@@ -99,10 +97,6 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 		// Not authenticated - redirect to sign-in page with QR token for auto-marking after login
 		redirectURL := fmt.Sprintf("%s/sign-in?redirect=/qr/%s&qrToken=%s", frontendURL, token, token)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
-		return
-	}
-	if user.PasswordChangeRequired {
-		http.Error(w, "Password change required", http.StatusForbidden)
 		return
 	}
 
