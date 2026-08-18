@@ -23,6 +23,13 @@ import {
   DialogTrigger,
 } from '../../../components/ui/dialog';
 import { Badge } from '../../../components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../../components/ui/select';
 import { AddUserDialog } from '../../../components/users/add-user-dialog';
 import { UserTable } from '../../../components/users/user-table';
 import { Users, Upload, Trash2, Play, Lock, Plus, Search, X } from 'lucide-react';
@@ -46,6 +53,7 @@ function GroupsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [copyFromGroupId, setCopyFromGroupId] = useState('');
   const [sessionDialog, setSessionDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [sessionName, setSessionName] = useState('');
 
@@ -151,14 +159,21 @@ function GroupsPage() {
   });
 
   // Create a blank group, then open its member dialog so people can be added
-  // by searching the roster (no Excel needed).
+  // by searching the roster (no Excel needed). If the user picked a source
+  // group to copy from, seed the new group with that group's members.
   const createNewGroupMutation = useMutation({
-    mutationFn: (name: string) => apiClient.createGroup({ name, participantIds: [] }),
+    mutationFn: async (name: string) => {
+      const participantIds = copyFromGroupId
+        ? (await apiClient.getGroup(copyFromGroupId)).memberIds ?? []
+        : [];
+      return apiClient.createGroup({ name, participantIds });
+    },
     onSuccess: (group) => {
       toast.success('Group created');
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       setNewGroupOpen(false);
       setNewGroupName('');
+      setCopyFromGroupId('');
       setMemberDialog({ groupId: group.id, groupName: group.name });
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to create group'),
@@ -355,6 +370,21 @@ function GroupsPage() {
                 placeholder="e.g. Advance Party"
                 autoFocus
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="new-group-copy-from">Copy members from (optional)</Label>
+              <Select value={copyFromGroupId} onValueChange={setCopyFromGroupId}>
+                <SelectTrigger id="new-group-copy-from">
+                  <SelectValue placeholder="Start with an existing group's members" />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups.map((g) => (
+                    <SelectItem key={g.id} value={g.id}>
+                      {g.name} ({g.memberCount ?? 0})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setNewGroupOpen(false)}>
