@@ -41,5 +41,5 @@ sudo docker ps | grep attendance
 - No co-authored-by lines in commit messages
 
 <!-- SPECKIT START -->
-Current spec-kit plan: specs/001-password-format-check/plan.md
+Current spec-kit plan: specs/010-ops-groups/plan.md
 <!-- SPECKIT END -->

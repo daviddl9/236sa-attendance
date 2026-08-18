@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { apiClient, type ParticipantMatch, type UnmatchedRow } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -23,7 +23,8 @@ import {
   DialogTrigger,
 } from '../../../components/ui/dialog';
 import { Badge } from '../../../components/ui/badge';
-import { Users, Upload, Trash2, Play, Lock } from 'lucide-react';
+import { AddUserDialog } from '../../../components/users/add-user-dialog';
+import { Users, Upload, Trash2, Play, Lock, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 export const Route = createFileRoute('/dashboard/groups/')({
@@ -45,6 +46,13 @@ function GroupsPage() {
   const [sessionDialog, setSessionDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [sessionName, setSessionName] = useState('');
 
+  // Member management state.
+  const [memberDialog, setMemberDialog] = useState<{ groupId: string; groupName: string } | null>(null);
+  const [addMembersOpen, setAddMembersOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [addUserOpen, setAddUserOpen] = useState(false);
+
   const { data, isLoading } = useQuery({
     queryKey: ['groups'],
     queryFn: () => apiClient.listGroups(),
@@ -59,6 +67,63 @@ function GroupsPage() {
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete group'),
   });
+
+  // Members of the group currently open in the member dialog.
+  const { data: groupDetail, isLoading: membersLoading } = useQuery({
+    queryKey: ['group-members', memberDialog?.groupId],
+    queryFn: () => apiClient.getGroup(memberDialog!.groupId),
+    enabled: !!memberDialog,
+  });
+  const members = useMemo(() => groupDetail?.members ?? [], [groupDetail]);
+
+  const removeMemberMutation = useMutation({
+    mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
+      apiClient.deleteGroupMember(groupId, userId),
+    onSuccess: (_data, vars) => {
+      toast.success('Member removed');
+      queryClient.invalidateQueries({ queryKey: ['group-members', vars.groupId] });
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to remove member'),
+  });
+
+  const setMembersMutation = useMutation({
+    mutationFn: ({ groupId, memberIds }: { groupId: string; memberIds: string[] }) =>
+      apiClient.setGroupMembers(groupId, memberIds),
+    onSuccess: (_data, vars) => {
+      toast.success('Members updated');
+      queryClient.invalidateQueries({ queryKey: ['group-members', vars.groupId] });
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update members'),
+  });
+
+  // Debounced user search for the add-members dialog.
+  const { data: searchData, isFetching: searchLoading } = useQuery({
+    queryKey: ['users', 'search', memberSearch.trim()],
+    queryFn: () => apiClient.listUsers({ search: memberSearch.trim(), limit: 50 }),
+    enabled: addMembersOpen && memberSearch.trim().length > 0,
+  });
+  const searchResults = useMemo(() => {
+    if (memberSearch.trim().length === 0) return [];
+    const existing = new Set(members.map((m) => m.userId));
+    return (searchData?.users ?? []).filter((u) => !existing.has(u.id));
+  }, [searchData, memberSearch, members]);
+
+  const handleAddSelected = () => {
+    if (!memberDialog) return;
+    const currentIds = members.map((m) => m.userId);
+    setMembersMutation.mutate(
+      { groupId: memberDialog.groupId, memberIds: [...currentIds, ...Array.from(selectedIds)] },
+      {
+        onSuccess: () => {
+          setAddMembersOpen(false);
+          setSelectedIds(new Set());
+          setMemberSearch('');
+        },
+      },
+    );
+  };
 
   const createGroupMutation = useMutation({
     mutationFn: (data: { name: string; participantIds: string[] }) =>
@@ -257,7 +322,15 @@ function GroupsPage() {
                     {group.memberCount ?? 0} members
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="flex gap-2">
+                <CardContent className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setMemberDialog({ groupId: group.id, groupName: group.name })}
+                  >
+                    <Users className="mr-2 h-4 w-4" />
+                    Members
+                  </Button>
                   <Button
                     size="sm"
                     onClick={() => {
@@ -281,6 +354,139 @@ function GroupsPage() {
             ))}
           </div>
         )}
+
+        <Dialog open={!!memberDialog} onOpenChange={(o) => !o && setMemberDialog(null)}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Members — {memberDialog?.groupName}</DialogTitle>
+              <DialogDescription>
+                {membersLoading ? 'Loading members…' : `${members.length} members`}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="max-h-80 space-y-1 overflow-y-auto">
+              {members.length === 0 && !membersLoading && (
+                <p className="py-6 text-center text-sm text-muted-foreground">No members yet.</p>
+              )}
+              {members.map((m) => (
+                <div
+                  key={m.userId}
+                  className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate font-medium">{m.fullName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {[m.rank, m.battery].filter(Boolean).join(' · ') || '—'}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-destructive"
+                    disabled={removeMemberMutation.isPending}
+                    onClick={() =>
+                      removeMemberMutation.mutate({ groupId: memberDialog!.groupId, userId: m.userId })
+                    }
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setAddUserOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                New Person
+              </Button>
+              <Button onClick={() => setAddMembersOpen(true)}>
+                <Search className="mr-2 h-4 w-4" />
+                Add People
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={addMembersOpen} onOpenChange={(o) => !o && setAddMembersOpen(false)}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Add people to {memberDialog?.groupName}</DialogTitle>
+              <DialogDescription>
+                Search the roster and select people to add to this group.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid gap-2">
+              <Label htmlFor="member-search">Search roster</Label>
+              <Input
+                id="member-search"
+                value={memberSearch}
+                onChange={(e) => setMemberSearch(e.target.value)}
+                placeholder="Type a name to search…"
+                autoFocus
+              />
+              {searchLoading && <p className="text-xs text-muted-foreground">Searching…</p>}
+            </div>
+
+            {memberSearch.trim().length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                Type to search for roster users.
+              </p>
+            ) : searchResults.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No matching users found…
+              </p>
+            ) : (
+              <div className="max-h-64 space-y-1 overflow-y-auto">
+                {searchResults.map((u) => (
+                  <label
+                    key={u.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(u.id)}
+                      onChange={(e) => {
+                        const next = new Set(selectedIds);
+                        if (e.target.checked) next.add(u.id);
+                        else next.delete(u.id);
+                        setSelectedIds(next);
+                      }}
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{u.fullName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {[u.rank, u.battery].filter(Boolean).join(' · ') || '—'}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAddMembersOpen(false)}>Cancel</Button>
+              <Button
+                onClick={handleAddSelected}
+                disabled={selectedIds.size === 0 || setMembersMutation.isPending}
+              >
+                Add {selectedIds.size > 0 ? `(${selectedIds.size})` : ''}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <AddUserDialog
+          open={addUserOpen}
+          onOpenChange={setAddUserOpen}
+          onCreated={(user) => {
+            if (!memberDialog) return;
+            setMembersMutation.mutate({
+              groupId: memberDialog.groupId,
+              memberIds: [...members.map((m) => m.userId), user.id],
+            });
+          }}
+        />
 
         <Dialog open={!!sessionDialog} onOpenChange={(o) => !o && setSessionDialog(null)}>
           <DialogContent>

@@ -270,6 +270,13 @@ export interface ParticipantGroup {
   updatedAt: string;
 }
 
+export interface GroupMember {
+  userId: string;
+  fullName: string;
+  rank?: string | null;
+  battery?: string | null;
+}
+
 export interface GroupResponse {
   id: string;
   name: string;
@@ -278,6 +285,7 @@ export interface GroupResponse {
   createdAt: string;
   updatedAt: string;
   memberIds?: string[];
+  members?: GroupMember[];
 }
 
 export interface CreateGroupRequest {
@@ -1015,6 +1023,24 @@ export class APIClient {
 
   async deleteGroup(id: string): Promise<void> {
     const response = await fetch(`${this.baseURL}/api/groups/${id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new APIError(text || response.statusText, response.status, response.statusText);
+    }
+  }
+
+  async setGroupMembers(id: string, memberIds: string[]): Promise<{ memberCount: number }> {
+    return this.request<{ memberCount: number }>(`/api/groups/${id}/members`, {
+      method: 'PUT',
+      body: JSON.stringify({ memberIds }),
+    });
+  }
+
+  async deleteGroupMember(id: string, userId: string): Promise<void> {
+    const response = await fetch(`${this.baseURL}/api/groups/${id}/members/${userId}`, {
       method: 'DELETE',
       credentials: 'include',
     });

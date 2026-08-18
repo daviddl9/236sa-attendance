@@ -173,6 +173,119 @@ func (s *Service) Members(ctx context.Context, id string) ([]string, error) {
 	return members, err
 }
 
+// SetMembers atomically replaces a group's full member list with the deduped
+// user IDs. It returns the new member count and ErrNotFound when the group does
+// not exist.
+func (s *Service) SetMembers(ctx context.Context, groupID string, userIDs []string) (int, error) {
+	if s == nil || s.db == nil || s.db.Pool == nil {
+		return 0, errors.New("group service is not configured")
+	}
+
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin set members: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM participant_group WHERE id = $1)`, groupID).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("check participant group: %w", err)
+	}
+	if !exists {
+		return 0, ErrNotFound
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM participant_group_member WHERE group_id = $1`, groupID); err != nil {
+		return 0, fmt.Errorf("clear group members: %w", err)
+	}
+
+	deduped := dedupeIDs(userIDs)
+	for _, uid := range deduped {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO participant_group_member (group_id, user_id) VALUES ($1, $2)
+			ON CONFLICT DO NOTHING
+		`, groupID, uid); err != nil {
+			return 0, fmt.Errorf("insert group member: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit set members: %w", err)
+	}
+	return len(deduped), nil
+}
+
+// RemoveMember deletes a single member from a group. Removing a user that is
+// not a member is a no-op. It returns ErrNotFound when the group does not exist.
+func (s *Service) RemoveMember(ctx context.Context, groupID, userID string) error {
+	if s == nil || s.db == nil || s.db.Pool == nil {
+		return errors.New("group service is not configured")
+	}
+
+	var exists bool
+	if err := s.db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM participant_group WHERE id = $1)`, groupID).Scan(&exists); err != nil {
+		return fmt.Errorf("check participant group: %w", err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+
+	if _, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM participant_group_member WHERE group_id = $1 AND user_id = $2
+	`, groupID, userID); err != nil {
+		return fmt.Errorf("delete group member: %w", err)
+	}
+	return nil
+}
+
+// MembersWithDetails returns the group's members joined with roster details,
+// ordered by lower(full_name).
+func (s *Service) MembersWithDetails(ctx context.Context, groupID string) ([]models.GroupMember, error) {
+	if s == nil || s.db == nil || s.db.Pool == nil {
+		return nil, errors.New("group service is not configured")
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT m.user_id, u."full_name", u.rank, u.battery
+		FROM participant_group_member m
+		JOIN "user" u ON u.id = m.user_id
+		WHERE m.group_id = $1
+		ORDER BY lower(u."full_name") ASC
+	`, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("list group member details: %w", err)
+	}
+	defer rows.Close()
+
+	members := make([]models.GroupMember, 0)
+	for rows.Next() {
+		var m models.GroupMember
+		if err := rows.Scan(&m.UserID, &m.FullName, &m.Rank, &m.Battery); err != nil {
+			return nil, fmt.Errorf("scan group member detail: %w", err)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// dedupeIDs returns userIDs with duplicates removed, preserving first-seen
+// order.
+func dedupeIDs(userIDs []string) []string {
+	seen := make(map[string]struct{}, len(userIDs))
+	deduped := make([]string, 0, len(userIDs))
+	for _, uid := range userIDs {
+		if _, ok := seen[uid]; ok {
+			continue
+		}
+		seen[uid] = struct{}{}
+		deduped = append(deduped, uid)
+	}
+	return deduped
+}
+
 // Delete removes a group (members cascade).
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if s == nil || s.db == nil || s.db.Pool == nil {

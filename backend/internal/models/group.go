@@ -19,3 +19,11 @@ type ParticipantGroupMember struct {
 	GroupID string `json:"groupId"`
 	UserID  string `json:"userId"`
 }
+
+// GroupMember is a group member with roster details for display.
+type GroupMember struct {
+	UserID   string  `json:"userId"`
+	FullName string  `json:"fullName"`
+	Rank     *string `json:"rank,omitempty"`
+	Battery  *string `json:"battery,omitempty"`
+}

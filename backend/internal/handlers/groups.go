@@ -45,7 +45,8 @@ type GroupPreviewRequest struct {
 // GroupResponse is a group with its member IDs (populated on get).
 type GroupResponse struct {
 	models.ParticipantGroup
-	MemberIDs []string `json:"memberIds,omitempty"`
+	MemberIDs []string            `json:"memberIds,omitempty"`
+	Members   []models.GroupMember `json:"members,omitempty"`
 }
 
 // CreateGroup creates a named reusable group from a list of roster user IDs.
@@ -83,7 +84,7 @@ func (h *GroupHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"groups": groups})
 }
 
-// GetGroup returns a group with its member IDs.
+// GetGroup returns a group with its member IDs and roster details.
 // GET /api/groups/{id}
 func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -96,8 +97,56 @@ func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to to load group", http.StatusInternalServerError)
 		return
 	}
+	members, err := h.service.MembersWithDetails(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Failed to load group members", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(GroupResponse{ParticipantGroup: group, MemberIDs: memberIDs})
+	_ = json.NewEncoder(w).Encode(GroupResponse{ParticipantGroup: group, MemberIDs: memberIDs, Members: members})
+}
+
+// SetMembersRequest is the body for replacing a group's member list.
+type SetMembersRequest struct {
+	MemberIDs []string `json:"memberIds"`
+}
+
+// SetMembers replaces a group's full member list atomically.
+// PUT /api/groups/{id}/members
+func (h *GroupHandler) SetMembers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req SetMembersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	count, err := h.service.SetMembers(r.Context(), id, req.MemberIDs)
+	if err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			http.Error(w, "Group not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to update group members", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"memberCount": count})
+}
+
+// RemoveMember removes a single member from a group.
+// DELETE /api/groups/{id}/members/{userId}
+func (h *GroupHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "userId")
+	if err := h.service.RemoveMember(r.Context(), id, userID); err != nil {
+		if errors.Is(err, groups.ErrNotFound) {
+			http.Error(w, "Group not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to remove member", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // DeleteGroup removes a group.
