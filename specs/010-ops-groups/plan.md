@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add hand-built group membership management (view/add/remove members, create-and-add people) to the existing Groups feature, and add a CLI `seed-groups` command that creates the unit's eight ops groups (RnS, FDC/BOC, BCS, CSS, PSO, A/B/HQ Bty) from the roster Excel using confirmed membership rules, idempotently.
+Add hand-built group membership management (view/add/remove members, create-and-add people) to the existing Groups feature, and add a CLI `seed-groups` command that creates the unit's ops groups (RnS, FDC/BOC, BCS, CSS, PSO, MT Platoon, Technicians, CSS Commanders, A/B/HQ Bty) from the roster Excel using confirmed membership rules, idempotently.
 
 ## Technical Context
 
@@ -56,7 +56,7 @@ specs/010-ops-groups/
 ```text
 backend/
 ├── cmd/api/main.go                          # (edit) register 2 new group routes
-├── cmd/seed-groups/main.go                  # (new) CLI: read roster Excel, seed 8 groups
+├── cmd/seed-groups/main.go                  # (new) CLI: read roster Excel, seed 12 groups
 ├── internal/handlers/groups.go              # (edit) SetMembers + RemoveMember; GetGroup returns member details
 ├── internal/handlers/groups_test.go         # (edit) tests for the new endpoints
 ├── internal/services/groups/service.go      # (edit) SetMembers, RemoveMember, MembersWithUserDetails
@@ -88,6 +88,9 @@ Rows: 431 people. Columns (0-indexed): `[1]` NRIC last 5, `[2]` Rank, `[3]` Full
 | A Bty | Sub-Unit 1 = `FIELD ARTY BTY A` | 90 |
 | B Bty | Sub-Unit 1 = `FIELD ARTY BTY B` | 89 |
 | HQ Bty | Sub-Unit 1 = `HQ BTY` | 139 |
+| MT Platoon | Sub-Unit 2 = `MT PL` | 39 |
+| Technicians | vocation ∈ {`AUTO TECH`, `AUTO SPEC TECH`, `ARMT TECH`, `ARMT SPEC TECH`} | 16 |
+| CSS Commanders | CSS members with rank ≥ 1SG | 10 |
 
 ### Matching strategy
 
@@ -173,6 +176,6 @@ Reuses `findDataSheet`, `cellValue`, `normalizeNRICLast5` from the handlers pack
 
 1. **Backend unit tests**: `Service.SetMembers` (replace, dedup, group-missing), `Service.RemoveMember` (present, absent → no-op, group-missing), handler tests for both endpoints incl. auth/404 paths. `go test ./...`.
 2. **Frontend**: `npm run build` + `npm run lint`.
-3. **Seed regression**: run `seed-groups` against the dev DB twice with the real roster; assert 8 groups with expected counts on first run, idempotence on second, and that a manually-added member survives the second run.
+3. **Seed regression**: run `seed-groups` against the dev DB twice with the real roster; assert 12 groups with expected counts on first run, idempotence on second, and that a manually-added member survives the second run.
 4. **E2E (preview)**: with dev-db seeded, exercise the Groups page (view members, add via search, create+add new person, remove), then start a session from a seeded group and verify participants.
 5. **Self-review**: diff is tight (<500 lines), no unrelated changes.
