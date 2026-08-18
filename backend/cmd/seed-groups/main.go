@@ -9,15 +9,18 @@
 //
 // Groups seeded (rules confirmed with the unit owner):
 //
-//	RnS      Sub-Unit 1 = BN RECCE & SURVEY TM
-//	FDC/BOC  Sub-Unit 1 = FIRE DIRECTION CEN
-//	BCS      Sub-Unit 2 = MEDICAL PL
-//	CSS      S1 CELL + MT PL + MEDICAL PL + HQ COMBAT TRAIN + S4/OC HQ + HQ-bty BSM
-//	PSO      rank >= 1SG
-//	PSP      Sub-Unit 2 = PERSONNEL SP PL
-//	A Bty    Sub-Unit 1 = FIELD ARTY BTY A
-//	B Bty    Sub-Unit 1 = FIELD ARTY BTY B
-//	HQ Bty   Sub-Unit 1 = HQ BTY
+//	RnS             Sub-Unit 1 = BN RECCE & SURVEY TM
+//	FDC/BOC         Sub-Unit 1 = FIRE DIRECTION CEN
+//	BCS             Sub-Unit 2 = MEDICAL PL
+//	CSS             S1 CELL + MT PL + MEDICAL PL + HQ COMBAT TRAIN + S4/OC HQ + HQ-bty BSM
+//	PSO             rank >= 1SG
+//	PSP             Sub-Unit 2 = PERSONNEL SP PL
+//	A Bty           Sub-Unit 1 = FIELD ARTY BTY A
+//	B Bty           Sub-Unit 1 = FIELD ARTY BTY B
+//	HQ Bty          Sub-Unit 1 = HQ BTY
+//	MT Platoon      Sub-Unit 2 = MT PL
+//	Technicians     vocation in {AUTO TECH, AUTO SPEC TECH, ARMT TECH, ARMT SPEC TECH}
+//	CSS Commanders  CSS members with rank >= 1SG
 package main
 
 import (
@@ -43,9 +46,10 @@ const (
 	colPosDesc  = 5
 	colSubUnit1 = 7
 	colSubUnit2 = 8
+	colVocation = 9
 	headerRows  = 2
 	rosterSheet = "236 SA"
-	ps0Rank     = "1SG" // PSO includes everyone at or above this rank
+	ps0Rank     = "1SG" // PSO and CSS Commanders include everyone at or above this rank
 )
 
 // row is one roster line.
@@ -56,6 +60,7 @@ type row struct {
 	posDesc string
 	sub1    string
 	sub2    string
+	voc     string
 }
 
 // rule selects rows for one group.
@@ -68,19 +73,7 @@ var rules = []rule{
 	{group: "RnS", matches: func(r row) bool { return r.sub1 == "BN RECCE & SURVEY TM" }},
 	{group: "FDC/BOC", matches: func(r row) bool { return r.sub1 == "FIRE DIRECTION CEN" }},
 	{group: "BCS", matches: func(r row) bool { return r.sub2 == "MEDICAL PL" }},
-	{group: "CSS", matches: func(r row) bool {
-		if r.sub1 == "S1 BR" && r.sub2 == "S1 CELL" {
-			return true
-		}
-		switch r.sub2 {
-		case "MT PL", "MEDICAL PL", "HQ COMBAT TRAIN":
-			return true
-		}
-		if r.posDesc == "S4/OC HQ" {
-			return true
-		}
-		return r.sub2 == "BTY HQ" && r.posDesc == "BSM"
-	}},
+	{group: "CSS", matches: matchesCSS},
 	{group: "PSO", matches: func(r row) bool {
 		order, ok := models.RankOrder[strings.ToUpper(r.rank)]
 		return ok && order >= models.RankOrder[ps0Rank]
@@ -89,6 +82,39 @@ var rules = []rule{
 	{group: "A Bty", matches: func(r row) bool { return r.sub1 == "FIELD ARTY BTY A" }},
 	{group: "B Bty", matches: func(r row) bool { return r.sub1 == "FIELD ARTY BTY B" }},
 	{group: "HQ Bty", matches: func(r row) bool { return r.sub1 == "HQ BTY" }},
+	{group: "MT Platoon", matches: func(r row) bool { return r.sub2 == "MT PL" }},
+	{group: "Technicians", matches: func(r row) bool {
+		switch r.voc {
+		case "AUTO TECH", "AUTO SPEC TECH", "ARMT TECH", "ARMT SPEC TECH":
+			return true
+		}
+		return false
+	}},
+	{group: "CSS Commanders", matches: matchesCSSCommander},
+}
+
+// matchesCSS reports whether a roster row belongs to Combat Service Support:
+// the S1 cell, MT platoon, medical platoon, HQ combat train, S4/OC HQ, and the
+// HQ-battery BSM. Battery-level elements are deliberately excluded.
+func matchesCSS(r row) bool {
+	if r.sub1 == "S1 BR" && r.sub2 == "S1 CELL" {
+		return true
+	}
+	switch r.sub2 {
+	case "MT PL", "MEDICAL PL", "HQ COMBAT TRAIN":
+		return true
+	}
+	if r.posDesc == "S4/OC HQ" {
+		return true
+	}
+	return r.sub2 == "BTY HQ" && r.posDesc == "BSM"
+}
+
+// matchesCSSCommander reports whether a roster row is a CSS commander — a CSS
+// member at or above First Sergeant rank.
+func matchesCSSCommander(r row) bool {
+	order, ok := models.RankOrder[strings.ToUpper(r.rank)]
+	return ok && matchesCSS(r) && order >= models.RankOrder[ps0Rank]
 }
 
 func main() {
@@ -157,6 +183,7 @@ func readRows(path, password string) ([]row, error) {
 			posDesc: strings.TrimSpace(cells[colPosDesc]),
 			sub1:    strings.TrimSpace(cells[colSubUnit1]),
 			sub2:    strings.TrimSpace(cells[colSubUnit2]),
+			voc:     strings.TrimSpace(cells[colVocation]),
 		})
 	}
 	return rows, nil
