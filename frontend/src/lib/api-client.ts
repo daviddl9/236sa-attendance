@@ -650,6 +650,22 @@ export class APIClient {
     return this.request<UserProfile>(`/api/users/${id}`);
   }
 
+  /** Fetches the full verified roster by paging through the list endpoint. */
+  async listAllUsers(): Promise<UserProfile[]> {
+    const pageSize = 100;
+    const all: UserProfile[] = [];
+    let page = 1;
+    let total = Infinity;
+    while (all.length < total) {
+      const resp = await this.listUsers({ page, limit: pageSize });
+      all.push(...resp.users);
+      total = resp.total;
+      page += 1;
+      if (resp.users.length === 0) break;
+    }
+    return all;
+  }
+
   async updateUser(id: string, data: UpdateUserRequest): Promise<{ message: string }> {
     return this.request<{ message: string }>(`/api/users/${id}`, {
       method: 'PUT',

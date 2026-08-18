@@ -24,6 +24,7 @@ import {
 } from '../../../components/ui/dialog';
 import { Badge } from '../../../components/ui/badge';
 import { AddUserDialog } from '../../../components/users/add-user-dialog';
+import { UserTable } from '../../../components/users/user-table';
 import { Users, Upload, Trash2, Play, Lock, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -50,7 +51,6 @@ function GroupsPage() {
   const [memberDialog, setMemberDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [addMembersOpen, setAddMembersOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [addUserOpen, setAddUserOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -98,30 +98,37 @@ function GroupsPage() {
     onError: (error: Error) => toast.error(error.message || 'Failed to update members'),
   });
 
-  // Debounced user search for the add-members dialog.
-  const { data: searchData, isFetching: searchLoading } = useQuery({
-    queryKey: ['users', 'search', memberSearch.trim()],
-    queryFn: () => apiClient.listUsers({ search: memberSearch.trim(), limit: 50 }),
-    enabled: addMembersOpen && memberSearch.trim().length > 0,
+  // Load the full roster once; the dialog filters it client-side as the user
+  // types (same pattern as manual attendance marking).
+  const { data: allUsers, isLoading: rosterLoading } = useQuery({
+    queryKey: ['users', 'all'],
+    queryFn: () => apiClient.listAllUsers(),
+    enabled: addMembersOpen,
   });
-  const searchResults = useMemo(() => {
-    if (memberSearch.trim().length === 0) return [];
-    const existing = new Set(members.map((m) => m.userId));
-    return (searchData?.users ?? []).filter((u) => !existing.has(u.id));
-  }, [searchData, memberSearch, members]);
 
-  const handleAddSelected = () => {
+  // Roster rows that are not yet group members, live-filtered by name/rank.
+  const rosterCandidates = useMemo(() => {
+    const existing = new Set(members.map((m) => m.userId));
+    const q = memberSearch.trim().toLowerCase();
+    return (allUsers ?? []).filter((u) => {
+      if (existing.has(u.id)) return false;
+      if (!q) return true;
+      return (
+        u.fullName?.toLowerCase().includes(q) ||
+        u.rank?.toLowerCase().includes(q)
+      );
+    });
+  }, [allUsers, memberSearch, members]);
+
+  // Add a single person to the group immediately (the per-row add action).
+  const [addingUserId, setAddingUserId] = useState<string | null>(null);
+  const handleAddOne = (userId: string) => {
     if (!memberDialog) return;
     const currentIds = members.map((m) => m.userId);
+    setAddingUserId(userId);
     setMembersMutation.mutate(
-      { groupId: memberDialog.groupId, memberIds: [...currentIds, ...Array.from(selectedIds)] },
-      {
-        onSuccess: () => {
-          setAddMembersOpen(false);
-          setSelectedIds(new Set());
-          setMemberSearch('');
-        },
-      },
+      { groupId: memberDialog.groupId, memberIds: [...currentIds, userId] },
+      { onSettled: () => setAddingUserId(null) },
     );
   };
 
@@ -412,66 +419,53 @@ function GroupsPage() {
             <DialogHeader>
               <DialogTitle>Add people to {memberDialog?.groupName}</DialogTitle>
               <DialogDescription>
-                Search the roster and select people to add to this group.
+                Type to filter the roster, then tap a row to add. Or create a new person.
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-2">
-              <Label htmlFor="member-search">Search roster</Label>
-              <Input
-                id="member-search"
-                value={memberSearch}
-                onChange={(e) => setMemberSearch(e.target.value)}
-                placeholder="Type a name to search…"
-                autoFocus
-              />
-              {searchLoading && <p className="text-xs text-muted-foreground">Searching…</p>}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={memberSearch}
+                  onChange={(e) => setMemberSearch(e.target.value)}
+                  placeholder="Search by name or rank…"
+                  className="pl-9"
+                  autoFocus
+                />
+              </div>
             </div>
 
-            {memberSearch.trim().length === 0 ? (
+            {rosterLoading ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">Loading roster…</p>
+            ) : rosterCandidates.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
-                Type to search for roster users.
-              </p>
-            ) : searchResults.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                No matching users found…
+                {memberSearch.trim() ? 'No matching users' : 'Everyone is already in this group'}
               </p>
             ) : (
-              <div className="max-h-64 space-y-1 overflow-y-auto">
-                {searchResults.map((u) => (
-                  <label
-                    key={u.id}
-                    className="flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(u.id)}
-                      onChange={(e) => {
-                        const next = new Set(selectedIds);
-                        if (e.target.checked) next.add(u.id);
-                        else next.delete(u.id);
-                        setSelectedIds(next);
-                      }}
-                    />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{u.fullName}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {[u.rank, u.battery].filter(Boolean).join(' · ') || '—'}
-                      </div>
-                    </div>
-                  </label>
-                ))}
+              <div className="max-h-72 overflow-y-auto rounded-md">
+                <UserTable
+                  users={rosterCandidates}
+                  showActions={false}
+                  emptyMessage="No matching users"
+                  onMark={handleAddOne}
+                  markingUserId={addingUserId ?? undefined}
+                />
               </div>
             )}
 
             <DialogFooter>
-              <Button variant="outline" onClick={() => setAddMembersOpen(false)}>Cancel</Button>
               <Button
-                onClick={handleAddSelected}
-                disabled={selectedIds.size === 0 || setMembersMutation.isPending}
+                variant="outline"
+                onClick={() => {
+                  setAddMembersOpen(false);
+                  setAddUserOpen(true);
+                }}
               >
-                Add {selectedIds.size > 0 ? `(${selectedIds.size})` : ''}
+                <Plus className="mr-2 h-4 w-4" />
+                New Person
               </Button>
+              <Button variant="outline" onClick={() => setAddMembersOpen(false)}>Done</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
