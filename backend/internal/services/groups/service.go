@@ -41,9 +41,6 @@ func (s *Service) Create(ctx context.Context, name string, participantIDs []stri
 	if name == "" {
 		return models.ParticipantGroup{}, ErrInvalidRequest
 	}
-	if len(participantIDs) == 0 {
-		return models.ParticipantGroup{}, ErrInvalidRequest
-	}
 	if s == nil || s.db == nil || s.db.Pool == nil {
 		return models.ParticipantGroup{}, errors.New("group service is not configured")
 	}
