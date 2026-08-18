@@ -21,7 +21,7 @@ ssh ubuntu@redcon.236sa.one \
   '/tmp/seed-groups -file <roster>.xlsx -password yeoec -created-by <id> -db-url <DATABASE_URL>'
 ```
 
-3. Confirm counts: RnS 8 · FDC/BOC 11 · BCS 16 · CSS 76 · PSO 40 · A Bty 90 · B Bty 89 · HQ Bty 139.
+3. Confirm counts: RnS 8 · FDC/BOC 11 · BCS 16 · CSS 76 · PSO 40 · A Bty 90 · B Bty 89 · HQ Bty 139 · MT Platoon 39 · Technicians 16 · CSS Commanders 10.
 
 Re-run any time after roster/import updates — it only adds.
 

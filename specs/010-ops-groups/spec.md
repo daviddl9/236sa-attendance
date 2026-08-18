@@ -33,6 +33,9 @@ The seed rules below were confirmed with the unit owner. Battery-level personnel
 | **A Bty** | Sub-Unit 1 = `FIELD ARTY BTY A` | 90 |
 | **B Bty** | Sub-Unit 1 = `FIELD ARTY BTY B` | 89 |
 | **HQ Bty** | Sub-Unit 1 = `HQ BTY` | 139 |
+| **MT Platoon** | Sub-Unit 2 = `MT PL` | 39 |
+| **Technicians** | Vocation ∈ {`AUTO TECH`, `AUTO SPEC TECH`, `ARMT TECH`, `ARMT SPEC TECH`} | 16 |
+| **CSS Commanders** | CSS members with rank ≥ 1SG | 10 |
 
 People in `BN HQ`, `BN OPS CEN`, `HL 236 SA`, `NON-ESTAB`, `RSM GP`, and the `PERSONNEL SP PL` staff (~71 people) are **not assigned to any seeded group**. They are left ungrouped so commanders can add them manually after seeding.
 
@@ -61,15 +64,15 @@ A Tier 3+ commander opens the Groups page. Instead of (or in addition to) upload
 
 ### User Story 2 - Unit seeds its ops groups from the roster (Priority: P1)
 
-An administrator runs a CLI command (once per callup or after roster updates) that reads the roster Excel, matches each row to the roster user by NRIC last 5, and creates/seeds the eight ops groups.
+An administrator runs a CLI command (once per callup or after roster updates) that reads the roster Excel, matches each row to the roster user by NRIC last 5, and creates/seeds the ops groups.
 
 **Why this priority**: This delivers the "seed more groups by ops group" request — the unit's real operational structure becomes immediately available as groups.
 
-**Independent Test**: Run the seed command against a database that already has the roster users imported. Confirm the eight groups exist with the expected member counts, and that re-running the command makes no destructive change.
+**Independent Test**: Run the seed command against a database that already has the roster users imported. Confirm the seeded groups exist with the expected member counts, and that re-running the command makes no destructive change.
 
 **Acceptance Scenarios**:
 
-1. **Given** a database with the current roster imported, **When** the seed command runs with the roster file, **Then** the eight groups are created with the members listed in the table above (matched by NRIC last 5).
+1. **Given** a database with the current roster imported, **When** the seed command runs with the roster file, **Then** the seeded groups are created with the members listed in the table above (matched by NRIC last 5).
 2. **Given** a roster row that matches **no** existing user, **When** the seed runs, **Then** that row is skipped and reported in the output; the command still succeeds.
 3. **Given** a group that already exists before seeding, **When** the seed runs, **Then** the existing group is reused (not duplicated) and its members are updated to include any missing matches.
 4. **Given** a member manually added to a group before a re-seed, **When** the seed runs again, **Then** the manual member is retained (seeding only ever adds, never removes).
@@ -110,7 +113,7 @@ Once the ops groups exist, a commander can start an attendance session from any 
 - **FR-003**: Authorized users MUST be able to remove a single member from a group.
 - **FR-004**: The system MUST support creating a new roster user and adding them to a group in the same flow.
 - **FR-005**: The system MUST allow searching the roster to find users to add to a group.
-- **FR-006**: The system MUST seed the eight ops groups (RnS, FDC/BOC, BCS, CSS, PSO, A Bty, B Bty, HQ Bty) from the roster file using the confirmed rules.
+- **FR-006**: The system MUST seed the ops groups (RnS, FDC/BOC, BCS, CSS, PSO, MT Platoon, Technicians, CSS Commanders, A Bty, B Bty, HQ Bty) from the roster file using the confirmed rules.
 - **FR-007**: The seed MUST be idempotent: re-running it MUST NOT duplicate groups or remove members.
 - **FR-008**: The seed MUST match roster rows to existing users by NRIC last 5 (with name as a tie-breaker) and report rows it could not match.
 - **FR-009**: Existing group features (create from Excel, start session) MUST continue to work unchanged.
@@ -121,7 +124,7 @@ Once the ops groups exist, a commander can start an attendance session from any 
 - **Participant Group**: A named, reusable participant list (existing). Gains dynamic membership management and seeded instances.
 - **Group Membership**: The link between a group and a roster user (existing `participant_group_member`); now mutable per group via the new operations.
 - **Roster User**: Existing user record (name, rank, battery, NRIC last 5, extras); the unit of membership.
-- **Ops Group Seed Definition**: The confirmed mapping from roster columns (Position Description / Sub-Unit 1 / Sub-Unit 2 / Rank) to the eight groups.
+- **Ops Group Seed Definition**: The confirmed mapping from roster columns (Position Description / Sub-Unit 1 / Sub-Unit 2 / Rank / Vocation) to the seeded groups.
 
 ## Success Criteria *(mandatory)*
 
@@ -129,7 +132,7 @@ Once the ops groups exist, a commander can start an attendance session from any 
 
 - **SC-001**: A Tier 3+ user can view, add, and remove group members through the UI without uploading any file.
 - **SC-002**: Creating a person and adding them to a group completes in under 1 minute for an experienced user.
-- **SC-003**: The seed command creates all eight groups from the provided roster with the member counts in the table (RnS 8, FDC/BOC 11, BCS 16, CSS 76, PSO 40, A Bty 90, B Bty 89, HQ Bty 139).
+- **SC-003**: The seed command creates all seeded groups from the provided roster with the member counts in the table (RnS 8, FDC/BOC 11, BCS 16, CSS 76, PSO 40, A Bty 90, B Bty 89, HQ Bty 139, MT Platoon 39, Technicians 16, CSS Commanders 10).
 - **SC-004**: Running the seed command twice yields the same groups and member sets as running it once (idempotence).
 - **SC-005**: No roster row that matches an existing user is silently dropped by the seed; every unmatched row is reported.
 - **SC-006**: Existing session-from-group creation works for both hand-built and seeded groups.
