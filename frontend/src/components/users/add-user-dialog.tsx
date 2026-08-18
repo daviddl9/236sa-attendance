@@ -43,6 +43,8 @@ const VALID_BATTERIES = ['HQ', 'Alpha', 'Bravo'];
 interface AddUserDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Invoked with the created user after a successful create. */
+  onCreated?: (user: import('../../lib/api-client').UserProfile) => void;
 }
 
 interface ConflictState {
@@ -51,7 +53,7 @@ interface ConflictState {
   fullName: string;
 }
 
-export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
+export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogProps) {
   const queryClient = useQueryClient();
   const [fullName, setFullName] = useState('');
   const [rank, setRank] = useState('');
@@ -97,6 +99,7 @@ export function AddUserDialog({ open, onOpenChange }: AddUserDialogProps) {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       reset();
       onOpenChange(false);
+      onCreated?.(created);
     },
     onError: (err) => {
       if (err instanceof CreateUserConflictError) {
