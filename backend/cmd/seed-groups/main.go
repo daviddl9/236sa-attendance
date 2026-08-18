@@ -14,6 +14,7 @@
 //	BCS      Sub-Unit 2 = MEDICAL PL
 //	CSS      S1 CELL + MT PL + MEDICAL PL + HQ COMBAT TRAIN + S4/OC HQ + HQ-bty BSM
 //	PSO      rank >= 1SG
+//	PSP      Sub-Unit 2 = PERSONNEL SP PL
 //	A Bty    Sub-Unit 1 = FIELD ARTY BTY A
 //	B Bty    Sub-Unit 1 = FIELD ARTY BTY B
 //	HQ Bty   Sub-Unit 1 = HQ BTY
@@ -84,6 +85,7 @@ var rules = []rule{
 		order, ok := models.RankOrder[strings.ToUpper(r.rank)]
 		return ok && order >= models.RankOrder[ps0Rank]
 	}},
+	{group: "PSP", matches: func(r row) bool { return r.sub2 == "PERSONNEL SP PL" }},
 	{group: "A Bty", matches: func(r row) bool { return r.sub1 == "FIELD ARTY BTY A" }},
 	{group: "B Bty", matches: func(r row) bool { return r.sub1 == "FIELD ARTY BTY B" }},
 	{group: "HQ Bty", matches: func(r row) bool { return r.sub1 == "HQ BTY" }},
