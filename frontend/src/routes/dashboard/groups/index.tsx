@@ -44,6 +44,8 @@ function GroupsPage() {
   const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
   const [previewDone, setPreviewDone] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
   const [sessionDialog, setSessionDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [sessionName, setSessionName] = useState('');
 
@@ -148,6 +150,20 @@ function GroupsPage() {
     onError: (error: Error) => toast.error(error.message || 'Failed to create group'),
   });
 
+  // Create a blank group, then open its member dialog so people can be added
+  // by searching the roster (no Excel needed).
+  const createNewGroupMutation = useMutation({
+    mutationFn: (name: string) => apiClient.createGroup({ name, participantIds: [] }),
+    onSuccess: (group) => {
+      toast.success('Group created');
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+      setNewGroupOpen(false);
+      setNewGroupName('');
+      setMemberDialog({ groupId: group.id, groupName: group.name });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to create group'),
+  });
+
   const startSessionMutation = useMutation({
     mutationFn: (data: { groupId: string; name: string }) =>
       apiClient.createSessionFromGroup(data.groupId, { name: data.name, participantIds: [] }),
@@ -179,6 +195,11 @@ function GroupsPage() {
     } finally {
       setPreviewLoading(false);
     }
+  };
+
+  const handleCreateNewGroup = () => {
+    if (!newGroupName.trim()) return;
+    createNewGroupMutation.mutate(newGroupName.trim());
   };
 
   const handleCreate = () => {
@@ -215,6 +236,10 @@ function GroupsPage() {
               Reusable participant lists — create a session from a group in one click
             </p>
           </div>
+          <Button variant="outline" className="w-fit" onClick={() => setNewGroupOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Group
+          </Button>
         </div>
 
         <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
@@ -310,12 +335,48 @@ function GroupsPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={newGroupOpen} onOpenChange={setNewGroupOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Create a new group</DialogTitle>
+              <DialogDescription>
+                Name the group, then add people by searching the roster.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor="new-group-name">Group name</Label>
+              <Input
+                id="new-group-name"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleCreateNewGroup();
+                }}
+                placeholder="e.g. Advance Party"
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setNewGroupOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateNewGroup}
+                disabled={!newGroupName.trim() || createNewGroupMutation.isPending}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Create Group
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12 text-muted-foreground">Loading…</div>
         ) : groups.length === 0 ? (
           <Card>
             <CardContent className="p-8 text-center text-muted-foreground">
-              No groups yet. Create one from an Excel roster above.
+              No groups yet. Create one above, then add people by searching the roster.
             </CardContent>
           </Card>
         ) : (

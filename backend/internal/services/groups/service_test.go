@@ -52,12 +52,16 @@ func TestCreateValidatesAndPersistsGroup(t *testing.T) {
 
 	svc := NewService(db)
 
-	// Empty name / no members are rejected.
+	// Empty name is rejected; empty groups are allowed (created blank, filled later).
 	if _, err := svc.Create(context.Background(), "  ", []string{m1}, creator); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("Create(empty name) error = %v, want ErrInvalidRequest", err)
 	}
-	if _, err := svc.Create(context.Background(), "Advance Party", nil, creator); !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("Create(no members) error = %v, want ErrInvalidRequest", err)
+	emptyGroup, err := svc.Create(context.Background(), "Empty Group", nil, creator)
+	if err != nil {
+		t.Fatalf("Create(no members) error = %v, want nil", err)
+	}
+	if emptyGroup.MemberCount == nil || *emptyGroup.MemberCount != 0 {
+		t.Fatalf("Create(no members) MemberCount = %v, want 0", emptyGroup.MemberCount)
 	}
 
 	group, err := svc.Create(context.Background(), "Advance Party", []string{m1, m2, m1}, creator)
