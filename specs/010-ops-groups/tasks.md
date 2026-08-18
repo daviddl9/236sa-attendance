@@ -14,7 +14,7 @@
 
 **Purpose**: No project init needed (existing backend/frontend). Confirm branch & baseline.
 
-- [ ] T001 Confirm working tree baseline builds before changes: `go build ./...` (backend) and `npm run build` (frontend) pass on branch `020-group-member-management`
+- [x] T001 Confirm working tree baseline builds before changes: `go build ./...` (backend) and `npm run build` (frontend) pass on branch `020-group-member-management`
 
 ---
 
@@ -24,11 +24,11 @@
 
 **⚠️ CRITICAL**: No user story work until this phase completes.
 
-- [ ] T002 [P] Add `GroupMember` struct (UserID, FullName, Rank, Battery) to `backend/internal/models/group.go`
-- [ ] T003 [P] Add `SetMembers(ctx, groupID string, userIDs []string) (int, error)` to `backend/internal/services/groups/service.go` — one tx: verify group exists (else `ErrNotFound`), `DELETE` existing members, `INSERT` deduped list with `ON CONFLICT DO NOTHING`, return new count
-- [ ] T004 [P] Add `RemoveMember(ctx, groupID, userID string) error` to `backend/internal/services/groups/service.go` — verify group exists (else `ErrNotFound`), `DELETE ... WHERE group_id AND user_id` (no-op if absent)
-- [ ] T005 [P] Add `MembersWithDetails(ctx, groupID string) ([]models.GroupMember, error)` to `backend/internal/services/groups/service.go` — JOIN `participant_group_member` with `"user"` on full_name/rank/battery, ordered by `lower(full_name)`
-- [ ] T006 Service tests for T003/T004/T005 in `backend/internal/services/groups/` — TDD: write first, assert failures (replace clears+adds; dedup; missing group → ErrNotFound; remove absent → no-op; detail ordering)
+- [x] T002 [P] Add `GroupMember` struct (UserID, FullName, Rank, Battery) to `backend/internal/models/group.go`
+- [x] T003 [P] Add `SetMembers(ctx, groupID string, userIDs []string) (int, error)` to `backend/internal/services/groups/service.go` — one tx: verify group exists (else `ErrNotFound`), `DELETE` existing members, `INSERT` deduped list with `ON CONFLICT DO NOTHING`, return new count
+- [x] T004 [P] Add `RemoveMember(ctx, groupID, userID string) error` to `backend/internal/services/groups/service.go` — verify group exists (else `ErrNotFound`), `DELETE ... WHERE group_id AND user_id` (no-op if absent)
+- [x] T005 [P] Add `MembersWithDetails(ctx, groupID string) ([]models.GroupMember, error)` to `backend/internal/services/groups/service.go` — JOIN `participant_group_member` with `"user"` on full_name/rank/battery, ordered by `lower(full_name)`
+- [x] T006 Service tests for T003/T004/T005 in `backend/internal/services/groups/` — TDD: write first, assert failures (replace clears+adds; dedup; missing group → ErrNotFound; remove absent → no-op; detail ordering)
 
 **Checkpoint**: Service layer ready — US1 and US2 can be implemented independently.
 
@@ -42,16 +42,16 @@
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Extend `GET /api/groups/{id}` handler in `backend/internal/handlers/groups.go` to return `members: []GroupMember` (from `MembersWithDetails`) alongside IDs — update `GroupResponse` to include `Members []models.GroupMember`
-- [ ] T008 [US1] Add `SetMembers` handler (`PUT /api/groups/{id}/members`, body `{memberIds}`, 200 + group/count, 404/400 maps) to `backend/internal/handlers/groups.go`
-- [ ] T009 [US1] Add `RemoveMember` handler (`DELETE /api/groups/{id}/members/{userId}`, 204, 404 maps) to `backend/internal/handlers/groups.go`
-- [ ] T010 [US1] Register the two new routes under the existing `/api/groups` Tier 3 router in `backend/cmd/api/main.go` (`r.With(middleware.RequireUnitCommander(db))`)
-- [ ] T011 [US1] Handler tests for T007–T010 in `backend/internal/handlers/groups_test.go` (auth 401/403 paths, 404 unknown group, replace semantics, remove semantics)
-- [ ] T012 [US1] Add `setGroupMembers(id, memberIds)` and `deleteGroupMember(id, userId)` + `GroupMember` type + `members` field on `GroupResponse` in `frontend/src/lib/api-client.ts`
-- [ ] T013 [US1] Member list dialog on the Groups page: click a group card → `getGroup(id)` → list members (name · rank · battery) with per-row delete in `frontend/src/routes/dashboard/groups/index.tsx`
-- [ ] T014 [US1] "Add people" dialog: debounced search against `listUsers({search})`, multi-select checkboxes, "Add selected" → `setGroupMembers(id, existingIds + newIds)` in `frontend/src/routes/dashboard/groups/index.tsx`
-- [ ] T015 [US1] "+ New person" affordance reusing `AddUserDialog` (`frontend/src/components/users/add-user-dialog.tsx` — add optional `onCreated` prop so the created user is auto-added to the current group)
-- [ ] T016 [US1] Frontend build/lint pass: `npm run build` + `npm run lint`
+- [x] T007 [US1] Extend `GET /api/groups/{id}` handler in `backend/internal/handlers/groups.go` to return `members: []GroupMember` (from `MembersWithDetails`) alongside IDs — update `GroupResponse` to include `Members []models.GroupMember`
+- [x] T008 [US1] Add `SetMembers` handler (`PUT /api/groups/{id}/members`, body `{memberIds}`, 200 + group/count, 404/400 maps) to `backend/internal/handlers/groups.go`
+- [x] T009 [US1] Add `RemoveMember` handler (`DELETE /api/groups/{id}/members/{userId}`, 204, 404 maps) to `backend/internal/handlers/groups.go`
+- [x] T010 [US1] Register the two new routes under the existing `/api/groups` Tier 3 router in `backend/cmd/api/main.go` (`r.With(middleware.RequireUnitCommander(db))`)
+- [x] T011 [US1] Handler tests for T007–T010 in `backend/internal/handlers/groups_test.go` (auth 401/403 paths, 404 unknown group, replace semantics, remove semantics)
+- [x] T012 [US1] Add `setGroupMembers(id, memberIds)` and `deleteGroupMember(id, userId)` + `GroupMember` type + `members` field on `GroupResponse` in `frontend/src/lib/api-client.ts`
+- [x] T013 [US1] Member list dialog on the Groups page: click a group card → `getGroup(id)` → list members (name · rank · battery) with per-row delete in `frontend/src/routes/dashboard/groups/index.tsx`
+- [x] T014 [US1] "Add people" dialog: debounced search against `listUsers({search})`, multi-select checkboxes, "Add selected" → `setGroupMembers(id, existingIds + newIds)` in `frontend/src/routes/dashboard/groups/index.tsx`
+- [x] T015 [US1] "+ New person" affordance reusing `AddUserDialog` (`frontend/src/components/users/add-user-dialog.tsx` — add optional `onCreated` prop so the created user is auto-added to the current group)
+- [x] T016 [US1] Frontend build/lint pass: `npm run build` + `npm run lint`
 
 **Checkpoint**: US1 fully functional — hand-built groups work end to end.
 
@@ -65,13 +65,13 @@
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Extract shared roster-parsing helpers (`findDataSheet`, `cellValue`, `normalizeNRICLast5`) to a shared spot usable by `backend/cmd/seed-groups` (keep `groups.go` imports working) — `backend/internal/` helper package or unexported fns promoted
-- [ ] T018 [US2] `backend/cmd/seed-groups/main.go`: flags `-file -password -created-by -db-url`; open Excel with excelize; iterate the `236 SA` sheet
-- [ ] T019 [US2] Implement the 8 rule predicates (RnS, FDC/BOC, BCS, CSS, PSO rank≥1SG, A/B/HQ Bty) from plan.md/research.md in `backend/cmd/seed-groups/main.go`
-- [ ] T020 [US2] User matching: by `nric_last5` (normalized) with exact-name tiebreak among `verified=true`; ambiguous/unmatched rows collected per group
-- [ ] T021 [US2] Group create/reuse (`created_by` + `lower(name)`) + member inserts `ON CONFLICT DO NOTHING`; summary output per plan.md contract (created/reused, members added, unmatched list)
-- [ ] T022 [US2] Idempotence regression: run twice against dev DB → no dup groups, no lost members incl. a manually-added member
-- [ ] T023 [US2] Integration run with the real roster file → assert counts RnS 8 · FDC/BOC 11 · BCS 16 · CSS 76 · PSO 40 · A Bty 90 · B Bty 89 · HQ Bty 139
+- [x] T017 [US2] Extract shared roster-parsing helpers (`findDataSheet`, `cellValue`, `normalizeNRICLast5`) to a shared spot usable by `backend/cmd/seed-groups` (keep `groups.go` imports working) — `backend/internal/` helper package or unexported fns promoted
+- [x] T018 [US2] `backend/cmd/seed-groups/main.go`: flags `-file -password -created-by -db-url`; open Excel with excelize; iterate the `236 SA` sheet
+- [x] T019 [US2] Implement the 8 rule predicates (RnS, FDC/BOC, BCS, CSS, PSO rank≥1SG, A/B/HQ Bty) from plan.md/research.md in `backend/cmd/seed-groups/main.go`
+- [x] T020 [US2] User matching: by `nric_last5` (normalized) with exact-name tiebreak among `verified=true`; ambiguous/unmatched rows collected per group
+- [x] T021 [US2] Group create/reuse (`created_by` + `lower(name)`) + member inserts `ON CONFLICT DO NOTHING`; summary output per plan.md contract (created/reused, members added, unmatched list)
+- [x] T022 [US2] Idempotence regression: run twice against dev DB → no dup groups, no lost members incl. a manually-added member
+- [x] T023 [US2] Integration run with the real roster file → assert counts RnS 8 · FDC/BOC 11 · BCS 16 · CSS 76 · PSO 40 · A Bty 90 · B Bty 89 · HQ Bty 139
 
 **Checkpoint**: Seeded ops groups exist and match the confirmed rules.
 
@@ -85,7 +85,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T024 [US3] Verification only: create a session from a seeded group (e.g. CSS) on the dev DB and confirm participants match — no code change expected (existing `POST /api/groups/{id}/sessions`)
+- [x] T024 [US3] Verification only: create a session from a seeded group (e.g. CSS) on the dev DB and confirm participants match — no code change expected (existing `POST /api/groups/{id}/sessions`)
 
 **Checkpoint**: US3 verified.
 
@@ -93,9 +93,9 @@
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T025 [P] Update `docs/` or QUICKSTART with the seeding instructions (from `specs/010-ops-groups/quickstart.md`) if docs reference groups
-- [ ] T026 Run full backend suite `go test ./...` and frontend `npm run build` + `npm run lint`
-- [ ] T027 Self-review diff: tight (<500 lines), no unrelated changes; group/member data flow verified end to end on preview
+- [x] T025 [P] Update `docs/` or QUICKSTART with the seeding instructions (from `specs/010-ops-groups/quickstart.md`) if docs reference groups
+- [x] T026 Run full backend suite `go test ./...` and frontend `npm run build` + `npm run lint`
+- [x] T027 Self-review diff: tight (<500 lines), no unrelated changes; group/member data flow verified end to end on preview
 
 ---
 
