@@ -63,10 +63,10 @@ func TestNormalizeFullName(t *testing.T) {
 
 func TestValidateCreateUserHappyPath(t *testing.T) {
 	got, err := validateCreateUser(CreateUserRequest{
-		FullName:  "  John   Doe  ",
-		Rank:      "PTE",
-		Battery:   "Alpha",
-		NRICLast5: "1234a",
+		FullName: "  John   Doe  ",
+		Rank:     "PTE",
+		Battery:  "Alpha",
+		DOB:      "1986-11-06",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -74,43 +74,37 @@ func TestValidateCreateUserHappyPath(t *testing.T) {
 	if got.FullName != "John Doe" {
 		t.Errorf("FullName = %q, want \"John Doe\" (trimmed + collapsed)", got.FullName)
 	}
-	if got.NRICLast5 != "1234A" {
-		t.Errorf("NRICLast5 = %q, want \"1234A\" (uppercased)", got.NRICLast5)
+	if got.DOB != "1986-11-06" {
+		t.Errorf("DOB = %q, want \"1986-11-06\" (canonicalised)", got.DOB)
 	}
 }
 
 func TestValidateCreateUserDOB(t *testing.T) {
-	t.Run("empty DOB is allowed", func(t *testing.T) {
-		got, err := validateCreateUser(CreateUserRequest{
-			FullName: "John Doe", Rank: "PTE", Battery: "Alpha", NRICLast5: "1234A", DOB: "",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.DOB != "" {
-			t.Errorf("DOB = %q, want empty", got.DOB)
-		}
-	})
-	t.Run("six-char DOB is accepted as-is", func(t *testing.T) {
-		got, err := validateCreateUser(CreateUserRequest{
-			FullName: "John Doe", Rank: "PTE", Battery: "Alpha", NRICLast5: "1234A", DOB: "150393",
-		})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.DOB != "150393" {
-			t.Errorf("DOB = %q, want \"150393\"", got.DOB)
-		}
-	})
-	t.Run("non-six-char DOB is rejected", func(t *testing.T) {
+	t.Run("empty DOB is rejected", func(t *testing.T) {
 		_, err := validateCreateUser(CreateUserRequest{
-			FullName: "John Doe", Rank: "PTE", Battery: "Alpha", NRICLast5: "1234A", DOB: "15-03-93",
+			FullName: "John Doe", Rank: "PTE", Battery: "Alpha", DOB: "",
 		})
 		if err == nil {
-			t.Fatal("expected error for non-DDMMYY DOB, got nil")
+			t.Fatal("expected error for empty DOB, got nil")
 		}
-		if !strings.Contains(err.Error(), "DDMMYY") {
-			t.Errorf("error %q should mention DDMMYY", err.Error())
+	})
+	t.Run("canonicalisable DOB is accepted and normalised", func(t *testing.T) {
+		got, err := validateCreateUser(CreateUserRequest{
+			FullName: "John Doe", Rank: "PTE", Battery: "Alpha", DOB: "06.11.1986",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.DOB != "1986-11-06" {
+			t.Errorf("DOB = %q, want \"1986-11-06\" (canonicalised)", got.DOB)
+		}
+	})
+	t.Run("non-date DOB is rejected", func(t *testing.T) {
+		_, err := validateCreateUser(CreateUserRequest{
+			FullName: "John Doe", Rank: "PTE", Battery: "Alpha", DOB: "not-a-date",
+		})
+		if err == nil {
+			t.Fatal("expected error for non-date DOB, got nil")
 		}
 	})
 }
@@ -121,12 +115,11 @@ func TestValidateCreateUserRejectsBadInput(t *testing.T) {
 		req  CreateUserRequest
 		want string // substring expected in the error message
 	}{
-		{"empty fullName", CreateUserRequest{FullName: "   ", Rank: "PTE", Battery: "Alpha", NRICLast5: "1234A"}, "Full name"},
-		{"empty rank", CreateUserRequest{FullName: "John", Rank: "", Battery: "Alpha", NRICLast5: "1234A"}, "Rank"},
-		{"invalid rank", CreateUserRequest{FullName: "John", Rank: "FOO", Battery: "Alpha", NRICLast5: "1234A"}, "Invalid rank"},
-		{"invalid battery", CreateUserRequest{FullName: "John", Rank: "PTE", Battery: "Foxtrot", NRICLast5: "1234A"}, "battery"},
-		{"bad NRIC format", CreateUserRequest{FullName: "John", Rank: "PTE", Battery: "Alpha", NRICLast5: "12345"}, "NRIC"},
-		{"bad NRIC short", CreateUserRequest{FullName: "John", Rank: "PTE", Battery: "Alpha", NRICLast5: "1A"}, "NRIC"},
+		{"empty fullName", CreateUserRequest{FullName: "   ", Rank: "PTE", Battery: "Alpha", DOB: "1986-11-06"}, "Full name"},
+		{"empty rank", CreateUserRequest{FullName: "John", Rank: "", Battery: "Alpha", DOB: "1986-11-06"}, "Rank"},
+		{"invalid rank", CreateUserRequest{FullName: "John", Rank: "FOO", Battery: "Alpha", DOB: "1986-11-06"}, "Invalid rank"},
+		{"invalid battery", CreateUserRequest{FullName: "John", Rank: "PTE", Battery: "Foxtrot", DOB: "1986-11-06"}, "battery"},
+		{"missing DOB", CreateUserRequest{FullName: "John", Rank: "PTE", Battery: "Alpha", DOB: ""}, "Date of birth"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -161,11 +154,11 @@ func TestCreateUser_RejectsInvalidJSON(t *testing.T) {
 // (h.db is nil, so any DB access would panic.)
 func TestCreateUser_RejectsValidationErrorsBeforeDB(t *testing.T) {
 	cases := []CreateUserRequest{
-		{FullName: "", Rank: "PTE", Battery: "Alpha", NRICLast5: "1234A"},
-		{FullName: "John", Rank: "BOGUS", Battery: "Alpha", NRICLast5: "1234A"},
-		{FullName: "John", Rank: "PTE", Battery: "Bogus", NRICLast5: "1234A"},
-		{FullName: "John", Rank: "PTE", Battery: "Alpha", NRICLast5: "ZZZZZ"},
-		{FullName: "John", Rank: "PTE", Battery: "Alpha", NRICLast5: "1234A", DOB: "bad-dob"},
+		{FullName: "", Rank: "PTE", Battery: "Alpha", DOB: "1986-11-06"},
+		{FullName: "John", Rank: "BOGUS", Battery: "Alpha", DOB: "1986-11-06"},
+		{FullName: "John", Rank: "PTE", Battery: "Bogus", DOB: "1986-11-06"},
+		{FullName: "John", Rank: "PTE", Battery: "Alpha", DOB: ""},
+		{FullName: "John", Rank: "PTE", Battery: "Alpha", DOB: "not-a-date"},
 	}
 	for i, req := range cases {
 		h := &UserHandler{db: nil}

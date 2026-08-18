@@ -96,12 +96,12 @@ export interface UpdateUserRequest {
 }
 
 // Single-user create (feature 003) — superadmin only.
+// DOB is required: it is the sign-in credential (full name + date of birth).
 export interface CreateUserRequest {
   fullName: string;
   rank: string;
   battery: string;
-  nricLast5: string;
-  dob?: string;
+  dob: string;
   extras?: Record<string, string>;
 }
 
