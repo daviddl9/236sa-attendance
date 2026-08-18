@@ -25,12 +25,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/select';
-import {
-  isValidNricLast5,
-  normalizeNricLast5,
-  NRIC_LAST5_FIELD_MESSAGE,
-} from '../../lib/nric-password';
-
 const VALID_RANKS = [
   'REC', 'PTE', 'LCP', 'CPL', 'CFC',
   '3SG', '2SG', '1SG', 'SSG', 'MSG',
@@ -58,7 +52,6 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
   const [fullName, setFullName] = useState('');
   const [rank, setRank] = useState('');
   const [battery, setBattery] = useState('');
-  const [nricLast5, setNricLast5] = useState('');
   const [showOptional, setShowOptional] = useState(false);
   const [dob, setDob] = useState('');
   const [extras, setExtras] = useState<Array<{ key: string; value: string }>>([]);
@@ -69,7 +62,6 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
     setFullName('');
     setRank('');
     setBattery('');
-    setNricLast5('');
     setShowOptional(false);
     setDob('');
     setExtras([]);
@@ -82,15 +74,11 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
     onOpenChange(next);
   };
 
-  const nricTouched = nricLast5.length > 0;
-  const nricInvalid = nricTouched && !isValidNricLast5(nricLast5);
-
   const formValid =
     fullName.trim().length > 0 &&
     VALID_RANKS.includes(rank) &&
     VALID_BATTERIES.includes(battery) &&
-    isValidNricLast5(nricLast5) &&
-    (dob.length === 0 || dob.length === 6);
+    dob.length > 0;
 
   const mutation = useMutation({
     mutationFn: (payload: CreateUserRequest) => apiClient.createUser(payload),
@@ -129,9 +117,8 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
       fullName: fullName.trim().replace(/\s+/g, ' '),
       rank,
       battery,
-      nricLast5: normalizeNricLast5(nricLast5),
+      dob,
     };
-    if (dob.length === 6) payload.dob = dob;
     if (Object.keys(extrasMap).length > 0) payload.extras = extrasMap;
     mutation.mutate(payload);
   };
@@ -142,8 +129,8 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
         <DialogHeader>
           <DialogTitle>Add User</DialogTitle>
           <DialogDescription>
-            Create a single user. The NRIC last 5 doubles as the user's
-            password. CPT and above are automatically superadmin.
+            Create a single user. Date of birth is used for sign-in. CPT and
+            above are automatically superadmin.
           </DialogDescription>
         </DialogHeader>
 
@@ -151,8 +138,8 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
           <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">
             <p className="font-medium text-destructive">User already exists</p>
             <p className="text-muted-foreground">
-              A user named <strong>{conflict.fullName}</strong> with this NRIC
-              last 5 is already in the system
+              A user named <strong>{conflict.fullName}</strong> with this date
+              of birth is already in the system
               {conflict.verified ? '.' : ' and is awaiting approval.'}
             </p>
             {conflict.existingUserId && (
@@ -232,19 +219,15 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="add-user-nric">NRIC Last 5</Label>
+            <Label htmlFor="add-user-dob">Date of Birth</Label>
             <Input
-              id="add-user-nric"
-              value={nricLast5}
-              onChange={(e) =>
-                setNricLast5(normalizeNricLast5(e.target.value).slice(0, 5))
-              }
-              placeholder="e.g., 1234A"
-              maxLength={5}
-              aria-invalid={nricInvalid}
+              id="add-user-dob"
+              type="date"
+              value={dob}
+              onChange={(e) => setDob(e.target.value)}
             />
-            <p className={`text-xs ${nricInvalid ? 'text-destructive' : 'text-muted-foreground'}`}>
-              {nricInvalid ? NRIC_LAST5_FIELD_MESSAGE : 'This will be the user\'s password.'}
+            <p className="text-xs text-muted-foreground">
+              Used to sign in with your full name.
             </p>
           </div>
 
@@ -253,23 +236,11 @@ export function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogPr
             className="text-xs text-muted-foreground underline-offset-4 hover:underline"
             onClick={() => setShowOptional((v) => !v)}
           >
-            {showOptional ? 'Hide optional fields' : 'Show optional fields (DOB, extras)'}
+            {showOptional ? 'Hide optional fields' : 'Show optional fields (extras)'}
           </button>
 
           {showOptional && (
             <div className="space-y-3 rounded-md border p-3">
-              <div className="grid gap-2">
-                <Label htmlFor="add-user-dob">Date of Birth (DDMMYY)</Label>
-                <Input
-                  id="add-user-dob"
-                  value={dob}
-                  onChange={(e) =>
-                    setDob(e.target.value.replace(/\D/g, '').slice(0, 6))
-                  }
-                  placeholder="e.g., 150393"
-                  maxLength={6}
-                />
-              </div>
               <div className="grid gap-2">
                 <Label>Extras</Label>
                 {extras.map((row, i) => (

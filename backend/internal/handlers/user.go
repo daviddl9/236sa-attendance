@@ -712,14 +712,13 @@ func (h *UserHandler) RegisterUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // CreateUserRequest is the body accepted by POST /api/users (superadmin only).
-// Only the first four fields are required; DOB and Extras are optional.
+// DOB is required: it is the sign-in credential (full name + date of birth).
 type CreateUserRequest struct {
-	FullName  string            `json:"fullName"`
-	Rank      string            `json:"rank"`
-	Battery   string            `json:"battery"`
-	NRICLast5 string            `json:"nricLast5"`
-	DOB       string            `json:"dob,omitempty"`
-	Extras    map[string]string `json:"extras,omitempty"`
+	FullName string            `json:"fullName"`
+	Rank     string            `json:"rank"`
+	Battery  string            `json:"battery"`
+	DOB      string            `json:"dob"`
+	Extras   map[string]string `json:"extras,omitempty"`
 }
 
 // createUserConflict is the 409 response shape when a user already exists
@@ -771,15 +770,16 @@ func validateCreateUser(req CreateUserRequest) (CreateUserRequest, error) {
 	if req.Battery != models.BatteryHQ && req.Battery != models.BatteryAlpha && req.Battery != models.BatteryBravo {
 		return req, &createUserValidationError{message: "Invalid battery (must be HQ, Alpha, or Bravo)"}
 	}
-	normalizedNRIC, ok := normalizeNRICLast5(strings.TrimSpace(req.NRICLast5))
-	if !ok {
-		return req, &createUserValidationError{message: nricLast5FormatMessage}
-	}
-	req.NRICLast5 = normalizedNRIC
+	// DOB is the sign-in credential, so it is required and must be a real,
+	// canonicalisable date. The auth layer compares it via canonicalDOB, so any
+	// format it accepts (YYYY-MM-DD, DD.MM.YYYY, …) works; we store it
+	// canonicalised so the duplicate check below compares like-for-like.
 	req.DOB = strings.TrimSpace(req.DOB)
-	if req.DOB != "" && len(req.DOB) != 6 {
-		return req, &createUserValidationError{message: "Invalid DOB format (must be DDMMYY)"}
+	canonical, ok := canonicalDOB(req.DOB)
+	if !ok {
+		return req, &createUserValidationError{message: "Date of birth is required"}
 	}
+	req.DOB = canonical
 	return req, nil
 }
 
@@ -802,18 +802,19 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	req = normalized
 
-	// Duplicate detection on (LOWER(full_name), nric_last5). No DB-level
-	// unique constraint exists today on this pair; the application layer is
-	// authoritative.
+	// Duplicate detection on (upper(full_name), dob). No DB-level unique
+	// constraint exists today on this pair; the application layer is
+	// authoritative. DOB is stored canonicalised by validateCreateUser, so the
+	// comparison is exact.
 	var (
 		existingID       string
 		existingVerified bool
 	)
 	err = h.db.Pool.QueryRow(ctx, `
 		SELECT id, verified FROM "user"
-		WHERE upper("full_name") = upper($1) AND "nric_last5" = $2
+		WHERE upper("full_name") = upper($1) AND dob = $2
 		LIMIT 1
-	`, req.FullName, req.NRICLast5).Scan(&existingID, &existingVerified)
+	`, req.FullName, req.DOB).Scan(&existingID, &existingVerified)
 	switch {
 	case err == nil:
 		w.Header().Set("Content-Type", "application/json")
@@ -832,12 +833,6 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NRICLast5), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
-		return
-	}
-
 	isSuperadmin := models.IsSuperadminByRank(req.Rank)
 	extras := req.Extras
 	if extras == nil {
@@ -852,19 +847,18 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	userID := generateID()
 	now := time.Now()
 
-	var dobArg interface{}
-	if req.DOB != "" {
-		dobArg = req.DOB
-	}
-
+	// No bcrypt password is set: the DOB column is the sign-in credential and
+	// the auth layer's DOB path (verifyLegacyCandidates) is primary. password
+	// stays NULL, which the sign-in code already treats as "no match" on the
+	// password fallback path.
 	_, err = h.db.Pool.Exec(ctx, `
 		INSERT INTO "user" (
-			id, "full_name", rank, battery, "nric_last5", dob, password,
+			id, "full_name", rank, battery, dob,
 			"is_superadmin", verified, extras, "createdAt", "updatedAt"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9::jsonb, $10, $11)
-	`, userID, req.FullName, req.Rank, req.Battery, req.NRICLast5, dobArg,
-		string(hashedPassword), isSuperadmin, string(extrasJSON), now, now)
+		VALUES ($1, $2, $3, $4, $5, $6, true, $7::jsonb, $8, $9)
+	`, userID, req.FullName, req.Rank, req.Battery, req.DOB,
+		isSuperadmin, string(extrasJSON), now, now)
 	if err != nil {
 		// Race: another writer may have inserted between the duplicate check
 		// and the insert. Surface as 409 with the minimum useful payload.
@@ -886,16 +880,12 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		FullName:     &req.FullName,
 		Rank:         &req.Rank,
 		Battery:      &req.Battery,
-		NRICLast5:    &req.NRICLast5,
+		DOB:          &req.DOB,
 		Extras:       extras,
 		Verified:     true,
 		IsSuperadmin: isSuperadmin,
 		CreatedAt:    now.Format(time.RFC3339),
 		UpdatedAt:    now.Format(time.RFC3339),
-	}
-	if req.DOB != "" {
-		dobCopy := req.DOB
-		profile.DOB = &dobCopy
 	}
 
 	w.Header().Set("Content-Type", "application/json")
