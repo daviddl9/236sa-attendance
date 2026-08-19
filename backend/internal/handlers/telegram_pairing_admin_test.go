@@ -606,7 +606,11 @@ func TestTelegramPairingSuperadminStillCanReviewConfirmAndUnpair(t *testing.T) {
 	seedUser(t, db, actorID, "TEST SUPERADMIN", "CPT", "HQ", "", true)
 	seedUser(t, db, targetID, "PRIVATE ROSTER NAME", "PTE", "Alpha", "", true)
 	store := &TelegramPairingStore{db: db}
-	proposal, err := store.ProposePairing(context.Background(), telegramID, "unmatched request")
+	// A partial form of the target's name keeps the proposal below the strong
+	// match threshold (NoMatch) while deterministically ranking the target
+	// first among candidates on a shared dev/test roster. A totally unmatched
+	// name would leave candidate ranking to ambient tie-breaks.
+	proposal, err := store.ProposePairing(context.Background(), telegramID, "PRIVATE ROSTER")
 	if err != nil || !proposal.NoMatch {
 		t.Fatalf("proposal = %+v, err=%v", proposal, err)
 	}

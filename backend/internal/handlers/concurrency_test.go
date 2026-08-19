@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 )
 
 // TestConcurrentSignInAndMarkAttendance exercises the two web-UI paths that a
@@ -37,7 +38,9 @@ func TestConcurrentSignInAndMarkAttendance(t *testing.T) {
 	}
 
 	sessionID := prefix + "-session"
-	seedConcurrentSession(t, db, sessionID, prefix+" PARADE", "unit_wide")
+	creatorID := prefix + "-creator"
+	seedConcurrentUser(t, db, creatorID, prefix+" CREATOR", "01.01.1990")
+	seedConcurrentSession(t, db, sessionID, prefix+" PARADE", "unit_wide", creatorID)
 
 	// Phase A: every user signs in concurrently with name + DOB.
 	type signInResult struct {
@@ -80,6 +83,8 @@ func TestConcurrentSignInAndMarkAttendance(t *testing.T) {
 	}
 
 	// Phase B: every successfully-signed-in user marks attendance in parallel.
+	// Exercise the real request path: session cookie -> Auth -> LoadUser -> handler.
+	markHandler := middleware.Auth(db)(middleware.LoadUser(db)(http.HandlerFunc(att.MarkAttendance)))
 	now := time.Now().Unix()
 	markCodes := make([]int, n)
 	var mu sync.Mutex
@@ -98,7 +103,7 @@ func TestConcurrentSignInAndMarkAttendance(t *testing.T) {
 				strings.NewReader(fmt.Sprintf(`{"qrData":%q}`, qrData)))
 			req.AddCookie(&http.Cookie{Name: "session", Value: signIns[i].cookie})
 			rec := httptest.NewRecorder()
-			att.MarkAttendance(rec, req)
+			markHandler.ServeHTTP(rec, req)
 			markCodes[i] = rec.Code
 			if rec.Code != http.StatusOK {
 				mu.Lock()
@@ -156,10 +161,22 @@ func openConcurrencyDB(t *testing.T) (*database.DB, string) {
 	}
 	prefix := fmt.Sprintf("conc-%d", time.Now().UnixNano()%100000)
 	t.Cleanup(func() {
-		_, _ = db.Pool.Exec(context.Background(),
-			`DELETE FROM attendance_record WHERE session_id = $1`, prefix+"-session")
-		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM "user" WHERE id LIKE $1`, prefix+"-%")
-		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM attendance_session WHERE id = $1`, prefix+"-session")
+		ctx := context.Background()
+		// Delete the session before the users: attendance_session.created_by is
+		// a RESTRICT FK and the session's creator is one of the seeded users.
+		stmts := []struct {
+			sql  string
+			arg  string
+		}{
+			{`DELETE FROM attendance_record WHERE session_id = $1`, prefix + "-session"},
+			{`DELETE FROM attendance_session WHERE id = $1`, prefix + "-session"},
+			{`DELETE FROM "user" WHERE id LIKE $1`, prefix + "-%"},
+		}
+		for _, stmt := range stmts {
+			if _, err := db.Pool.Exec(ctx, stmt.sql, stmt.arg); err != nil {
+				t.Errorf("cleanup %q: %v", stmt.sql, err)
+			}
+		}
 		db.Close()
 	})
 	return db, prefix
@@ -176,12 +193,12 @@ func seedConcurrentUser(t *testing.T, db *database.DB, id, name, dob string) {
 	}
 }
 
-func seedConcurrentSession(t *testing.T, db *database.DB, id, name, scope string) {
+func seedConcurrentSession(t *testing.T, db *database.DB, id, name, scope, createdBy string) {
 	t.Helper()
 	_, err := db.Pool.Exec(context.Background(), `
 		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time, deeplink_code, "createdAt", "updatedAt")
-		VALUES ($1, $2, $3, 'secret', $4, '{}', 'active', (SELECT id FROM "user" WHERE is_superadmin LIMIT 1), NOW(), 'code', NOW(), NOW())
-	`, id, name, id+":secret")
+		VALUES ($1, $2, $3, 'secret', $4, '{}', 'active', $5, NOW(), 'code', NOW(), NOW())
+	`, id, name, id+":secret", scope, createdBy)
 	if err != nil {
 		t.Fatalf("seed session %s: %v", id, err)
 	}
