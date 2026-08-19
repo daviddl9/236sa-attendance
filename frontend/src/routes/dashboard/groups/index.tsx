@@ -108,12 +108,11 @@ function GroupsPage() {
     onError: (error: Error) => toast.error(error.message || 'Failed to update members'),
   });
 
-  // Load the full roster once; the dialog filters it client-side as the user
-  // types (same pattern as manual attendance marking).
+  // Prefetch the full roster on page load so the Add People dialog opens
+  // instantly from cache; the dialog filters it client-side as the user types.
   const { data: allUsers, isLoading: rosterLoading } = useQuery({
     queryKey: ['users', 'all'],
     queryFn: () => apiClient.listAllUsers(),
-    enabled: addMembersOpen,
   });
 
   // Roster rows that are not yet group members, live-filtered by name/rank.

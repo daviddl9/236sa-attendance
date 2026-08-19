@@ -318,6 +318,29 @@ func TestBulkDeleteUsers_AllSkipped_NoDBAccess(t *testing.T) {
 	}
 }
 
+// --- ListUsers pagination parsing (pure function — no DB required) ---
+
+func TestParseListUsersLimit(t *testing.T) {
+	tests := map[string]int{
+		"":      defaultListUsersLimit, // unset
+		"abc":   defaultListUsersLimit, // unparseable
+		"0":     defaultListUsersLimit,
+		"-5":    defaultListUsersLimit,
+		"1":     1,
+		"20":    20,
+		"100":   100,
+		"500":   500,                   // full-roster fetch must not be clamped
+		"1000":  1000,                  // max accepted
+		"1001":  defaultListUsersLimit, // over max falls back to default
+		"99999": defaultListUsersLimit,
+	}
+	for in, want := range tests {
+		if got := parseListUsersLimit(in); got != want {
+			t.Errorf("parseListUsersLimit(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 // --- helpers ---
 
 // ctxWithSuperadmin injects a fake superadmin user into context so that

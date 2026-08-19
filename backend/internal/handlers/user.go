@@ -108,6 +108,24 @@ func (h *UserHandler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(profile)
 }
 
+const (
+	defaultListUsersLimit = 20
+	// maxListUsersLimit must exceed the roster size: the groups "add people"
+	// dialog fetches the full roster in a single page to avoid a serial
+	// request waterfall on high-latency links.
+	maxListUsersLimit = 1000
+)
+
+// parseListUsersLimit clamps the requested page size; out-of-range or
+// unparseable values fall back to the default.
+func parseListUsersLimit(raw string) int {
+	limit, _ := strconv.Atoi(raw)
+	if limit < 1 || limit > maxListUsersLimit {
+		return defaultListUsersLimit
+	}
+	return limit
+}
+
 // ListUsers retrieves a paginated list of users. For Tier 2 users the list is
 // automatically scoped to their own battery.
 func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
@@ -119,10 +137,7 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
+	limit := parseListUsersLimit(r.URL.Query().Get("limit"))
 	offset := (page - 1) * limit
 
 	search := r.URL.Query().Get("search")

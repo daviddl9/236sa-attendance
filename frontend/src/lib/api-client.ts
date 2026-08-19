@@ -652,7 +652,9 @@ export class APIClient {
 
   /** Fetches the full verified roster by paging through the list endpoint. */
   async listAllUsers(): Promise<UserProfile[]> {
-    const pageSize = 100;
+    // Matches the backend's maxListUsersLimit so a full roster loads in one
+    // round trip instead of a serial page waterfall.
+    const pageSize = 1000;
     const all: UserProfile[] = [];
     let page = 1;
     let total = Infinity;
