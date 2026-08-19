@@ -58,6 +58,7 @@ function GroupsPage() {
   const [memberDialog, setMemberDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [addMembersOpen, setAddMembersOpen] = useState(false);
   const [memberSearch, setMemberSearch] = useState('');
+  const [memberListSearch, setMemberListSearch] = useState('');
   const [addUserOpen, setAddUserOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
@@ -103,6 +104,18 @@ function GroupsPage() {
     enabled: !!memberDialog,
   });
   const members = useMemo(() => groupDetail?.members ?? [], [groupDetail]);
+
+  // Members list live-filtered by name/rank/battery as the user types.
+  const filteredMembers = useMemo(() => {
+    const q = memberListSearch.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(
+      (m) =>
+        m.fullName?.toLowerCase().includes(q) ||
+        m.rank?.toLowerCase().includes(q) ||
+        m.battery?.toLowerCase().includes(q),
+    );
+  }, [members, memberListSearch]);
 
   const removeMemberMutation = useMutation({
     mutationFn: ({ groupId, userId }: { groupId: string; userId: string }) =>
@@ -506,20 +519,45 @@ function GroupsPage() {
           </div>
         )}
 
-        <Dialog open={!!memberDialog} onOpenChange={(o) => !o && setMemberDialog(null)}>
+        <Dialog
+          open={!!memberDialog}
+          onOpenChange={(o) => {
+            if (!o) {
+              setMemberDialog(null);
+              setMemberListSearch('');
+            }
+          }}
+        >
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>Members — {memberDialog?.groupName}</DialogTitle>
               <DialogDescription>
-                {membersLoading ? 'Loading members…' : `${members.length} members`}
+                {membersLoading
+                  ? 'Loading members…'
+                  : memberListSearch.trim()
+                    ? `${filteredMembers.length} of ${members.length} members`
+                    : `${members.length} members`}
               </DialogDescription>
             </DialogHeader>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={memberListSearch}
+                onChange={(e) => setMemberListSearch(e.target.value)}
+                placeholder="Search members…"
+                className="pl-9"
+              />
+            </div>
 
             <div className="max-h-80 space-y-1 overflow-y-auto">
               {members.length === 0 && !membersLoading && (
                 <p className="py-6 text-center text-sm text-muted-foreground">No members yet.</p>
               )}
-              {members.map((m) => (
+              {members.length > 0 && filteredMembers.length === 0 && (
+                <p className="py-6 text-center text-sm text-muted-foreground">No matching members.</p>
+              )}
+              {filteredMembers.map((m) => (
                 <div
                   key={m.userId}
                   className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
