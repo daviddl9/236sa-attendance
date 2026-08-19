@@ -174,9 +174,22 @@ func openRegistrationDB(t *testing.T) (*database.DB, string) {
 	prefix := fmt.Sprintf("pr3-%d", time.Now().UnixNano())
 	t.Cleanup(func() {
 		ctx := context.Background()
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM pending_registration WHERE id LIKE $1 OR username LIKE $1`, prefix+"-%")
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM attendance_session WHERE id LIKE $1`, prefix+"-%")
-		_, _ = db.Pool.Exec(ctx, `DELETE FROM "user" WHERE id LIKE $1`, prefix+"-%")
+		// Sessions and groups created through handlers get server-generated IDs,
+		// so match them by created_by. Delete them before the users: their
+		// created_by FKs are RESTRICT/NO ACTION and would block the user delete.
+		// Dependent rows (attendance_record, session_participants,
+		// participant_group_member, ...) cascade.
+		stmts := []string{
+			`DELETE FROM attendance_session WHERE id LIKE $1 OR created_by LIKE $1`,
+			`DELETE FROM participant_group WHERE id LIKE $1 OR created_by LIKE $1`,
+			`DELETE FROM pending_registration WHERE id LIKE $1 OR username LIKE $1`,
+			`DELETE FROM "user" WHERE id LIKE $1`,
+		}
+		for _, stmt := range stmts {
+			if _, err := db.Pool.Exec(ctx, stmt, prefix+"-%"); err != nil {
+				t.Errorf("cleanup %q: %v", stmt, err)
+			}
+		}
 		db.Close()
 	})
 	return db, prefix
