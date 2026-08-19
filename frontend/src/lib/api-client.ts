@@ -1101,6 +1101,13 @@ export class APIClient {
     });
   }
 
+  async createSessionFromGroups(data: { name: string; groupIds: string[] }): Promise<SessionResponse> {
+    return this.request<SessionResponse>('/api/sessions/from-groups', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async saveSessionAsGroup(sessionId: string, data: CreateGroupRequest): Promise<GroupResponse> {
     return this.request<GroupResponse>(`/api/sessions/${sessionId}/group`, {
       method: 'POST',

@@ -354,6 +354,57 @@ func (h *GroupHandler) CreateSessionFromGroup(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(SessionResponse{AttendanceSession: session})
 }
 
+type CreateSessionFromGroupsRequest struct {
+	Name     string     `json:"name"`
+	GroupIDs []string   `json:"groupIds"`
+	EndTime  *time.Time `json:"endTime,omitempty"`
+}
+
+// CreateSessionFromGroups creates a custom_list session whose participants are
+// the deduped union of the selected groups' members.
+// POST /api/sessions/from-groups
+func (h *GroupHandler) CreateSessionFromGroups(w http.ResponseWriter, r *http.Request) {
+	user, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	var req CreateSessionFromGroupsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.GroupIDs) == 0 {
+		http.Error(w, "at least one group is required", http.StatusBadRequest)
+		return
+	}
+
+	memberIDs, err := h.service.MembersUnion(r.Context(), req.GroupIDs)
+	if err != nil {
+		http.Error(w, "Failed to load groups", http.StatusInternalServerError)
+		return
+	}
+	if len(memberIDs) == 0 {
+		http.Error(w, "selected groups have no members", http.StatusBadRequest)
+		return
+	}
+
+	session, err := h.createCustomSession(r.Context(), user.ID, req.Name, memberIDs, req.EndTime)
+	if err != nil {
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+	setSessionQRVisibility(&session, user)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(SessionResponse{AttendanceSession: session})
+}
+
 // SaveSessionAsGroup snapshots an existing session's participants into a new
 // named group.
 // POST /api/sessions/{id}/group
