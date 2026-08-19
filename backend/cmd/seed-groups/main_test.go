@@ -79,44 +79,100 @@ func TestMatchesCSS(t *testing.T) {
 	}
 }
 
-func TestMatchesCSSCommander(t *testing.T) {
+// TestCommanderRankThreshold exercises the shared commander threshold (3SG)
+// through CSS Commanders: 3SG is the lowest rank included.
+func TestCommanderRankThreshold(t *testing.T) {
+	r := ruleFor(t, "CSS Commanders")
 	cases := []struct {
 		name string
 		row  row
 		want bool
 	}{
+		{"3SG in CSS", row{rank: "3SG", sub2: "MT PL"}, true},
+		{"2SG in CSS", row{rank: "2SG", sub2: "MT PL"}, true},
 		{"1SG in CSS", row{rank: "1SG", sub2: "MT PL"}, true},
 		{"CPT in CSS", row{rank: "CPT", sub2: "MEDICAL PL"}, true},
 		{"3WO in CSS", row{rank: "3WO", sub2: "S1 CELL", sub1: "S1 BR"}, true},
-		{"2SG in CSS is below threshold", row{rank: "2SG", sub2: "MT PL"}, false},
-		{"1SG outside CSS", row{rank: "1SG", sub2: "QM & SVCS PL"}, false},
+		{"CFC in CSS is below threshold", row{rank: "CFC", sub2: "MT PL"}, false},
+		{"3SG outside CSS", row{rank: "3SG", sub2: "QM & SVCS PL"}, false},
 		{"unknown rank in CSS", row{rank: "MAJOR", sub2: "MT PL"}, false},
 	}
 	for _, tc := range cases {
-		if got := matchesCSSCommander(tc.row); got != tc.want {
-			t.Errorf("%s: matchesCSSCommander(%+v) = %v, want %v", tc.name, tc.row, got, tc.want)
+		if got := r.matches(tc.row); got != tc.want {
+			t.Errorf("%s: matches(%+v) = %v, want %v", tc.name, tc.row, got, tc.want)
 		}
 	}
 }
 
-// TestCSSCommandersSubsetOfCSS ensures every CSS Commander row is also a CSS
-// member, so the commanders group can never outgrow its parent group.
-func TestCSSCommandersSubsetOfCSS(t *testing.T) {
-	commander := ruleFor(t, "CSS Commanders")
-	for _, tc := range []struct {
+func TestBatteryCommanders(t *testing.T) {
+	cases := []struct {
+		name string
+		rule string
+		row  row
+		want bool
+	}{
+		{"A 3SG gun det", "A Commanders", row{rank: "3SG", sub1: "FIELD ARTY BTY A"}, true},
+		{"A CPL gun det", "A Commanders", row{rank: "CPL", sub1: "FIELD ARTY BTY A"}, false},
+		{"A 3SG in B bty", "A Commanders", row{rank: "3SG", sub1: "FIELD ARTY BTY B"}, false},
+		{"B 2SG det cmd", "B Commanders", row{rank: "2SG", sub1: "FIELD ARTY BTY B"}, true},
+		{"B LCP gun det", "B Commanders", row{rank: "LCP", sub1: "FIELD ARTY BTY B"}, false},
+		{"HQ 3SG QM", "HQ Commanders", row{rank: "3SG", sub1: "HQ BTY"}, true},
+		{"HQ PTE sig", "HQ Commanders", row{rank: "PTE", sub1: "HQ BTY"}, false},
+	}
+	for _, tc := range cases {
+		r := ruleFor(t, tc.rule)
+		if got := r.matches(tc.row); got != tc.want {
+			t.Errorf("%s: %s matches(%+v) = %v, want %v", tc.name, tc.rule, tc.row, got, tc.want)
+		}
+	}
+}
+
+func TestAllCommanders(t *testing.T) {
+	r := ruleFor(t, "All Commanders")
+	cases := []struct {
 		name string
 		row  row
+		want bool
 	}{
-		{"1SG MT WO", row{rank: "1SG", sub2: "MT PL"}},
-		{"CPT S4/OC HQ", row{rank: "CPT", posDesc: "S4/OC HQ"}},
-		{"3WO chief admin", row{rank: "3WO", sub1: "S1 BR", sub2: "S1 CELL"}},
-		{"LTA MTO", row{rank: "LTA", sub2: "MT PL"}},
-	} {
-		if !commander.matches(tc.row) {
-			t.Fatalf("precondition: %s should match CSS Commanders", tc.name)
+		{"3SG anywhere", row{rank: "3SG", sub1: "BN HQ"}, true},
+		{"CPT anywhere", row{rank: "CPT", sub1: "NON-ESTAB"}, true},
+		{"CFC anywhere", row{rank: "CFC", sub1: "HQ BTY"}, false},
+		{"empty rank", row{}, false},
+	}
+	for _, tc := range cases {
+		if got := r.matches(tc.row); got != tc.want {
+			t.Errorf("%s: matches(%+v) = %v, want %v", tc.name, tc.row, got, tc.want)
 		}
-		if !matchesCSS(tc.row) {
-			t.Errorf("%s: matches CSS Commanders but not CSS", tc.name)
+	}
+}
+
+// TestCommandersSubsetOfBase ensures every commanders group is a subset of its
+// base group, so a commanders group can never outgrow the parent.
+func TestCommandersSubsetOfBase(t *testing.T) {
+	pairs := []struct {
+		commander string
+		base      func(r row) bool
+	}{
+		{"CSS Commanders", matchesCSS},
+		{"A Commanders", matchesA},
+		{"B Commanders", matchesB},
+		{"HQ Commanders", matchesHQ},
+		{"All Commanders", matchesAll},
+	}
+	samples := []row{
+		{rank: "3SG", sub1: "FIELD ARTY BTY A", sub2: "GUN DET 1"},
+		{rank: "2SG", sub1: "FIELD ARTY BTY B", sub2: "BTY HQ"},
+		{rank: "1SG", sub1: "HQ BTY", sub2: "MT PL"},
+		{rank: "CPT", sub1: "S1 BR", sub2: "S1 CELL"},
+		{rank: "LTA", sub1: "BN HQ"},
+		{rank: "3WO", sub1: "RSM GP"},
+	}
+	for _, p := range pairs {
+		r := ruleFor(t, p.commander)
+		for _, s := range samples {
+			if r.matches(s) && !p.base(s) {
+				t.Errorf("%s: %+v matches but base does not", p.commander, s)
+			}
 		}
 	}
 }

@@ -20,7 +20,11 @@
 //	HQ Bty          Sub-Unit 1 = HQ BTY
 //	MT Platoon      Sub-Unit 2 = MT PL
 //	Technicians     vocation in {AUTO TECH, AUTO SPEC TECH, ARMT TECH, ARMT SPEC TECH}
-//	CSS Commanders  CSS members with rank >= 1SG
+//	CSS Commanders  CSS members with rank >= 3SG
+//	A Commanders    A Bty members with rank >= 3SG
+//	B Commanders    B Bty members with rank >= 3SG
+//	HQ Commanders   HQ Bty members with rank >= 3SG
+//	All Commanders  all roster members with rank >= 3SG
 package main
 
 import (
@@ -40,16 +44,17 @@ import (
 
 // roster columns (0-indexed) in the "236 SA" sheet.
 const (
-	colNRIC     = 1
-	colRank     = 2
-	colName     = 3
-	colPosDesc  = 5
-	colSubUnit1 = 7
-	colSubUnit2 = 8
-	colVocation = 9
-	headerRows  = 2
-	rosterSheet = "236 SA"
-	ps0Rank     = "1SG" // PSO and CSS Commanders include everyone at or above this rank
+	colNRIC       = 1
+	colRank       = 2
+	colName       = 3
+	colPosDesc    = 5
+	colSubUnit1   = 7
+	colSubUnit2   = 8
+	colVocation   = 9
+	headerRows    = 2
+	rosterSheet   = "236 SA"
+	ps0Rank       = "1SG" // PSO includes everyone at or above this rank
+	commanderRank = "3SG" // commander groups include everyone at or above this rank
 )
 
 // row is one roster line.
@@ -79,9 +84,9 @@ var rules = []rule{
 		return ok && order >= models.RankOrder[ps0Rank]
 	}},
 	{group: "PSP", matches: func(r row) bool { return r.sub2 == "PERSONNEL SP PL" }},
-	{group: "A Bty", matches: func(r row) bool { return r.sub1 == "FIELD ARTY BTY A" }},
-	{group: "B Bty", matches: func(r row) bool { return r.sub1 == "FIELD ARTY BTY B" }},
-	{group: "HQ Bty", matches: func(r row) bool { return r.sub1 == "HQ BTY" }},
+	{group: "A Bty", matches: matchesA},
+	{group: "B Bty", matches: matchesB},
+	{group: "HQ Bty", matches: matchesHQ},
 	{group: "MT Platoon", matches: func(r row) bool { return r.sub2 == "MT PL" }},
 	{group: "Technicians", matches: func(r row) bool {
 		switch r.voc {
@@ -90,7 +95,11 @@ var rules = []rule{
 		}
 		return false
 	}},
-	{group: "CSS Commanders", matches: matchesCSSCommander},
+	{group: "CSS Commanders", matches: matchesCommanderAnd(matchesCSS)},
+	{group: "A Commanders", matches: matchesCommanderAnd(matchesA)},
+	{group: "B Commanders", matches: matchesCommanderAnd(matchesB)},
+	{group: "HQ Commanders", matches: matchesCommanderAnd(matchesHQ)},
+	{group: "All Commanders", matches: matchesCommanderAnd(matchesAll)},
 }
 
 // matchesCSS reports whether a roster row belongs to Combat Service Support:
@@ -110,11 +119,22 @@ func matchesCSS(r row) bool {
 	return r.sub2 == "BTY HQ" && r.posDesc == "BSM"
 }
 
-// matchesCSSCommander reports whether a roster row is a CSS commander — a CSS
-// member at or above First Sergeant rank.
-func matchesCSSCommander(r row) bool {
-	order, ok := models.RankOrder[strings.ToUpper(r.rank)]
-	return ok && matchesCSS(r) && order >= models.RankOrder[ps0Rank]
+// matchesA, matchesB and matchesHQ select each battery's roster rows.
+func matchesA(r row) bool  { return r.sub1 == "FIELD ARTY BTY A" }
+func matchesB(r row) bool  { return r.sub1 == "FIELD ARTY BTY B" }
+func matchesHQ(r row) bool { return r.sub1 == "HQ BTY" }
+
+// matchesAll selects every roster row.
+func matchesAll(r row) bool { return true }
+
+// matchesCommanderAnd reports whether a roster row is at or above the commander
+// rank (3SG) and also matches base. It backs the per-group commander groups, so
+// each commanders group is always a subset of its base group.
+func matchesCommanderAnd(base func(r row) bool) func(r row) bool {
+	return func(r row) bool {
+		order, ok := models.RankOrder[strings.ToUpper(r.rank)]
+		return ok && order >= models.RankOrder[commanderRank] && base(r)
+	}
 }
 
 func main() {

@@ -40,7 +40,11 @@ Decision: battery-level personnel are excluded from functional ops groups and ac
 | HQ Bty | sub1 = `HQ BTY` | 139 |
 | MT Platoon | sub2 = `MT PL` | 39 |
 | Technicians | vocation ∈ {`AUTO TECH`, `AUTO SPEC TECH`, `ARMT TECH`, `ARMT SPEC TECH`} | 16 |
-| CSS Commanders | CSS members with rank ≥ 1SG | 10 |
+| CSS Commanders | CSS members with rank ≥ 3SG | 22 |
+| A Commanders | A Bty members with rank ≥ 3SG | 29 |
+| B Commanders | B Bty members with rank ≥ 3SG | 32 |
+| HQ Commanders | HQ Bty members with rank ≥ 3SG | 29 |
+| All Commanders | all roster members with rank ≥ 3SG | 123 |
 
 Rationale for exclusions:
 
