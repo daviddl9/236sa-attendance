@@ -118,6 +118,11 @@ func TestBatteryCommanders(t *testing.T) {
 		{"B LCP gun det", "B Commanders", row{rank: "LCP", sub1: "FIELD ARTY BTY B"}, false},
 		{"HQ 3SG QM", "HQ Commanders", row{rank: "3SG", sub1: "HQ BTY"}, true},
 		{"HQ PTE sig", "HQ Commanders", row{rank: "PTE", sub1: "HQ BTY"}, false},
+		{"HQ S1 3SG excluded", "HQ Commanders", row{rank: "3SG", sub1: "S1 BR"}, false},
+		{"HQ RnS 2SG excluded", "HQ Commanders", row{rank: "2SG", sub1: "BN RECCE & SURVEY TM"}, false},
+		{"HQ FDC 3SG excluded", "HQ Commanders", row{rank: "3SG", sub1: "FIRE DIRECTION CEN"}, false},
+		{"HQ A-bty 3SG excluded", "HQ Commanders", row{rank: "3SG", sub1: "FIELD ARTY BTY A"}, false},
+		{"HQ B-bty 3SG excluded", "HQ Commanders", row{rank: "3SG", sub1: "FIELD ARTY BTY B"}, false},
 	}
 	for _, tc := range cases {
 		r := ruleFor(t, tc.rule)
@@ -164,7 +169,7 @@ func TestCommandersSubsetOfBase(t *testing.T) {
 		{rank: "2SG", sub1: "FIELD ARTY BTY B", sub2: "BTY HQ"},
 		{rank: "1SG", sub1: "HQ BTY", sub2: "MT PL"},
 		{rank: "CPT", sub1: "S1 BR", sub2: "S1 CELL"},
-		{rank: "LTA", sub1: "BN HQ"},
+		{rank: "LTA", sub1: "S1 BR", sub2: "PERSONNEL SP PL"},
 		{rank: "3WO", sub1: "RSM GP"},
 	}
 	for _, p := range pairs {
