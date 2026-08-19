@@ -170,6 +170,31 @@ func (s *Service) Members(ctx context.Context, id string) ([]string, error) {
 	return members, err
 }
 
+// MembersUnion returns the deduped member user IDs across the given groups.
+// Unknown group IDs contribute no members.
+func (s *Service) MembersUnion(ctx context.Context, groupIDs []string) ([]string, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT user_id FROM participant_group_member WHERE group_id = ANY($1) ORDER BY user_id
+	`, groupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list group members union: %w", err)
+	}
+	defer rows.Close()
+
+	members := []string{}
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, fmt.Errorf("scan group member: %w", err)
+		}
+		members = append(members, uid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
 // SetMembers atomically replaces a group's full member list with the deduped
 // user IDs. It returns the new member count and ErrNotFound when the group does
 // not exist.

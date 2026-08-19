@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '../../../components/ui/select';
 import { Switch } from '../../../components/ui/switch';
+import { Checkbox } from '../../../components/ui/checkbox';
 import {
   Card,
   CardContent,
@@ -22,7 +23,7 @@ import {
 } from '../../../components/ui/card';
 import { Badge } from '../../../components/ui/badge';
 import { useState, useRef } from 'react';
-import { ArrowLeft, Save, Upload, Users, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Save, Search, Upload, Users, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from '@tanstack/react-router';
 
@@ -45,13 +46,17 @@ function CreateSessionPage() {
   const [unmatched, setUnmatched] = useState<UnmatchedRow[]>([]);
   const [previewDone, setPreviewDone] = useState(false);
   const [listSource, setListSource] = useState<'excel' | 'group'>('excel');
-  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
+  const [groupSearch, setGroupSearch] = useState('');
 
   const { data: groupsData } = useQuery({
     queryKey: ['groups'],
     queryFn: () => apiClient.listGroups(),
   });
   const groups = groupsData?.groups ?? [];
+  const filteredGroups = groups.filter((g) =>
+    g.name.toLowerCase().includes(groupSearch.trim().toLowerCase()),
+  );
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; scope: string; batteries?: string[] }) =>
@@ -78,11 +83,11 @@ function CreateSessionPage() {
     onError: (error: Error) => toast.error(error.message || 'Failed to create session'),
   });
 
-  const createFromGroupMutation = useMutation({
-    mutationFn: (groupId: string) =>
-      apiClient.createSessionFromGroup(groupId, { name, participantIds: [] }),
+  const createFromGroupsMutation = useMutation({
+    mutationFn: () =>
+      apiClient.createSessionFromGroups({ name, groupIds: selectedGroupIds }),
     onSuccess: (data) => {
-      toast.success('Session created from group');
+      toast.success('Session created from groups');
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       navigate({ to: '/dashboard/sessions/$sessionId', params: { sessionId: data.id } });
     },
@@ -129,11 +134,11 @@ function CreateSessionPage() {
 
     if (scope === 'custom_list') {
       if (listSource === 'group') {
-        if (!selectedGroupId) {
-          toast.error('Please pick a saved group');
+        if (selectedGroupIds.length === 0) {
+          toast.error('Please pick at least one saved group');
           return;
         }
-        createFromGroupMutation.mutate(selectedGroupId);
+        createFromGroupsMutation.mutate();
         return;
       }
       if (!previewDone || matched.length === 0) {
@@ -156,7 +161,7 @@ function CreateSessionPage() {
   };
 
   const isPending =
-    createMutation.isPending || createCustomMutation.isPending || createFromGroupMutation.isPending;
+    createMutation.isPending || createCustomMutation.isPending || createFromGroupsMutation.isPending;
 
   return (
     <DashboardLayout>
@@ -202,7 +207,8 @@ function CreateSessionPage() {
                       setPreviewDone(false);
                       setMatched([]);
                       setUnmatched([]);
-                      setSelectedGroupId('');
+                      setSelectedGroupIds([]);
+                      setGroupSearch('');
                     }
                   }}
                 >
@@ -301,28 +307,49 @@ function CreateSessionPage() {
                   ) : (
                     <div className="grid gap-2">
                       <p className="text-xs text-muted-foreground -mt-1">
-                        Pick a saved group to reuse its roster.
+                        Search and add one or more saved groups to reuse their rosters.
                       </p>
-                      <Select value={selectedGroupId} onValueChange={setSelectedGroupId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a group" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {groups.length === 0 && (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              No saved groups yet.
-                            </div>
-                          )}
-                          {groups.map((g) => (
-                            <SelectItem key={g.id} value={g.id}>
-                              {g.name} ({g.memberCount ?? 0})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {selectedGroupId && (
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search groups..."
+                          value={groupSearch}
+                          onChange={(e) => setGroupSearch(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                      <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
+                        {groups.length === 0 && (
+                          <p className="py-2 text-center text-sm text-muted-foreground">
+                            No saved groups yet.
+                          </p>
+                        )}
+                        {groups.length > 0 && filteredGroups.length === 0 && (
+                          <p className="py-2 text-center text-sm text-muted-foreground">
+                            No groups match your search.
+                          </p>
+                        )}
+                        {filteredGroups.map((g) => (
+                          <label
+                            key={g.id}
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                          >
+                            <Checkbox
+                              checked={selectedGroupIds.includes(g.id)}
+                              onCheckedChange={(checked) =>
+                                setSelectedGroupIds((ids) =>
+                                  checked ? [...ids, g.id] : ids.filter((id) => id !== g.id),
+                                )
+                              }
+                            />
+                            {g.name} ({g.memberCount ?? 0})
+                          </label>
+                        ))}
+                      </div>
+                      {selectedGroupIds.length > 0 && (
                         <p className="text-xs text-muted-foreground">
-                          This session will include all members of the selected group.
+                          {selectedGroupIds.length} selected — this session will include all unique
+                          members across the selected groups.
                         </p>
                       )}
                     </div>
@@ -370,7 +397,7 @@ function CreateSessionPage() {
                     isPending ||
                     (scope === 'custom_list' &&
                       (listSource === 'group'
-                        ? !selectedGroupId
+                        ? selectedGroupIds.length === 0
                         : !previewDone || unmatched.length > 0))
                   }
                 >

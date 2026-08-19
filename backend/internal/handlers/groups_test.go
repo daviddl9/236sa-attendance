@@ -352,3 +352,87 @@ func TestGroupHandlerRename(t *testing.T) {
 		t.Fatalf("RenameGroup(missing) status = %d, want 404", rec.Code)
 	}
 }
+
+func TestCreateSessionFromGroups(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	creatorID := prefix + "-creator"
+	seedUser(t, db, creatorID, "GROUP CREATOR", "CPT", "HQ", prefix+"-creator", true)
+	m1 := prefix + "-m1"
+	m2 := prefix + "-m2"
+	m3 := prefix + "-m3"
+	seedUser(t, db, m1, "MEMBER ONE", "PTE", "Alpha", prefix+"-m1", true)
+	seedUser(t, db, m2, "MEMBER TWO", "PTE", "Alpha", prefix+"-m2", true)
+	seedUser(t, db, m3, "MEMBER THREE", "PTE", "Bravo", prefix+"-m3", true)
+
+	handler := NewGroupHandler(db)
+	creator := sessionTestUser(creatorID, models.RankCPT)
+
+	createGroup := func(name string, ids ...string) string {
+		t.Helper()
+		body, _ := json.Marshal(CreateGroupRequest{Name: name, ParticipantIDs: ids})
+		req := httptest.NewRequest(http.MethodPost, "/api/groups", bytes.NewBuffer(body))
+		req = withGroupUser(req, creator, "")
+		rec := httptest.NewRecorder()
+		handler.CreateGroup(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("CreateGroup(%s) status = %d: %s", name, rec.Code, rec.Body.String())
+		}
+		var g GroupResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &g); err != nil {
+			t.Fatalf("unmarshal group: %v", err)
+		}
+		return g.ID
+	}
+
+	groupA := createGroup("Multi A", m1, m2)
+	groupB := createGroup("Multi B", m2, m3) // overlaps groupA on m2
+	emptyGroup := createGroup("Multi Empty")
+
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/from-groups", bytes.NewBufferString(body))
+		req = withGroupUser(req, creator, "")
+		rec := httptest.NewRecorder()
+		handler.CreateSessionFromGroups(rec, req)
+		return rec
+	}
+
+	// Union of two groups dedupes the overlapping member.
+	rec := post(`{"name":"Combined Session","groupIds":["` + groupA + `","` + groupB + `"]}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("CreateSessionFromGroups status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal session: %v", err)
+	}
+	if resp.Scope != models.SessionScopeCustomList {
+		t.Fatalf("scope = %s, want custom_list", resp.Scope)
+	}
+	if resp.ParticipantCount == nil || *resp.ParticipantCount != 3 {
+		t.Fatalf("ParticipantCount = %v, want 3 (overlap deduped)", resp.ParticipantCount)
+	}
+	var rowCount int
+	if err := db.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM session_participants WHERE session_id = $1`, resp.ID).Scan(&rowCount); err != nil {
+		t.Fatal(err)
+	}
+	if rowCount != 3 {
+		t.Fatalf("session_participants rows = %d, want 3", rowCount)
+	}
+
+	// No groups selected -> 400.
+	if rec := post(`{"name":"No Groups","groupIds":[]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty groupIds status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+
+	// Selected groups exist but have no members -> 400.
+	if rec := post(`{"name":"Empty Group","groupIds":["` + emptyGroup + `"]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty members status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+
+	// Missing name -> 400.
+	if rec := post(`{"groupIds":["` + groupA + `"]}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing name status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}

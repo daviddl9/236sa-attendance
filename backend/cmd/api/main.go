@@ -197,6 +197,7 @@ func main() {
 					// Custom participant sessions: Tier 3+
 					r.With(middleware.RequireUnitCommander(db)).Post("/custom/preview", sessionHandler.PreviewCustomSession)
 					r.With(middleware.RequireUnitCommander(db)).Post("/custom/create", sessionHandler.CreateCustomSession)
+					r.With(middleware.RequireUnitCommander(db)).Post("/from-groups", groupHandler.CreateSessionFromGroups)
 
 					// Reusable groups & duplication: Tier 3+
 					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/group", groupHandler.SaveSessionAsGroup)
