@@ -23,13 +23,7 @@ import {
   DialogTrigger,
 } from '../../../components/ui/dialog';
 import { Badge } from '../../../components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '../../../components/ui/select';
+import { Checkbox } from '../../../components/ui/checkbox';
 import { AddUserDialog } from '../../../components/users/add-user-dialog';
 import { UserTable } from '../../../components/users/user-table';
 import { Users, Upload, Trash2, Play, Lock, Plus, Search, X } from 'lucide-react';
@@ -53,7 +47,7 @@ function GroupsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
-  const [copyFromGroupId, setCopyFromGroupId] = useState('');
+  const [copyFromGroupIds, setCopyFromGroupIds] = useState<string[]>([]);
   const [sessionDialog, setSessionDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [sessionName, setSessionName] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
@@ -165,13 +159,12 @@ function GroupsPage() {
   });
 
   // Create a blank group, then open its member dialog so people can be added
-  // by searching the roster (no Excel needed). If the user picked a source
-  // group to copy from, seed the new group with that group's members.
+  // by searching the roster (no Excel needed). If the user picked source
+  // groups to copy from, seed the new group with the union of their members.
   const createNewGroupMutation = useMutation({
     mutationFn: async (name: string) => {
-      const participantIds = copyFromGroupId
-        ? (await apiClient.getGroup(copyFromGroupId)).memberIds ?? []
-        : [];
+      const copied = await Promise.all(copyFromGroupIds.map((id) => apiClient.getGroup(id)));
+      const participantIds = [...new Set(copied.flatMap((g) => g.memberIds ?? []))];
       return apiClient.createGroup({ name, participantIds });
     },
     onSuccess: (group) => {
@@ -179,7 +172,7 @@ function GroupsPage() {
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       setNewGroupOpen(false);
       setNewGroupName('');
-      setCopyFromGroupId('');
+      setCopyFromGroupIds([]);
       setMemberDialog({ groupId: group.id, groupName: group.name });
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to create group'),
@@ -378,19 +371,28 @@ function GroupsPage() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="new-group-copy-from">Copy members from (optional)</Label>
-              <Select value={copyFromGroupId} onValueChange={setCopyFromGroupId}>
-                <SelectTrigger id="new-group-copy-from">
-                  <SelectValue placeholder="Start with an existing group's members" />
-                </SelectTrigger>
-                <SelectContent>
-                  {groups.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>
-                      {g.name} ({g.memberCount ?? 0})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Copy members from (optional)</Label>
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2">
+                {groups.length === 0 && (
+                  <p className="py-2 text-center text-sm text-muted-foreground">No existing groups</p>
+                )}
+                {groups.map((g) => (
+                  <label
+                    key={g.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                  >
+                    <Checkbox
+                      checked={copyFromGroupIds.includes(g.id)}
+                      onCheckedChange={(checked) =>
+                        setCopyFromGroupIds((ids) =>
+                          checked ? [...ids, g.id] : ids.filter((id) => id !== g.id),
+                        )
+                      }
+                    />
+                    {g.name} ({g.memberCount ?? 0})
+                  </label>
+                ))}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setNewGroupOpen(false)}>
