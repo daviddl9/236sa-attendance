@@ -56,6 +56,7 @@ function GroupsPage() {
   const [copyFromGroupId, setCopyFromGroupId] = useState('');
   const [sessionDialog, setSessionDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [sessionName, setSessionName] = useState('');
+  const [groupSearch, setGroupSearch] = useState('');
 
   // Member management state.
   const [memberDialog, setMemberDialog] = useState<{ groupId: string; groupName: string } | null>(null);
@@ -67,7 +68,13 @@ function GroupsPage() {
     queryKey: ['groups'],
     queryFn: () => apiClient.listGroups(),
   });
-  const groups = data?.groups ?? [];
+  const groups = useMemo(() => data?.groups ?? [], [data]);
+
+  // Live-filter the group cards by name as the user types.
+  const filteredGroups = useMemo(() => {
+    const q = groupSearch.trim().toLowerCase();
+    return q ? groups.filter((g) => g.name.toLowerCase().includes(q)) : groups;
+  }, [groups, groupSearch]);
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiClient.deleteGroup(id),
@@ -400,6 +407,18 @@ function GroupsPage() {
           </DialogContent>
         </Dialog>
 
+        {!isLoading && groups.length > 0 && (
+          <div className="relative max-w-sm">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search groups..."
+              value={groupSearch}
+              onChange={(e) => setGroupSearch(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex items-center justify-center py-12 text-muted-foreground">Loading…</div>
         ) : groups.length === 0 ? (
@@ -408,9 +427,15 @@ function GroupsPage() {
               No groups yet. Create one above, then add people by searching the roster.
             </CardContent>
           </Card>
+        ) : filteredGroups.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-center text-muted-foreground">
+              No groups match your search.
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {groups.map((group) => (
+            {filteredGroups.map((group) => (
               <Card key={group.id}>
                 <CardHeader>
                   <CardTitle className="text-base">{group.name}</CardTitle>
