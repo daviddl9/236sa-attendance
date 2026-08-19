@@ -35,7 +35,11 @@ The seed rules below were confirmed with the unit owner. Battery-level personnel
 | **HQ Bty** | Sub-Unit 1 = `HQ BTY` | 139 |
 | **MT Platoon** | Sub-Unit 2 = `MT PL` | 39 |
 | **Technicians** | Vocation ∈ {`AUTO TECH`, `AUTO SPEC TECH`, `ARMT TECH`, `ARMT SPEC TECH`} | 16 |
-| **CSS Commanders** | CSS members with rank ≥ 1SG | 10 |
+| **CSS Commanders** | CSS members with rank ≥ 3SG | 22 |
+| **A Commanders** | A Bty members with rank ≥ 3SG | 29 |
+| **B Commanders** | B Bty members with rank ≥ 3SG | 32 |
+| **HQ Commanders** | HQ Bty members with rank ≥ 3SG | 29 |
+| **All Commanders** | All roster members with rank ≥ 3SG | 123 |
 
 People in `BN HQ`, `BN OPS CEN`, `HL 236 SA`, `NON-ESTAB`, `RSM GP`, and the `PERSONNEL SP PL` staff (~71 people) are **not assigned to any seeded group**. They are left ungrouped so commanders can add them manually after seeding.
 
@@ -113,7 +117,7 @@ Once the ops groups exist, a commander can start an attendance session from any 
 - **FR-003**: Authorized users MUST be able to remove a single member from a group.
 - **FR-004**: The system MUST support creating a new roster user and adding them to a group in the same flow.
 - **FR-005**: The system MUST allow searching the roster to find users to add to a group.
-- **FR-006**: The system MUST seed the ops groups (RnS, FDC/BOC, BCS, CSS, PSO, MT Platoon, Technicians, CSS Commanders, A Bty, B Bty, HQ Bty) from the roster file using the confirmed rules.
+- **FR-006**: The system MUST seed the ops groups (RnS, FDC/BOC, BCS, CSS, PSO, MT Platoon, Technicians, CSS Commanders, A/B/HQ Commanders, All Commanders, A Bty, B Bty, HQ Bty) from the roster file using the confirmed rules.
 - **FR-007**: The seed MUST be idempotent: re-running it MUST NOT duplicate groups or remove members.
 - **FR-008**: The seed MUST match roster rows to existing users by NRIC last 5 (with name as a tie-breaker) and report rows it could not match.
 - **FR-009**: Existing group features (create from Excel, start session) MUST continue to work unchanged.
@@ -132,7 +136,7 @@ Once the ops groups exist, a commander can start an attendance session from any 
 
 - **SC-001**: A Tier 3+ user can view, add, and remove group members through the UI without uploading any file.
 - **SC-002**: Creating a person and adding them to a group completes in under 1 minute for an experienced user.
-- **SC-003**: The seed command creates all seeded groups from the provided roster with the member counts in the table (RnS 8, FDC/BOC 11, BCS 16, CSS 76, PSO 40, A Bty 90, B Bty 89, HQ Bty 139, MT Platoon 39, Technicians 16, CSS Commanders 10).
+- **SC-003**: The seed command creates all seeded groups from the provided roster with the member counts in the table (RnS 8, FDC/BOC 11, BCS 16, CSS 76, PSO 40, A Bty 90, B Bty 89, HQ Bty 139, MT Platoon 39, Technicians 16, CSS Commanders 22, A Commanders 29, B Commanders 32, HQ Commanders 29, All Commanders 123).
 - **SC-004**: Running the seed command twice yields the same groups and member sets as running it once (idempotence).
 - **SC-005**: No roster row that matches an existing user is silently dropped by the seed; every unmatched row is reported.
 - **SC-006**: Existing session-from-group creation works for both hand-built and seeded groups.
