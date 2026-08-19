@@ -106,6 +106,29 @@ func (h *GroupHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(GroupResponse{ParticipantGroup: group, MemberIDs: memberIDs, Members: members})
 }
 
+// RenameGroupRequest is the body for renaming a group.
+type RenameGroupRequest struct {
+	Name string `json:"name"`
+}
+
+// RenameGroup renames a group.
+// PUT /api/groups/{id}
+func (h *GroupHandler) RenameGroup(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req RenameGroupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	group, err := h.service.Rename(r.Context(), id, req.Name)
+	if err != nil {
+		writeGroupError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(GroupResponse{ParticipantGroup: group})
+}
+
 // SetMembersRequest is the body for replacing a group's member list.
 type SetMembersRequest struct {
 	MemberIDs []string `json:"memberIds"`
@@ -489,6 +512,8 @@ func writeGroupError(w http.ResponseWriter, err error) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, groups.ErrDuplicateName):
 		http.Error(w, "A group with this name already exists", http.StatusConflict)
+	case errors.Is(err, groups.ErrNotFound):
+		http.Error(w, "Group not found", http.StatusNotFound)
 	default:
 		http.Error(w, "Failed to save group", http.StatusInternalServerError)
 	}

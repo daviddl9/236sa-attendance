@@ -289,3 +289,66 @@ func TestGroupMemberManagement(t *testing.T) {
 		t.Fatalf("RemoveMember(missing) status = %d, want 404", rec.Code)
 	}
 }
+
+func TestGroupHandlerRename(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	creatorID := prefix + "-creator"
+	seedUser(t, db, creatorID, "GROUP CREATOR", "CPT", "HQ", prefix+"-creator", true)
+
+	handler := NewGroupHandler(db)
+	creator := sessionTestUser(creatorID, models.RankCPT)
+
+	create := func(name string) GroupResponse {
+		req := httptest.NewRequest(http.MethodPost, "/api/groups", bytes.NewBufferString(`{"name":"`+name+`","participantIds":[]}`))
+		req = withGroupUser(req, creator, "")
+		rec := httptest.NewRecorder()
+		handler.CreateGroup(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("CreateGroup(%q) status = %d: %s", name, rec.Code, rec.Body.String())
+		}
+		var created GroupResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+			t.Fatalf("unmarshal created group: %v", err)
+		}
+		return created
+	}
+
+	rename := func(id, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/groups/"+id, bytes.NewBufferString(body))
+		req = withGroupUser(req, creator, id)
+		rec := httptest.NewRecorder()
+		handler.RenameGroup(rec, req)
+		return rec
+	}
+
+	first := create("Advance Party")
+	create("Main Body")
+
+	// Happy path: rename returns the updated group.
+	rec := rename(first.ID, `{"name":"Recce Party"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("RenameGroup status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var renamed GroupResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &renamed); err != nil {
+		t.Fatalf("unmarshal renamed group: %v", err)
+	}
+	if renamed.ID != first.ID || renamed.Name != "Recce Party" {
+		t.Fatalf("renamed group = %+v, want id %s name Recce Party", renamed, first.ID)
+	}
+
+	// Empty / whitespace-only names are rejected.
+	if rec := rename(first.ID, `{"name":"   "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("RenameGroup(blank) status = %d, want 400", rec.Code)
+	}
+
+	// Renaming onto another group's name conflicts (case-insensitive).
+	if rec := rename(first.ID, `{"name":"main body"}`); rec.Code != http.StatusConflict {
+		t.Fatalf("RenameGroup(dup) status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+
+	// Unknown group -> 404.
+	if rec := rename(prefix+"-missing", `{"name":"Ghost"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("RenameGroup(missing) status = %d, want 404", rec.Code)
+	}
+}

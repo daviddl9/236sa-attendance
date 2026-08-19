@@ -26,7 +26,7 @@ import { Badge } from '../../../components/ui/badge';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { AddUserDialog } from '../../../components/users/add-user-dialog';
 import { UserTable } from '../../../components/users/user-table';
-import { Users, Upload, Trash2, Play, Lock, Plus, Search, X } from 'lucide-react';
+import { Users, Upload, Trash2, Play, Lock, Plus, Search, X, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 
 export const Route = createFileRoute('/dashboard/groups/')({
@@ -51,6 +51,8 @@ function GroupsPage() {
   const [sessionDialog, setSessionDialog] = useState<{ groupId: string; groupName: string } | null>(null);
   const [sessionName, setSessionName] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
+  const [renameDialog, setRenameDialog] = useState<{ groupId: string; groupName: string } | null>(null);
+  const [renameName, setRenameName] = useState('');
 
   // Member management state.
   const [memberDialog, setMemberDialog] = useState<{ groupId: string; groupName: string } | null>(null);
@@ -69,6 +71,21 @@ function GroupsPage() {
     const q = groupSearch.trim().toLowerCase();
     return q ? groups.filter((g) => g.name.toLowerCase().includes(q)) : groups;
   }, [groups, groupSearch]);
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => apiClient.renameGroup(id, name),
+    onSuccess: () => {
+      toast.success('Group renamed');
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+      setRenameDialog(null);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to rename group'),
+  });
+
+  const handleRename = () => {
+    if (!renameDialog || !renameName.trim()) return;
+    renameMutation.mutate({ id: renameDialog.groupId, name: renameName.trim() });
+  };
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiClient.deleteGroup(id),
@@ -468,6 +485,16 @@ function GroupsPage() {
                   <Button
                     size="sm"
                     variant="ghost"
+                    onClick={() => {
+                      setRenameDialog({ groupId: group.id, groupName: group.name });
+                      setRenameName(group.name);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     className="text-destructive"
                     onClick={() => deleteMutation.mutate(group.id)}
                   >
@@ -598,6 +625,46 @@ function GroupsPage() {
             });
           }}
         />
+
+        <Dialog open={!!renameDialog} onOpenChange={(o) => !o && setRenameDialog(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Rename group</DialogTitle>
+              <DialogDescription>
+                Enter a new name for <strong>{renameDialog?.groupName}</strong>.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2">
+              <Label htmlFor="rename-group-name">Group name</Label>
+              <Input
+                id="rename-group-name"
+                value={renameName}
+                onChange={(e) => setRenameName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRename();
+                }}
+                placeholder="e.g. Advance Party"
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRenameDialog(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleRename}
+                disabled={
+                  !renameName.trim() ||
+                  renameName.trim() === renameDialog?.groupName ||
+                  renameMutation.isPending
+                }
+              >
+                <Pencil className="mr-2 h-4 w-4" />
+                Save
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={!!sessionDialog} onOpenChange={(o) => !o && setSessionDialog(null)}>
           <DialogContent>

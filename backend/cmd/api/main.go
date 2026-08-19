@@ -209,6 +209,7 @@ func main() {
 					r.With(middleware.RequireUnitCommander(db)).Post("/", groupHandler.CreateGroup)
 					r.With(middleware.RequireUnitCommander(db)).Post("/preview", groupHandler.PreviewGroupFromExcel)
 					r.With(middleware.RequireUnitCommander(db)).Get("/{id}", groupHandler.GetGroup)
+					r.With(middleware.RequireUnitCommander(db)).Put("/{id}", groupHandler.RenameGroup)
 					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}", groupHandler.DeleteGroup)
 					r.With(middleware.RequireUnitCommander(db)).Put("/{id}/members", groupHandler.SetMembers)
 					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}/members/{userId}", groupHandler.RemoveMember)

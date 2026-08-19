@@ -1039,6 +1039,13 @@ export class APIClient {
     });
   }
 
+  async renameGroup(id: string, name: string): Promise<GroupResponse> {
+    return this.request<GroupResponse>(`/api/groups/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    });
+  }
+
   async deleteGroup(id: string): Promise<void> {
     const response = await fetch(`${this.baseURL}/api/groups/${id}`, {
       method: 'DELETE',
