@@ -11,7 +11,7 @@
 //
 //	RnS             Sub-Unit 1 = BN RECCE & SURVEY TM
 //	FDC/BOC         Sub-Unit 1 = FIRE DIRECTION CEN
-//	BCS             Sub-Unit 2 = MEDICAL PL
+//	BCS / Medics    Sub-Unit 2 = MEDICAL PL
 //	CSS             S1 CELL + MT PL + MEDICAL PL + HQ COMBAT TRAIN + S4/OC HQ + HQ-bty BSM
 //	PSO             rank >= 1SG
 //	PSP             Sub-Unit 2 = PERSONNEL SP PL
@@ -77,7 +77,7 @@ type rule struct {
 var rules = []rule{
 	{group: "RnS", matches: func(r row) bool { return r.sub1 == "BN RECCE & SURVEY TM" }},
 	{group: "FDC/BOC", matches: func(r row) bool { return r.sub1 == "FIRE DIRECTION CEN" }},
-	{group: "BCS", matches: func(r row) bool { return r.sub2 == "MEDICAL PL" }},
+	{group: "BCS / Medics", matches: func(r row) bool { return r.sub2 == "MEDICAL PL" }},
 	{group: "CSS", matches: matchesCSS},
 	{group: "PSO", matches: func(r row) bool {
 		order, ok := models.RankOrder[strings.ToUpper(r.rank)]
