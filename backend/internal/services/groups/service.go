@@ -298,6 +298,34 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// Rename updates a group's name, returning the updated group.
+func (s *Service) Rename(ctx context.Context, id, name string) (models.ParticipantGroup, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return models.ParticipantGroup{}, ErrInvalidRequest
+	}
+	if s == nil || s.db == nil || s.db.Pool == nil {
+		return models.ParticipantGroup{}, errors.New("group service is not configured")
+	}
+	var group models.ParticipantGroup
+	err := s.db.Pool.QueryRow(ctx, `
+		UPDATE participant_group SET name = $1, "updatedAt" = $2 WHERE id = $3
+		RETURNING id, name, created_by, "createdAt", "updatedAt"
+	`, name, time.Now(), id).
+		Scan(&group.ID, &group.Name, &group.CreatedBy, &group.CreatedAt, &group.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.ParticipantGroup{}, ErrNotFound
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return models.ParticipantGroup{}, ErrDuplicateName
+	}
+	if err != nil {
+		return models.ParticipantGroup{}, fmt.Errorf("rename participant group: %w", err)
+	}
+	return group, nil
+}
+
 // SaveSessionAsGroup snapshots a session's participants into a new named group.
 // It returns ErrInvalidRequest when the session has no participants.
 func (s *Service) SaveSessionAsGroup(ctx context.Context, sessionID, name, createdBy string) (models.ParticipantGroup, error) {
