@@ -93,6 +93,10 @@ function SignInContent() {
       toast.error('Please enter your full name and date of birth');
       return;
     }
+    if (!/^(\d{2}\/\d{2}\/\d{4}|\d{8})$/.test(dob.trim())) {
+      toast.error('Please enter your date of birth as dd/mm/yyyy');
+      return;
+    }
 
     try {
       setLoading(true);
@@ -163,7 +167,9 @@ function SignInContent() {
                 <Label htmlFor="dob">Date of birth</Label>
                 <Input
                   id="dob"
-                  type="date"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="dd/mm/yyyy"
                   value={dob}
                   onChange={(e) => setDob(e.target.value)}
                   disabled={loading}
