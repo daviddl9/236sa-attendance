@@ -23,13 +23,17 @@ func NewReportsHandler(db *database.DB) *ReportsHandler {
 }
 
 type SessionAnalytics struct {
-	TotalUsers           int                     `json:"totalUsers"`
-	PresentCount         int                     `json:"presentCount"`
-	AttendancePercentage float64                 `json:"attendancePercentage"`
-	MissingUsers         []UserInfo              `json:"missingUsers"`
-	PresentUsers         []UserInfo              `json:"presentUsers"`
-	ByBattery            map[string]BatteryStats `json:"byBattery"`
-	ByRank               map[string]RankStats    `json:"byRank"`
+	TotalUsers           int     `json:"totalUsers"`
+	PresentCount         int     `json:"presentCount"`
+	AttendancePercentage float64 `json:"attendancePercentage"`
+	// ExtraCount is the number of walk-ins (marked users outside the roster).
+	// They appear in PresentUsers but are excluded from TotalUsers/PresentCount
+	// so those stay anchored to the expected roster.
+	ExtraCount   int                     `json:"extraCount"`
+	MissingUsers []UserInfo              `json:"missingUsers"`
+	PresentUsers []UserInfo              `json:"presentUsers"`
+	ByBattery    map[string]BatteryStats `json:"byBattery"`
+	ByRank       map[string]RankStats    `json:"byRank"`
 }
 
 type UserInfo struct {
@@ -193,6 +197,7 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		TotalUsers:           summary.Total,
 		PresentCount:         summary.Present,
 		AttendancePercentage: summary.Percentage,
+		ExtraCount:           summary.Extras,
 		MissingUsers:         missingUsers,
 		PresentUsers:         presentUsers,
 		ByBattery:            byBattery,

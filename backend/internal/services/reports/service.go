@@ -36,7 +36,11 @@ type Summary struct {
 	Total       int
 	Present     int
 	Missing     int
-	Percentage  float64
+	// Extras counts walk-ins — verified users who marked without being on the
+	// roster. Total/Present/Missing stay anchored to the expected roster so
+	// surfaces can show walk-ins separately ("+N walk-ins").
+	Extras     int
+	Percentage float64
 }
 
 // MissingPage contains a deterministic, scoped page of absent users.
@@ -71,8 +75,8 @@ func NewService(db *database.DB) *Service {
 // roster rules mirror the dashboard: custom lists use their participants,
 // unit-wide/battery-specific sessions exclude superadmins, and Tier 1-2
 // actors are restricted to their own battery. Walk-ins (verified users who
-// marked without being on the roster) count as present and inflate Total;
-// Missing always reflects the roster only.
+// marked without being on the roster) are counted in Extras only — Total,
+// Present and Missing always describe the expected roster.
 func (s *Service) Summary(ctx context.Context, sessionID string, actor *models.User) (Summary, error) {
 	if s == nil || s.db == nil || s.db.Pool == nil {
 		return Summary{}, errors.New("report service is not configured")
@@ -100,9 +104,9 @@ func (s *Service) summary(ctx context.Context, q queryer, sessionID string, acto
 	args = append(args, sessionID, sessionID)
 
 	// Walk-ins (verified users with an attendance record who are not on the
-	// roster) count as present and inflate the total, so Present never exceeds
-	// Total. Missing stays roster-only: walk-ins are never absent. The marked
-	// count keeps the actor's battery restriction so Tier 1-2 viewers never see
+	// roster) are counted separately as Extras; Total/Present/Missing stay
+	// roster-anchored and Missing never includes walk-ins. The marked count
+	// keeps the actor's battery restriction so Tier 1-2 viewers never see
 	// other batteries' walk-ins, mirroring the roster rules.
 	markedWhere := fmt.Sprintf(`m.session_id = $%d AND mu.verified = true`, markedArg)
 	if restricted, battery := restrictedBattery(actor); restricted {
@@ -128,8 +132,9 @@ func (s *Service) summary(ctx context.Context, q queryer, sessionID string, acto
 		return Summary{}, fmt.Errorf("summarize attendance session: %w", err)
 	}
 
-	total := rosterTotal + marked - rosterPresent
-	present := marked
+	total := rosterTotal
+	present := rosterPresent
+	extras := marked - rosterPresent
 
 	percentage := 0.0
 	if total > 0 {
@@ -145,6 +150,7 @@ func (s *Service) summary(ctx context.Context, q queryer, sessionID string, acto
 		Total:       total,
 		Present:     present,
 		Missing:     total - present,
+		Extras:      extras,
 		Percentage:  percentage,
 	}, nil
 }

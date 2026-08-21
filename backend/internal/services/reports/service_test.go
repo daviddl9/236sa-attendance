@@ -159,14 +159,14 @@ func TestSummaryCountsWalkInsAsPresentExtrasNeverMissing(t *testing.T) {
 	svc := NewService(db)
 	actor := &models.User{ID: actorID, IsSuperadmin: true}
 
-	// Roster is 2 (present + missing); the walk-in inflates the total and
-	// counts as present.
+	// Counts stay anchored to the expected roster (present + missing = 2);
+	// the walk-in is counted separately as an extra.
 	summary, err := svc.Summary(context.Background(), sessionID, actor)
 	if err != nil {
 		t.Fatalf("Summary() error = %v", err)
 	}
-	if summary.Total != 3 || summary.Present != 2 || summary.Missing != 1 {
-		t.Fatalf("summary = %+v, want total 3/present 2/missing 1", summary)
+	if summary.Total != 2 || summary.Present != 1 || summary.Missing != 1 || summary.Extras != 1 {
+		t.Fatalf("summary = %+v, want total 2/present 1/missing 1/extras 1", summary)
 	}
 
 	// The walk-in is never absent.
@@ -200,8 +200,8 @@ func TestSummaryCountsWalkInsAsPresentExtrasNeverMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Summary() restricted error = %v", err)
 	}
-	if restrictedSummary.Total != 2 || restrictedSummary.Present != 1 || restrictedSummary.Missing != 1 {
-		t.Fatalf("restricted summary = %+v, want total 2/present 1/missing 1", restrictedSummary)
+	if restrictedSummary.Total != 2 || restrictedSummary.Present != 1 || restrictedSummary.Missing != 1 || restrictedSummary.Extras != 0 {
+		t.Fatalf("restricted summary = %+v, want total 2/present 1/missing 1/extras 0", restrictedSummary)
 	}
 }
 

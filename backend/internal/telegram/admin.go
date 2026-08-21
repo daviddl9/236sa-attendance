@@ -1089,7 +1089,11 @@ func statusMessage(chatID int64, sessionID string, page AttendancePage, query st
 	if percentage < 0 {
 		percentage = 0
 	}
-	text += fmt.Sprintf("\nPresent: %d / %d (%.1f%%)\nMissing: %d", page.Present, page.Total, percentage, page.Missing)
+	text += fmt.Sprintf("\nPresent: %d / %d (%.1f%%)", page.Present, page.Total, percentage)
+	if page.Extras > 0 {
+		text += fmt.Sprintf(" · +%d walk-in%s", page.Extras, pluralS(page.Extras))
+	}
+	text += fmt.Sprintf("\nMissing: %d", page.Missing)
 	if len(page.Rows) == 0 {
 		text += "\n\nNo missing soldiers found."
 	}
@@ -1441,6 +1445,14 @@ func callbackTarget(args []string) (string, string, bool) {
 	sessionID, sessionOK := decodeAdminCallbackID(args[0])
 	targetID, targetOK := decodeAdminCallbackID(args[1])
 	return sessionID, targetID, sessionOK && targetOK
+}
+
+// pluralS returns "s" for counts other than one, for simple English plurals.
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func normalizeAdminSearchQuery(query string) string {

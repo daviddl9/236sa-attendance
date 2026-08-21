@@ -91,6 +91,11 @@ function SessionReportPage() {
               <p className="text-sm text-muted-foreground">
                 {analytics.attendancePercentage.toFixed(1)}% attendance rate
               </p>
+              {(analytics.extraCount ?? 0) > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  +{analytics.extraCount} walk-in{analytics.extraCount === 1 ? '' : 's'}
+                </p>
+              )}
             </CardContent>
           </Card>
 
