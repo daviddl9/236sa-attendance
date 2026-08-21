@@ -82,18 +82,19 @@ func (s *TelegramPairingStore) MarkAttendance(ctx context.Context, telegramID in
 	switch outcome {
 	case attendance.Marked:
 		result.Outcome = telegram.AttendanceMarked
+	case attendance.MarkedOutOfScope:
+		result.Outcome = telegram.AttendanceMarkedOutOfScope
 	case attendance.AlreadyMarked:
 		result.Outcome = telegram.AttendanceAlreadyMarked
 	case attendance.SessionClosed:
 		result.Outcome = telegram.AttendanceSessionClosed
-	case attendance.OutOfScope:
-		result.Outcome = telegram.AttendanceOutOfScope
 	default:
 		return telegram.AttendanceResult{}, fmt.Errorf("unknown attendance service outcome %d", outcome)
 	}
 
+	marked := outcome == attendance.Marked || outcome == attendance.MarkedOutOfScope
 	var markedAt time.Time
-	if outcome == attendance.Marked {
+	if marked {
 		if err := tx.QueryRow(ctx, `
 			SELECT marked_at FROM attendance_record
 			WHERE session_id = $1 AND user_id = $2
@@ -105,7 +106,7 @@ func (s *TelegramPairingStore) MarkAttendance(ctx context.Context, telegramID in
 		return telegram.AttendanceResult{}, fmt.Errorf("commit Telegram attendance mark: %w", err)
 	}
 
-	if outcome == attendance.Marked && s.hub != nil {
+	if marked && s.hub != nil {
 		(&AttendanceHandler{db: s.db, hub: s.hub}).broadcastAttendanceMarked(
 			context.Background(), sessionID, &pairedUser, models.MarkingMethodTelegramScan, markedAt,
 		)

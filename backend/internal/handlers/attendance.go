@@ -125,9 +125,6 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 	case attendance.SessionClosed:
 		http.Error(w, "Session is not active", http.StatusBadRequest)
 		return
-	case attendance.OutOfScope:
-		http.Error(w, "User is outside session scope", http.StatusForbidden)
-		return
 	}
 
 	var markedAt time.Time
@@ -236,9 +233,6 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 		return
 	case attendance.SessionClosed:
 		http.Error(w, "Session is not active", http.StatusBadRequest)
-		return
-	case attendance.OutOfScope:
-		http.Error(w, "User is outside session scope", http.StatusForbidden)
 		return
 	}
 
@@ -378,10 +372,6 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 			_ = tx.Rollback(ctx)
 			closedCount++
 			errors = append(errors, "Session is not active")
-			continue
-		case attendance.OutOfScope:
-			_ = tx.Rollback(ctx)
-			errors = append(errors, fmt.Sprintf("User %s is outside session scope", targetUserID))
 			continue
 		}
 

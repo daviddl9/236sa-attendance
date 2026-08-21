@@ -364,19 +364,18 @@ func TestTelegramWebhookConcurrentDuplicateDeliveryCreatesOneRecord(t *testing.T
 	assertTelegramRecord(t, db, prefix+"-concurrent", soldierID, 1, models.MarkingMethodTelegramScan)
 }
 
-func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(t *testing.T) {
+func TestTelegramWebhookRejectsClosedUnknownAndUnpairedWithoutRecords(t *testing.T) {
 	db, prefix := openTelegramAttendanceDB(t)
 	closedUserID := prefix + "-closed-user"
-	outOfScopeUserID := prefix + "-out-of-scope-user"
+	scannerUserID := prefix + "-scanner-user"
 	unpairedUserID := prefix + "-unpaired-user"
 	seedUser(t, db, closedUserID, "PTE CLOSED SCANNER", "PTE", "Alpha", prefix+"-closed", true)
-	seedUser(t, db, outOfScopeUserID, "PTE OUTSIDE SCANNER", "PTE", "Bravo", prefix+"-outside", true)
+	seedUser(t, db, scannerUserID, "PTE OUTSIDE SCANNER", "PTE", "Bravo", prefix+"-outside", true)
 	seedUser(t, db, unpairedUserID, "PTE UNPAIRED SCANNER", "PTE", "Alpha", prefix+"-unpaired", true)
 	closedCode := seedTelegramSession(t, db, prefix+"-closed", "Synthetic closed parade", "unit_wide", nil, "closed", closedUserID)
-	outOfScopeCode := seedTelegramSession(t, db, prefix+"-scoped", "Synthetic scoped parade", "battery_specific", []string{"Alpha"}, "active", outOfScopeUserID)
 	unpairedCode := seedTelegramSession(t, db, prefix+"-unpaired", "Synthetic unpaired parade", "unit_wide", nil, "active", unpairedUserID)
 	seedTelegramPairing(t, db, prefix+"-closed-pairing", 970000000002, closedUserID)
-	seedTelegramPairing(t, db, prefix+"-outside-pairing", 970000000003, outOfScopeUserID)
+	seedTelegramPairing(t, db, prefix+"-outside-pairing", 970000000003, scannerUserID)
 
 	handler, sink := newTelegramAttendanceHandler(db)
 	cases := []struct {
@@ -388,8 +387,7 @@ func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(
 		userID     string
 	}{
 		{name: "closed", telegramID: 970000000002, code: closedCode, want: telegram.AttendanceClosedReply, sessionID: prefix + "-closed", userID: closedUserID},
-		{name: "out of scope", telegramID: 970000000003, code: outOfScopeCode, want: telegram.AttendanceOutOfScopeReply, sessionID: prefix + "-scoped", userID: outOfScopeUserID},
-		{name: "unknown code", telegramID: 970000000003, code: mustGenerateTelegramCode(t), want: telegram.AttendanceInvalidReply, sessionID: prefix + "-scoped", userID: outOfScopeUserID},
+		{name: "unknown code", telegramID: 970000000003, code: mustGenerateTelegramCode(t), want: telegram.AttendanceInvalidReply, sessionID: prefix + "-closed", userID: scannerUserID},
 		{name: "unpaired", telegramID: 970000000004, code: unpairedCode, want: telegram.NamePromptReply, sessionID: prefix + "-unpaired", userID: unpairedUserID},
 	}
 	for _, tc := range cases {
@@ -406,6 +404,34 @@ func TestTelegramWebhookRejectsClosedOutOfScopeUnknownAndUnpairedWithoutRecords(
 			assertTelegramRecord(t, db, tc.sessionID, tc.userID, 0, "")
 		})
 	}
+}
+
+func TestTelegramWebhookOutOfScopeScanMarksWalkIn(t *testing.T) {
+	db, prefix := openTelegramAttendanceDB(t)
+	userID := prefix + "-walk-in"
+	seedUser(t, db, userID, "PTE WALK IN", "PTE", "Bravo", prefix+"-walk-in", true)
+	code := seedTelegramSession(t, db, prefix+"-scoped", "Synthetic walk-in parade", "battery_specific", []string{"Alpha"}, "active", userID)
+	seedTelegramPairing(t, db, prefix+"-walk-in-pairing", 970000000008, userID)
+
+	handler, sink := newTelegramAttendanceHandler(db)
+	rec := postTelegramMessage(t, handler, 970000000008, "/start "+code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("webhook status = %d, want 200", rec.Code)
+	}
+	actions := sink.Actions()
+	want := "Attendance marked for Synthetic walk-in parade. Note: you are not on this session's list, but your presence is counted."
+	if len(actions) != 1 || actions[0].Text != want {
+		t.Fatalf("reply = %#v, want %q", actions, want)
+	}
+	assertTelegramRecord(t, db, prefix+"-scoped", userID, 1, models.MarkingMethodTelegramScan)
+
+	// A second scan is a plain duplicate, not another walk-in note.
+	sink.Reset()
+	postTelegramMessage(t, handler, 970000000008, "/start "+code)
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != "You are already marked for Synthetic walk-in parade." {
+		t.Fatalf("duplicate reply = %#v", actions)
+	}
+	assertTelegramRecord(t, db, prefix+"-scoped", userID, 1, models.MarkingMethodTelegramScan)
 }
 
 func TestTelegramWebhookIgnoresGroupMessages(t *testing.T) {
@@ -522,8 +548,10 @@ func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 	db, prefix := openTelegramAttendanceDB(t)
 	soldierID := prefix + "-soldier"
 	outsideID := prefix + "-outside"
+	outsideWebID := prefix + "-outside-web"
 	seedUser(t, db, soldierID, "PTE PARITY SCANNER", "PTE", "Alpha", prefix+"-soldier", true)
 	seedUser(t, db, outsideID, "PTE PARITY OUTSIDE", "PTE", "Bravo", prefix+"-outside", true)
+	seedUser(t, db, outsideWebID, "PTE PARITY OUTSIDE WEB", "PTE", "Bravo", prefix+"-outside-web", true)
 	activeID := prefix + "-active"
 	closedID := prefix + "-closed"
 	activeCode := seedTelegramSession(t, db, activeID, "Synthetic parity active", "unit_wide", nil, "active", soldierID)
@@ -560,19 +588,23 @@ func TestTelegramAndWebAttendanceShareOutcomes(t *testing.T) {
 		t.Fatalf("web closed status = %d, want %d", webClosed.Code, http.StatusBadRequest)
 	}
 
+	// An out-of-scope scan is a walk-in on both channels: it marks attendance
+	// and counts the soldier as present, never absent.
 	sink.Reset()
 	postTelegramMessage(t, handler, 970000000007, "/start "+scopedCode)
-	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != telegram.AttendanceOutOfScopeReply {
-		t.Fatalf("Telegram out-of-scope reply = %#v", actions)
+	wantWalkIn := "Attendance marked for Synthetic parity scoped. Note: you are not on this session's list, but your presence is counted."
+	if actions := sink.Actions(); len(actions) != 1 || actions[0].Text != wantWalkIn {
+		t.Fatalf("Telegram walk-in reply = %#v, want %q", actions, wantWalkIn)
 	}
-	webScoped := markWebForTest(t, web, prefix+"-scoped", prefix+"-scoped-secret", outsideID)
-	if webScoped.Code != http.StatusForbidden {
-		t.Fatalf("web out-of-scope status = %d, want %d", webScoped.Code, http.StatusForbidden)
+	webScoped := markWebForTest(t, web, prefix+"-scoped", prefix+"-scoped-secret", outsideWebID)
+	if webScoped.Code != http.StatusOK {
+		t.Fatalf("web walk-in status = %d, want %d", webScoped.Code, http.StatusOK)
 	}
 
 	assertTelegramRecord(t, db, activeID, soldierID, 1, models.MarkingMethodTelegramScan)
 	assertTelegramRecord(t, db, closedID, soldierID, 0, "")
-	assertTelegramRecord(t, db, prefix+"-scoped", outsideID, 0, "")
+	assertTelegramRecord(t, db, prefix+"-scoped", outsideID, 1, models.MarkingMethodTelegramScan)
+	assertTelegramRecord(t, db, prefix+"-scoped", outsideWebID, 1, models.MarkingMethodQRScan)
 }
 
 func TestTelegramWebhookSynthetic431UserLoadHasNoFailuresOrDuplicates(t *testing.T) {

@@ -716,9 +716,10 @@ func TestTelegramAdminE2EPairingNegativePaths(t *testing.T) {
 		t.Fatalf("ambiguous reply disclosed a name: %#v", ambiguous)
 	}
 
-	// A paired soldier hitting a closed, out-of-scope, or unknown deep link is
-	// refused without recording attendance. Real 22-character codes are used so
-	// the session lookup path is exercised, not just the format check.
+	// A paired soldier hitting a closed or unknown deep link is refused without
+	// recording attendance; an out-of-scope link still marks them as a walk-in.
+	// Real 22-character codes are used so the session lookup path is exercised,
+	// not just the format check.
 	closedCode, err := deeplink.GenerateCode()
 	if err != nil {
 		t.Fatal(err)
@@ -740,8 +741,8 @@ func TestTelegramAdminE2EPairingNegativePaths(t *testing.T) {
 		t.Fatalf("closed-session /start = %#v, want closed reply", closed)
 	}
 	outOfScope := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(soldierTelegramID, "/start "+outOfScopeCode))
-	if !strings.Contains(telegramAdminE2EActionText(outOfScope), telegram.AttendanceOutOfScopeReply) {
-		t.Fatalf("out-of-scope /start = %#v, want out-of-scope reply", outOfScope)
+	if !strings.Contains(telegramAdminE2EActionText(outOfScope), "Attendance marked for TG E2E Bravo Session. Note: you are not on this session's list") {
+		t.Fatalf("out-of-scope /start = %#v, want walk-in marked reply", outOfScope)
 	}
 	unknown := driveTelegramAdminE2E(t, bot, dispatcher, sender, telegramAdminE2EMessageUpdate(soldierTelegramID, "/start "+unknownCode))
 	if !strings.Contains(telegramAdminE2EActionText(unknown), telegram.AttendanceInvalidReply) {
@@ -751,12 +752,18 @@ func TestTelegramAdminE2EPairingNegativePaths(t *testing.T) {
 	if !strings.Contains(telegramAdminE2EActionText(tampered), telegram.AttendanceInvalidReply) {
 		t.Fatalf("tampered-code /start = %#v, want invalid reply", tampered)
 	}
-	var recordCount int
-	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM attendance_record WHERE session_id IN ($1, $2)`, prefix+"-closed", prefix+"-oos").Scan(&recordCount); err != nil {
+	var closedRecords, walkInRecords int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM attendance_record WHERE session_id = $1`, prefix+"-closed").Scan(&closedRecords); err != nil {
 		t.Fatal(err)
 	}
-	if recordCount != 0 {
-		t.Fatalf("attendance rows from refused deep links = %d, want 0", recordCount)
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM attendance_record WHERE session_id = $1`, prefix+"-oos").Scan(&walkInRecords); err != nil {
+		t.Fatal(err)
+	}
+	if closedRecords != 0 {
+		t.Fatalf("attendance rows from closed deep link = %d, want 0", closedRecords)
+	}
+	if walkInRecords != 1 {
+		t.Fatalf("attendance rows from out-of-scope deep link = %d, want 1 (walk-in)", walkInRecords)
 	}
 }
 
