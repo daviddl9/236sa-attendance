@@ -12,16 +12,15 @@ import (
 )
 
 const (
-	UnlinkedReply             = "Your account is not yet linked. Pairing arrives soon."
-	NamePromptReply           = "Please send your full name so I can find your roster record."
-	UnpairedAttendanceReply   = "Please pair your Telegram account before scanning an attendance QR code."
-	AttendanceClosedReply     = "This attendance session is closed."
-	AttendanceOutOfScopeReply = "You are not eligible for this attendance session."
-	AttendanceInvalidReply    = "This attendance link is invalid or unavailable."
-	NoMatchReply              = "I couldn't find a close match. Please see a commander to complete pairing."
-	PairingConflictReply      = "Pairing could not be completed. Please see a commander."
-	PairingDeclinedReply      = "Okay. Send your full name again if you want to try another match."
-	PairingStaleReply         = "That proposal is no longer available. Please send your full name again."
+	UnlinkedReply           = "Your account is not yet linked. Pairing arrives soon."
+	NamePromptReply         = "Please send your full name so I can find your roster record."
+	UnpairedAttendanceReply = "Please pair your Telegram account before scanning an attendance QR code."
+	AttendanceClosedReply   = "This attendance session is closed."
+	AttendanceInvalidReply  = "This attendance link is invalid or unavailable."
+	NoMatchReply            = "I couldn't find a close match. Please see a commander to complete pairing."
+	PairingConflictReply    = "Pairing could not be completed. Please see a commander."
+	PairingDeclinedReply    = "Okay. Send your full name again if you want to try another match."
+	PairingStaleReply       = "That proposal is no longer available. Please send your full name again."
 )
 
 // Pairing is the identity data the bot needs. FullName is read for the
@@ -43,9 +42,11 @@ type AttendanceOutcome int
 
 const (
 	AttendanceMarked AttendanceOutcome = iota
+	// AttendanceMarkedOutOfScope is a successful walk-in mark: the soldier is
+	// not on the session's list but is counted as present.
+	AttendanceMarkedOutOfScope
 	AttendanceAlreadyMarked
 	AttendanceSessionClosed
-	AttendanceOutOfScope
 	AttendanceUnknownCode
 	AttendanceUnpaired
 )
@@ -365,6 +366,11 @@ func attendanceReply(result AttendanceResult) string {
 			return "Attendance marked."
 		}
 		return "Attendance marked for " + sessionName + "."
+	case AttendanceMarkedOutOfScope:
+		if sessionName == "" {
+			return "Attendance marked. Note: you are not on this session's list, but your presence is counted."
+		}
+		return "Attendance marked for " + sessionName + ". Note: you are not on this session's list, but your presence is counted."
 	case AttendanceAlreadyMarked:
 		if sessionName == "" {
 			return "You are already marked for this attendance session."
@@ -372,8 +378,6 @@ func attendanceReply(result AttendanceResult) string {
 		return "You are already marked for " + sessionName + "."
 	case AttendanceSessionClosed:
 		return AttendanceClosedReply
-	case AttendanceOutOfScope:
-		return AttendanceOutOfScopeReply
 	case AttendanceUnpaired:
 		return UnpairedAttendanceReply
 	default:

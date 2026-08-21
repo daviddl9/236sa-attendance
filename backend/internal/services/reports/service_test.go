@@ -138,6 +138,73 @@ func TestSuperadminAppearsInRosterOnlyWhenMarked(t *testing.T) {
 	}
 }
 
+func TestSummaryCountsWalkInsAsPresentExtrasNeverMissing(t *testing.T) {
+	db, prefix := openReportsServiceDB(t)
+	actorID := prefix + "-actor"
+	seedReportUser(t, db, actorID, "COMMANDER", "3SG", "Alpha", false)
+	present := prefix + "-present"
+	missing := prefix + "-missing"
+	walkIn := prefix + "-walk-in"
+	seedReportUser(t, db, present, "Alice Present", "PTE", models.BatteryAlpha, false)
+	seedReportUser(t, db, missing, "Alicia Missing", "PTE", models.BatteryAlpha, false)
+	seedReportUser(t, db, walkIn, "Walter Walkin", "PTE", models.BatteryBravo, false)
+
+	sessionID := prefix + "-session"
+	seedReportSession(t, db, sessionID, models.SessionScopeCustomList, nil, actorID)
+	seedReportParticipant(t, db, sessionID, present)
+	seedReportParticipant(t, db, sessionID, missing)
+	seedReportRecord(t, db, sessionID, present, "qr_scan", "")
+	seedReportRecord(t, db, sessionID, walkIn, "telegram_scan", "")
+
+	svc := NewService(db)
+	actor := &models.User{ID: actorID, IsSuperadmin: true}
+
+	// Roster is 2 (present + missing); the walk-in inflates the total and
+	// counts as present.
+	summary, err := svc.Summary(context.Background(), sessionID, actor)
+	if err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+	if summary.Total != 3 || summary.Present != 2 || summary.Missing != 1 {
+		t.Fatalf("summary = %+v, want total 3/present 2/missing 1", summary)
+	}
+
+	// The walk-in is never absent.
+	page, err := svc.Missing(context.Background(), sessionID, actor, "", 1, 10)
+	if err != nil {
+		t.Fatalf("Missing() error = %v", err)
+	}
+	if page.Total != 1 || len(page.Rows) != 1 || page.Rows[0].ID != missing {
+		t.Fatalf("missing page = %+v, want only the roster missing user", page)
+	}
+
+	// Extras returns exactly the walk-in for an unrestricted actor.
+	extras, err := svc.Extras(context.Background(), sessionID, actor)
+	if err != nil {
+		t.Fatalf("Extras() error = %v", err)
+	}
+	if len(extras) != 1 || extras[0].ID != walkIn {
+		t.Fatalf("extras = %+v, want only the walk-in", extras)
+	}
+
+	// A battery-restricted Alpha actor never sees the Bravo walk-in.
+	restricted := &models.User{ID: actorID, Rank: stringPtr(models.Rank3SG), Battery: stringPtr(models.BatteryAlpha)}
+	restrictedExtras, err := svc.Extras(context.Background(), sessionID, restricted)
+	if err != nil {
+		t.Fatalf("Extras() restricted error = %v", err)
+	}
+	if len(restrictedExtras) != 0 {
+		t.Fatalf("restricted extras = %+v, want none (walk-in is Bravo)", restrictedExtras)
+	}
+	restrictedSummary, err := svc.Summary(context.Background(), sessionID, restricted)
+	if err != nil {
+		t.Fatalf("Summary() restricted error = %v", err)
+	}
+	if restrictedSummary.Total != 2 || restrictedSummary.Present != 1 || restrictedSummary.Missing != 1 {
+		t.Fatalf("restricted summary = %+v, want total 2/present 1/missing 1", restrictedSummary)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

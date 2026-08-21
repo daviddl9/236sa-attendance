@@ -27,9 +27,12 @@ type MarkOutcome int
 
 const (
 	Marked MarkOutcome = iota
+	// MarkedOutOfScope is a successful mark by a user outside the session's
+	// roster (a walk-in). Reports count walk-ins as present extras, never as
+	// absent, so the absent list always reflects the expected roster only.
+	MarkedOutOfScope
 	AlreadyMarked
 	SessionClosed
-	OutOfScope
 )
 
 // UndoRequest contains the values needed to remove one actor-owned manual
@@ -65,9 +68,6 @@ func Mark(ctx context.Context, tx pgx.Tx, req MarkRequest) (MarkOutcome, error) 
 	if err != nil {
 		return Marked, fmt.Errorf("check attendance scope: %w", err)
 	}
-	if !inScope {
-		return OutOfScope, nil
-	}
 
 	recordID, err := newID()
 	if err != nil {
@@ -89,6 +89,9 @@ func Mark(ctx context.Context, tx pgx.Tx, req MarkRequest) (MarkOutcome, error) 
 	}
 	if result.RowsAffected() == 0 {
 		return AlreadyMarked, nil
+	}
+	if !inScope {
+		return MarkedOutOfScope, nil
 	}
 	return Marked, nil
 }

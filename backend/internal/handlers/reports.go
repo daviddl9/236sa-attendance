@@ -91,6 +91,15 @@ func (h *ReportsHandler) GetSessionAnalytics(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
 		return
 	}
+	// Walk-ins: verified users who marked without being on the roster are
+	// present extras. Appending them to the roster lets the split loop and the
+	// breakdowns count them as present; they can never be missing.
+	extras, err := h.service.Extras(ctx, sessionID, currentUser)
+	if err != nil {
+		http.Error(w, "Failed to fetch users", http.StatusInternalServerError)
+		return
+	}
+	roster = append(roster, extras...)
 
 	allUsers := make([]UserInfo, 0, len(roster))
 	for _, row := range roster {

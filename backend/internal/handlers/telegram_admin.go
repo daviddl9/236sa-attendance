@@ -666,7 +666,7 @@ func (s *TelegramPairingStore) MarkManual(ctx context.Context, supplied telegram
 	if err != nil {
 		return fmt.Errorf("mark Telegram manual attendance: %w", err)
 	}
-	if outcome != attendance.Marked {
+	if outcome != attendance.Marked && outcome != attendance.MarkedOutOfScope {
 		return adminUnavailable()
 	}
 	var markedAt time.Time

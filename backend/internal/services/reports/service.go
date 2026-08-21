@@ -70,7 +70,9 @@ func NewService(db *database.DB) *Service {
 // Summary returns attendance counts over the session's authorized roster. The
 // roster rules mirror the dashboard: custom lists use their participants,
 // unit-wide/battery-specific sessions exclude superadmins, and Tier 1-2
-// actors are restricted to their own battery.
+// actors are restricted to their own battery. Walk-ins (verified users who
+// marked without being on the roster) count as present and inflate Total;
+// Missing always reflects the roster only.
 func (s *Service) Summary(ctx context.Context, sessionID string, actor *models.User) (Summary, error) {
 	if s == nil || s.db == nil || s.db.Pool == nil {
 		return Summary{}, errors.New("report service is not configured")
@@ -94,18 +96,40 @@ func (s *Service) summary(ctx context.Context, q queryer, sessionID string, acto
 		return Summary{}, err
 	}
 	attendanceArg := len(args) + 1
-	args = append(args, sessionID)
+	markedArg := attendanceArg + 1
+	args = append(args, sessionID, sessionID)
 
-	var total, present int
+	// Walk-ins (verified users with an attendance record who are not on the
+	// roster) count as present and inflate the total, so Present never exceeds
+	// Total. Missing stays roster-only: walk-ins are never absent. The marked
+	// count keeps the actor's battery restriction so Tier 1-2 viewers never see
+	// other batteries' walk-ins, mirroring the roster rules.
+	markedWhere := fmt.Sprintf(`m.session_id = $%d AND mu.verified = true`, markedArg)
+	if restricted, battery := restrictedBattery(actor); restricted {
+		if battery == "" {
+			markedWhere += " AND false"
+		} else {
+			markedWhere += fmt.Sprintf(" AND mu.battery = $%d", len(args)+1)
+			args = append(args, battery)
+		}
+	}
+
+	var rosterTotal, rosterPresent, marked int
 	err = q.QueryRow(ctx, fmt.Sprintf(`
-		SELECT COUNT(*)::int, COUNT(ar.user_id)::int
+		SELECT COUNT(*)::int, COUNT(ar.user_id)::int,
+		       (SELECT COUNT(*)::int FROM attendance_record m
+		        JOIN "user" mu ON mu.id = m.user_id
+		        WHERE %s)
 		FROM (%s) AS eligible
 		LEFT JOIN attendance_record ar
 		  ON ar.session_id = $%d AND ar.user_id = eligible.user_id
-	`, rosterSQL, attendanceArg), args...).Scan(&total, &present)
+	`, markedWhere, rosterSQL, attendanceArg), args...).Scan(&rosterTotal, &rosterPresent, &marked)
 	if err != nil {
 		return Summary{}, fmt.Errorf("summarize attendance session: %w", err)
 	}
+
+	total := rosterTotal + marked - rosterPresent
+	present := marked
 
 	percentage := 0.0
 	if total > 0 {
@@ -168,6 +192,61 @@ func (s *Service) eligibleUsers(ctx context.Context, q queryer, sessionID string
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate eligible attendance users: %w", err)
+	}
+	return users, nil
+}
+
+// Extras returns verified users who marked attendance for the session without
+// being on its roster — walk-ins. They are present, never missing. Battery-
+// restricted actors see only their own battery's walk-ins, mirroring the
+// roster rules.
+func (s *Service) Extras(ctx context.Context, sessionID string, actor *models.User) ([]UserRow, error) {
+	if s == nil || s.db == nil || s.db.Pool == nil {
+		return nil, errors.New("report service is not configured")
+	}
+	_, rosterSQL, args, err := s.scopedRosterWith(ctx, s.db.Pool, sessionID, actor)
+	if err != nil {
+		return nil, err
+	}
+	sessionArg := len(args) + 1
+	args = append(args, sessionID)
+
+	where := fmt.Sprintf(`m.session_id = $%d AND mu.verified = true`, sessionArg)
+	if restricted, battery := restrictedBattery(actor); restricted {
+		if battery == "" {
+			where += " AND false"
+		} else {
+			where += fmt.Sprintf(" AND mu.battery = $%d", len(args)+1)
+			args = append(args, battery)
+		}
+	}
+
+	rows, err := s.db.Pool.Query(ctx, fmt.Sprintf(`
+		SELECT m.user_id,
+		       COALESCE(mu."full_name", '') AS user_name,
+		       COALESCE(mu.rank, '') AS user_rank,
+		       COALESCE(mu.battery, '') AS user_battery
+		FROM attendance_record m
+		JOIN "user" mu ON mu.id = m.user_id
+		WHERE %s
+		  AND m.user_id NOT IN (SELECT user_id FROM (%s) AS eligible)
+		ORDER BY lower(mu."full_name"), m.user_id
+	`, where, rosterSQL), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list walk-in attendance users: %w", err)
+	}
+	defer rows.Close()
+
+	users := make([]UserRow, 0)
+	for rows.Next() {
+		var user UserRow
+		if err := rows.Scan(&user.ID, &user.Name, &user.Rank, &user.Battery); err != nil {
+			return nil, fmt.Errorf("scan walk-in attendance user: %w", err)
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate walk-in attendance users: %w", err)
 	}
 	return users, nil
 }

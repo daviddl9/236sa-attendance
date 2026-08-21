@@ -66,17 +66,23 @@ func TestMarkBatterySpecificScope(t *testing.T) {
 		assertRecordCount(t, db, sessionID, 1)
 	})
 
-	t.Run("out of scope", func(t *testing.T) {
+	t.Run("out of scope marks as walk-in", func(t *testing.T) {
 		db, prefix := openTestDB(t)
 		userID := prefix + "-user"
 		sessionID := prefix + "-session"
 		seedUser(t, db, userID, "BRAVO USER", "Bravo")
 		seedSession(t, db, sessionID, "battery_specific", []string{"Alpha"}, "active", userID)
 
-		if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: userID, Method: "qr_scan"}); outcome != OutOfScope {
-			t.Fatalf("outcome = %v, want OutOfScope", outcome)
+		if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: userID, Method: "qr_scan"}); outcome != MarkedOutOfScope {
+			t.Fatalf("outcome = %v, want MarkedOutOfScope", outcome)
 		}
-		assertRecordCount(t, db, sessionID, 0)
+		assertRecordCount(t, db, sessionID, 1)
+
+		// A walk-in's second scan is still just a duplicate.
+		if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: userID, Method: "qr_scan"}); outcome != AlreadyMarked {
+			t.Fatalf("second outcome = %v, want AlreadyMarked", outcome)
+		}
+		assertRecordCount(t, db, sessionID, 1)
 	})
 }
 
@@ -95,17 +101,17 @@ func TestMarkCustomListScope(t *testing.T) {
 		assertRecordCount(t, db, sessionID, 1)
 	})
 
-	t.Run("non-participant is out of scope", func(t *testing.T) {
+	t.Run("non-participant marks as walk-in", func(t *testing.T) {
 		db, prefix := openTestDB(t)
 		userID := prefix + "-user"
 		sessionID := prefix + "-session"
 		seedUser(t, db, userID, "NON PARTICIPANT", "Bravo")
 		seedSession(t, db, sessionID, "custom_list", nil, "active", userID)
 
-		if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: userID, Method: "qr_scan"}); outcome != OutOfScope {
-			t.Fatalf("outcome = %v, want OutOfScope", outcome)
+		if outcome := mark(t, db, MarkRequest{SessionID: sessionID, UserID: userID, Method: "qr_scan"}); outcome != MarkedOutOfScope {
+			t.Fatalf("outcome = %v, want MarkedOutOfScope", outcome)
 		}
-		assertRecordCount(t, db, sessionID, 0)
+		assertRecordCount(t, db, sessionID, 1)
 	})
 }
 

@@ -105,7 +105,7 @@ func TestBotMapsAttendanceOutcomesToSafeReplies(t *testing.T) {
 	}{
 		{name: "already", result: AttendanceResult{Outcome: AttendanceAlreadyMarked, SessionName: "Morning parade"}, want: "You are already marked for Morning parade."},
 		{name: "closed", result: AttendanceResult{Outcome: AttendanceSessionClosed}, want: AttendanceClosedReply},
-		{name: "out of scope", result: AttendanceResult{Outcome: AttendanceOutOfScope}, want: AttendanceOutOfScopeReply},
+		{name: "marked out of scope", result: AttendanceResult{Outcome: AttendanceMarkedOutOfScope, SessionName: "Morning parade"}, want: "Attendance marked for Morning parade. Note: you are not on this session's list, but your presence is counted."},
 		{name: "unknown", result: AttendanceResult{Outcome: AttendanceUnknownCode}, want: AttendanceInvalidReply},
 	} {
 		t.Run(test.name, func(t *testing.T) {

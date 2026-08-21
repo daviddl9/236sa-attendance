@@ -201,6 +201,84 @@ func TestGetSessionAnalyticsPreservesCountsBreakdownsAndMissingStatus(t *testing
 	}
 }
 
+func TestGetSessionAnalyticsCountsWalkInsAsPresentOnly(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	ctx := context.Background()
+	creatorID := prefix + "-creator"
+	presentID := prefix + "-present"
+	missingID := prefix + "-missing"
+	walkInID := prefix + "-walk-in"
+	sessionID := prefix + "-session"
+
+	seedUser(t, db, creatorID, "Analytics creator", models.RankCPT, models.BatteryHQ, "", true)
+	seedUser(t, db, presentID, "Alice Present", models.RankPTE, models.BatteryAlpha, "", true)
+	seedUser(t, db, missingID, "Alicia Missing", models.RankPTE, models.BatteryAlpha, "", true)
+	seedUser(t, db, walkInID, "Walter Walkin", models.RankLCP, models.BatteryBravo, "", true)
+	if _, err := db.Pool.Exec(ctx, `UPDATE "user" SET "is_superadmin" = true WHERE id = $1`, creatorID); err != nil {
+		t.Fatalf("mark analytics creator superadmin: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time)
+		VALUES ($1, 'Walk-in analytics', $2, $3, 'custom_list', '{}', 'active', $4, NOW())
+	`, sessionID, sessionID+"-qr", sessionID+"-secret", creatorID); err != nil {
+		t.Fatalf("insert session: %v", err)
+	}
+	for _, userID := range []string{presentID, missingID} {
+		if _, err := db.Pool.Exec(ctx, `
+			INSERT INTO session_participants (session_id, user_id) VALUES ($1, $2)
+		`, sessionID, userID); err != nil {
+			t.Fatalf("insert participant %s: %v", userID, err)
+		}
+	}
+	for i, userID := range []string{presentID, walkInID} {
+		if _, err := db.Pool.Exec(ctx, `
+			INSERT INTO attendance_record (id, session_id, user_id, marking_method, marked_at)
+			VALUES ($1, $2, $3, 'qr_scan', NOW())
+		`, fmt.Sprintf("%s-record-%d", sessionID, i), sessionID, userID); err != nil {
+			t.Fatalf("insert attendance %s: %v", userID, err)
+		}
+	}
+
+	actor := &models.User{ID: creatorID, IsSuperadmin: true}
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("id", sessionID)
+	req := httptest.NewRequest(http.MethodGet, "/api/reports/sessions/"+sessionID, nil)
+	req = req.WithContext(context.WithValue(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext), middleware.UserKey, actor))
+	rec := httptest.NewRecorder()
+	NewReportsHandler(db).GetSessionAnalytics(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("analytics status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var analytics SessionAnalytics
+	if err := json.NewDecoder(rec.Body).Decode(&analytics); err != nil {
+		t.Fatalf("decode analytics response: %v", err)
+	}
+	if analytics.TotalUsers != 3 || analytics.PresentCount != 2 {
+		t.Fatalf("analytics counts = (total %d, present %d), want (3, 2)", analytics.TotalUsers, analytics.PresentCount)
+	}
+	presentByID := make(map[string]UserInfo, len(analytics.PresentUsers))
+	for _, user := range analytics.PresentUsers {
+		presentByID[user.ID] = user
+	}
+	if len(analytics.PresentUsers) != 2 {
+		t.Fatalf("present users = %+v, want roster present + walk-in", analytics.PresentUsers)
+	}
+	if _, ok := presentByID[presentID]; !ok {
+		t.Fatalf("present users omitted roster member %s: %+v", presentID, analytics.PresentUsers)
+	}
+	if walkIn, ok := presentByID[walkInID]; !ok || walkIn.FullName == nil || *walkIn.FullName != "Walter Walkin" {
+		t.Fatalf("present users omitted walk-in %s: %+v", walkInID, analytics.PresentUsers)
+	}
+	// The walk-in is never absent.
+	if len(analytics.MissingUsers) != 1 || analytics.MissingUsers[0].ID != missingID {
+		t.Fatalf("missing users = %+v, want only %s", analytics.MissingUsers, missingID)
+	}
+	if got := analytics.ByBattery[models.BatteryBravo]; got != (BatteryStats{Total: 1, Present: 1}) {
+		t.Fatalf("Bravo breakdown = %+v, want total 1/present 1 (walk-in)", got)
+	}
+}
+
 func TestGetActiveSessionsPreservesNullForNoRows(t *testing.T) {
 	db, _ := openRegistrationDB(t)
 	actor := &models.User{Rank: strptr(models.Rank3SG)}
