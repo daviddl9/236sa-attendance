@@ -6,6 +6,7 @@
 // Usage:
 //
 //	seed-groups -file <roster.xlsx> -password <pwd> -created-by <user-id> [-db-url <dsn>]
+//	seed-groups -created-by <user-id> [-db-url <dsn>]   # Main Body only, no roster
 //
 // Groups seeded (rules confirmed with the unit owner):
 //
@@ -25,6 +26,9 @@
 //	B Commanders    B Bty members with rank >= 3SG
 //	HQ Commanders   HQ Bty members with rank >= 3SG
 //	All Commanders  all roster members with rank >= 3SG
+//	Main Body       every verified user not in an Advance Party group. Seeded once:
+//	                when a Main Body group already exists it is left untouched, so
+//	                manual membership edits are respected.
 package main
 
 import (
@@ -55,6 +59,12 @@ const (
 	rosterSheet   = "236 SA"
 	ps0Rank       = "1SG" // PSO includes everyone at or above this rank
 	commanderRank = "3SG" // commander groups include everyone at or above this rank
+)
+
+// Group names backing the Main Body rule.
+const (
+	mainBodyGroup     = "Main Body"
+	advancePartyGroup = "Advance Party"
 )
 
 // row is one roster line.
@@ -138,22 +148,29 @@ func matchesCommanderAnd(base func(r row) bool) func(r row) bool {
 }
 
 func main() {
-	filePath := flag.String("file", "", "path to the roster Excel file (required)")
-	password := flag.String("password", "", "password for the Excel file (required)")
+	filePath := flag.String("file", "", "path to the roster Excel file (omit to seed Main Body only)")
+	password := flag.String("password", "", "password for the Excel file (required with -file)")
 	createdBy := flag.String("created-by", "", "id of the admin user who owns the seeded groups (required)")
 	dbURL := flag.String("db-url", os.Getenv("DATABASE_URL"), "postgres DSN (defaults to DATABASE_URL)")
 	flag.Parse()
 
-	if *filePath == "" || *password == "" || *createdBy == "" {
-		log.Fatal("flags -file, -password and -created-by are all required")
+	if *createdBy == "" {
+		log.Fatal("flag -created-by is required")
+	}
+	if *filePath != "" && *password == "" {
+		log.Fatal("flag -password is required with -file")
 	}
 	if *dbURL == "" {
 		log.Fatal("DATABASE_URL is not set (pass -db-url or set the environment variable)")
 	}
 
-	rows, err := readRows(*filePath, *password)
-	if err != nil {
-		log.Fatalf("read roster: %v", err)
+	var rows []row
+	if *filePath != "" {
+		var err error
+		rows, err = readRows(*filePath, *password)
+		if err != nil {
+			log.Fatalf("read roster: %v", err)
+		}
 	}
 
 	db, err := database.NewPostgresDB(*dbURL)
@@ -162,11 +179,20 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := verifyCreatedBy(context.Background(), db, *createdBy); err != nil {
+	ctx := context.Background()
+	if err := verifyCreatedBy(ctx, db, *createdBy); err != nil {
 		log.Fatalf("verify -created-by: %v", err)
 	}
 
-	seed(context.Background(), db, rows, *createdBy)
+	groups, memberships := 0, 0
+	if rows != nil {
+		groups, memberships = seed(ctx, db, rows, *createdBy)
+	}
+	if created, added := seedMainBody(ctx, db, *createdBy); created {
+		groups++
+		memberships += added
+	}
+	fmt.Printf("Done. %d groups, %d memberships. Roster groups are additive; Main Body seeds once and is then left as-is.\n", groups, memberships)
 }
 
 // readRows opens the password-protected roster and returns its data rows.
@@ -220,8 +246,8 @@ func verifyCreatedBy(ctx context.Context, db *database.DB, userID string) error 
 	return nil
 }
 
-// seed creates/updates each group and inserts its matched members.
-func seed(ctx context.Context, db *database.DB, rows []row, createdBy string) {
+// seed creates/updates each roster group and inserts its matched members.
+func seed(ctx context.Context, db *database.DB, rows []row, createdBy string) (groups, memberships int) {
 	var totalMembers int
 	for _, r := range rules {
 		var matched []row
@@ -261,7 +287,70 @@ func seed(ctx context.Context, db *database.DB, rows []row, createdBy string) {
 		fmt.Println(summary)
 		totalMembers += len(userIDs)
 	}
-	fmt.Printf("Done. %d groups, %d memberships. Additive — re-running is safe.\n", len(rules), totalMembers)
+	return len(rules), totalMembers
+}
+
+// seedMainBody creates the Main Body group — every verified user who is not in
+// an Advance Party group — and fills it once. When a Main Body group already
+// exists it is skipped so manual membership edits are respected. Returns
+// whether the group was created and how many members were added.
+func seedMainBody(ctx context.Context, db *database.DB, createdBy string) (created bool, added int) {
+	var existingID string
+	err := db.Pool.QueryRow(ctx, `
+		SELECT id FROM participant_group WHERE lower(name) = lower($1) LIMIT 1
+	`, mainBodyGroup).Scan(&existingID)
+	if err == nil {
+		fmt.Printf("%-9s exists · skipped (membership left as-is)\n", mainBodyGroup)
+		return false, 0
+	}
+
+	userIDs, err := mainBodyMembers(ctx, db)
+	if err != nil {
+		log.Printf("%-9s ERROR: %v", mainBodyGroup, err)
+		return false, 0
+	}
+
+	groupID, _, err := ensureGroup(ctx, db, mainBodyGroup, createdBy)
+	if err != nil {
+		log.Printf("%-9s ERROR: %v", mainBodyGroup, err)
+		return false, 0
+	}
+	added, err = addMembers(ctx, db, groupID, userIDs)
+	if err != nil {
+		log.Printf("%-9s ERROR: %v", mainBodyGroup, err)
+		return false, 0
+	}
+	fmt.Printf("%-9s created · group %s · members %d (all users − Advance Party)\n", mainBodyGroup, groupID, added)
+	return true, added
+}
+
+// mainBodyMembers returns the ids of all verified users who are not a member
+// of any group named Advance Party.
+func mainBodyMembers(ctx context.Context, db *database.DB) ([]string, error) {
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id FROM "user"
+		WHERE verified AND id NOT IN (
+			SELECT m.user_id
+			FROM participant_group_member m
+			JOIN participant_group g ON g.id = m.group_id
+			WHERE lower(g.name) = lower($1)
+		)
+		ORDER BY id
+	`, advancePartyGroup)
+	if err != nil {
+		return nil, fmt.Errorf("query main body members: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan main body member: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // resolveUsers maps each matched roster row to an existing verified user,
