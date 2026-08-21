@@ -15,6 +15,7 @@ import { useAuth } from '../lib/auth-context';
 import { apiClient, API_URL } from '../lib/api-client';
 import { PublicFooter } from '../components/public-footer';
 import { Clock } from 'lucide-react';
+import { formatDob } from '../lib/dob-format';
 
 export const Route = createFileRoute('/sign-in')({
   component: SignInComponent,
@@ -170,8 +171,10 @@ function SignInContent() {
                   type="text"
                   inputMode="numeric"
                   placeholder="dd/mm/yyyy"
+                  autoComplete="bday"
+                  maxLength={10}
                   value={dob}
-                  onChange={(e) => setDob(e.target.value)}
+                  onChange={(e) => setDob(formatDob(e.target.value))}
                   disabled={loading}
                   required
                 />

@@ -14,6 +14,7 @@ import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 import { apiClient } from '../lib/api-client';
 import { PublicFooter } from '../components/public-footer';
+import { formatDob } from '../lib/dob-format';
 
 export const Route = createFileRoute('/')({
   component: IndexComponent,
@@ -87,8 +88,10 @@ function SignInContent() {
                 type="text"
                 inputMode="numeric"
                 placeholder="dd/mm/yyyy"
+                autoComplete="bday"
+                maxLength={10}
                 value={dob}
-                onChange={(e) => setDob(e.target.value)}
+                onChange={(e) => setDob(formatDob(e.target.value))}
                 disabled={loading}
                 required
               />
