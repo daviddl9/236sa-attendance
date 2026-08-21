@@ -316,7 +316,7 @@ func TestAdminWizardValidationAndCreationQR(t *testing.T) {
 func TestAdminCancelSelectionStatusSearchMarkUndoAndStale(t *testing.T) {
 	store := adminStoreWithTier(models.TierUnitCommander)
 	store.events = []ActiveEvent{{ID: "event-1", Name: "First Parade", TelegramLink: "https://t.me/synthetic?start=opaque"}}
-	store.status = AttendancePage{SessionName: "First Parade", Total: 12, Present: 2, Missing: 10, Percentage: 16.6, Page: 1, PageCount: 2, HasNext: true, Rows: make([]AdminUser, 12)}
+	store.status = AttendancePage{SessionName: "First Parade", Total: 12, Present: 2, Missing: 10, Extras: 2, Percentage: 16.6, Page: 1, PageCount: 2, HasNext: true, Rows: make([]AdminUser, 12)}
 	for i := range store.status.Rows {
 		store.status.Rows[i] = AdminUser{ID: "person-" + string(rune('a'+i)), Name: "Person" + string(rune('A'+i))}
 	}
@@ -340,6 +340,9 @@ func TestAdminCancelSelectionStatusSearchMarkUndoAndStale(t *testing.T) {
 	actions, _, err = router.HandleCallback(ctx, adminCallback(statusData), adminPairing())
 	if err != nil || strings.Count(actionText(actions), "Person") > 10 || !hasButton(actions, "Next") {
 		t.Fatalf("status actions=%#v err=%v", actions, err)
+	}
+	if got := actionText(actions); !strings.Contains(got, "Present: 2 / 12") || !strings.Contains(got, "· +2 walk-ins") {
+		t.Fatalf("status text=%q, want roster-anchored counts with walk-in suffix", got)
 	}
 	if _, _, err = router.HandleCallback(ctx, adminCallback("a:search:event-1"), adminPairing()); err != nil {
 		t.Fatal(err)

@@ -400,9 +400,12 @@ function SessionDetailPage() {
       return;
     }
 
+    const extras = battery ? 0 : (analytics.extraCount ?? 0);
+    const extrasSuffix = extras > 0 ? ` · +${extras} walk-in${extras === 1 ? '' : 's'}` : '';
+
     let text = `*236 SA Attendance (${dateStr} SGT)*\n`;
     if (battery) text += `*Battery:* ${battery}\n`;
-    text += `*Present:* ${stats?.present || 0} / ${stats?.total || 0}\n\n`;
+    text += `*Present:* ${stats?.present || 0} / ${stats?.total || 0}${extrasSuffix}\n\n`;
 
     if (includeAbsentList) {
       text += `*Absent List*\n`;
@@ -564,6 +567,7 @@ function SessionDetailPage() {
                   present: analytics.presentCount,
                   percentage: analytics.attendancePercentage,
                   missing: analytics.missingUsers?.length || 0,
+                  extras: analytics.extraCount ?? 0,
                 };
               }
               const batteryStats = analytics.byBattery?.[statsTab];
@@ -571,7 +575,8 @@ function SessionDetailPage() {
               const present = batteryStats?.present || 0;
               const percentage = total > 0 ? (present / total) * 100 : 0;
               const missing = total - present;
-              return { total, present, percentage, missing };
+              // Per-battery rows already include that battery's walk-ins.
+              return { total, present, percentage, missing, extras: 0 };
             };
             const stats = getStats();
             return (
@@ -611,11 +616,21 @@ function SessionDetailPage() {
                           <ChevronRight className="h-3 w-3 opacity-60 group-hover:opacity-100" />
                         </p>
                         <p className="text-2xl font-bold">{stats.present}</p>
+                        {stats.extras > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            +{stats.extras} walk-in{stats.extras === 1 ? '' : 's'}
+                          </p>
+                        )}
                       </button>
                     ) : (
                       <div className="text-left">
                         <p className="text-sm text-muted-foreground">Present</p>
                         <p className="text-2xl font-bold">{stats.present}</p>
+                        {stats.extras > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            +{stats.extras} walk-in{stats.extras === 1 ? '' : 's'}
+                          </p>
+                        )}
                       </div>
                     )}
                     <div className="col-span-2">

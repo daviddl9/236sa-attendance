@@ -344,6 +344,8 @@ export interface SessionAnalytics {
   totalUsers: number;
   presentCount: number;
   attendancePercentage: number;
+  /** Walk-ins: marked users outside the roster. In presentUsers, not in totalUsers/presentCount. */
+  extraCount: number;
   missingUsers: UserInfo[];
   presentUsers: UserInfo[];
   byBattery: Record<string, BatteryStats>;

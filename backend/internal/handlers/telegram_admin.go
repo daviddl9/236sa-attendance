@@ -565,7 +565,7 @@ func (s *TelegramPairingStore) Status(ctx context.Context, supplied telegram.Adm
 	}
 	return telegram.AttendancePage{
 		SessionName: summary.SessionName, Total: summary.Total, Present: summary.Present,
-		Missing: summary.Missing, Percentage: summary.Percentage, Rows: rows,
+		Missing: summary.Missing, Extras: summary.Extras, Percentage: summary.Percentage, Rows: rows,
 		Page: missing.Page, PageCount: missing.PageCount,
 		HasPrevious: missing.HasPrevious, HasNext: missing.HasNext,
 	}, nil

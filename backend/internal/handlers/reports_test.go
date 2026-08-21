@@ -254,8 +254,9 @@ func TestGetSessionAnalyticsCountsWalkInsAsPresentOnly(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&analytics); err != nil {
 		t.Fatalf("decode analytics response: %v", err)
 	}
-	if analytics.TotalUsers != 3 || analytics.PresentCount != 2 {
-		t.Fatalf("analytics counts = (total %d, present %d), want (3, 2)", analytics.TotalUsers, analytics.PresentCount)
+	// Counts stay anchored to the expected roster; the walk-in is extraCount.
+	if analytics.TotalUsers != 2 || analytics.PresentCount != 1 || analytics.ExtraCount != 1 {
+		t.Fatalf("analytics counts = (total %d, present %d, extras %d), want (2, 1, 1)", analytics.TotalUsers, analytics.PresentCount, analytics.ExtraCount)
 	}
 	presentByID := make(map[string]UserInfo, len(analytics.PresentUsers))
 	for _, user := range analytics.PresentUsers {

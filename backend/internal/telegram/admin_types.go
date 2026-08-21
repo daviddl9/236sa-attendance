@@ -54,6 +54,9 @@ type AttendancePage struct {
 	Total       int
 	Present     int
 	Missing     int
+	// Extras counts walk-ins (marked users outside the roster), shown as a
+	// "+N walk-ins" suffix so Present/Total stay anchored to the roster.
+	Extras      int
 	Percentage  float64
 	Rows        []AdminUser
 	Page        int
