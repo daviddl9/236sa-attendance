@@ -25,6 +25,20 @@ ssh ubuntu@redcon.236sa.one \
 
 Re-run any time after roster/import updates — it only adds.
 
+## Main Body
+
+`Main Body` = every verified user who is not in the `Advance Party` group. It is
+seeded **once**: if a Main Body group already exists the seeder skips it, so
+manual membership edits are respected.
+
+```sh
+# seed/refresh everything (roster groups + Main Body)
+seed-groups -file <roster>.xlsx -password yeoec -created-by <id> -db-url <dsn>
+
+# seed only Main Body (no roster needed; leaves all other groups untouched)
+seed-groups -created-by <id> -db-url <dsn>
+```
+
 ## Manual group management (UI)
 
 - Groups → click a group → members list; remove members.
