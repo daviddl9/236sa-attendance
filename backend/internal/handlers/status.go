@@ -58,6 +58,13 @@ type StatusListResponse struct {
 	Limit    int                         `json:"limit"`
 }
 
+const (
+	defaultListStatusesLimit = 20
+	// maxListStatusesLimit must exceed the number of statuses: the statuses
+	// page loads the full list in a single page so search can run client-side.
+	maxListStatusesLimit = 1000
+)
+
 // ListStatuses retrieves a paginated list of statuses with optional filters
 func (h *StatusHandler) ListStatuses(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
@@ -68,8 +75,8 @@ func (h *StatusHandler) ListStatuses(w http.ResponseWriter, r *http.Request) {
 		page = 1
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit < 1 || limit > 100 {
-		limit = 20
+	if limit < 1 || limit > maxListStatusesLimit {
+		limit = defaultListStatusesLimit
 	}
 	offset := (page - 1) * limit
 
