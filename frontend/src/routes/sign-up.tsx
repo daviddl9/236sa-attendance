@@ -1,4 +1,4 @@
-import { createFileRoute, Link, Navigate } from '@tanstack/react-router';
+import { createFileRoute, Link, Navigate, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { Clock, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -19,10 +19,16 @@ import {
 
 export const Route = createFileRoute('/sign-up')({
   component: SignUpPage,
+  validateSearch: (search: Record<string, unknown>) => {
+    return {
+      qrToken: (search.qrToken as string) || undefined,
+    };
+  },
 });
 
 function SignUpPage() {
   const { isAuthenticated, isLoading } = useAuth();
+  const search = useSearch({ from: '/sign-up' }) as { qrToken?: string };
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -59,6 +65,7 @@ function SignUpPage() {
         fullName: form.fullName.trim(),
         rank: form.rank.trim(),
         battery: form.battery.trim(),
+        qrToken: search.qrToken,
       });
       if (response.outcome === 'pending_approval') {
         setSubmitted(true);

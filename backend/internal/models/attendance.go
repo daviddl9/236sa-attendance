@@ -20,6 +20,9 @@ const (
 	MarkingMethodQRScan       = "qr_scan"
 	MarkingMethodTelegramScan = "telegram_scan"
 	MarkingMethodManual       = "manual"
+	// MarkingMethodApprovalAuto records attendance when a commander approves a
+	// pending registration that carried a QR-scan intent.
+	MarkingMethodApprovalAuto = "approval_auto"
 )
 
 type AttendanceSession struct {

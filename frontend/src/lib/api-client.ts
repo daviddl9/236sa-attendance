@@ -54,6 +54,7 @@ export interface SignUpRequest {
   fullName: string;
   rank: string;
   battery: string;
+  qrToken?: string;
 }
 
 export interface RegisterUserRequest {
@@ -183,6 +184,18 @@ export interface BulkApprovalResponse {
 export interface ProvisionCredentialsResponse {
   username: string;
   temporaryPassword: string;
+}
+
+export interface ApprovalAttendanceResult {
+  marked: boolean;
+  sessionId: string;
+  sessionName?: string;
+  reason?: string;
+}
+
+export interface ApproveRegistrationResponse {
+  message: string;
+  attendance?: ApprovalAttendanceResult;
 }
 
 export interface RegistrationCandidate {
@@ -962,8 +975,8 @@ export class APIClient {
   async approveRegistration(
     id: string,
     data: { mode: 'link'; userId: string } | { mode: 'create'; acknowledgeStrongMatch?: boolean }
-  ): Promise<{ message: string }> {
-    return this.request<{ message: string }>(`/api/admin/registrations/${id}/approve`, {
+  ): Promise<ApproveRegistrationResponse> {
+    return this.request<ApproveRegistrationResponse>(`/api/admin/registrations/${id}/approve`, {
       method: 'POST',
       body: JSON.stringify(data),
     });

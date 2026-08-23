@@ -55,6 +55,10 @@ type SignUpRequest struct {
 	FullName        string `json:"fullName"`
 	Rank            string `json:"rank"`
 	Battery         string `json:"battery"`
+	// QRToken is the session:secret value from a scanned QR code. It records
+	// the soldier's scan intent so the commander's approval can auto-mark the
+	// session; empty means no scan intent.
+	QRToken string `json:"qrToken"`
 }
 
 // AuthResponse is kept for backward-compatibility.
@@ -481,6 +485,19 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A QR token is optional; when present it must be the session:secret form
+	// the scanner redirects with. Format is validated here; the session and
+	// secret are validated at approval time inside the approval transaction.
+	var qrSessionID, qrSecret string
+	if req.QRToken != "" {
+		var ok bool
+		qrSessionID, qrSecret, ok = parseQRToken(req.QRToken)
+		if !ok {
+			http.Error(w, "Invalid QR token", http.StatusBadRequest)
+			return
+		}
+	}
+
 	ctx := context.Background()
 	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
@@ -512,10 +529,11 @@ func (h *AuthHandler) SignUp(w http.ResponseWriter, r *http.Request) {
 
 	_, err = tx.Exec(ctx, `
 		INSERT INTO pending_registration (
-			id, username, password_hash, claimed_name, claimed_rank, claimed_battery
+			id, username, password_hash, claimed_name, claimed_rank, claimed_battery,
+			qr_session_id, qr_secret
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, generateID(), req.Username, string(hash), req.FullName, req.Rank, req.Battery)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, generateID(), req.Username, string(hash), req.FullName, req.Rank, req.Battery, nullIfEmpty(qrSessionID), nullIfEmpty(qrSecret))
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			http.Error(w, "Username is unavailable", http.StatusConflict)
@@ -666,6 +684,26 @@ func generateSessionToken() string {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// parseQRToken splits a scanned QR token into its session and secret parts.
+// The scanner redirect carries the session:secret form; the in-app camera
+// path additionally appends a timestamp, which is not part of the token.
+func parseQRToken(token string) (sessionID, secret string, ok bool) {
+	parts := strings.Split(token, ":")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// nullIfEmpty converts an empty optional string to a NULL for nullable
+// columns, keeping the value out of the database when it was never provided.
+func nullIfEmpty(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func setSessionCookie(w http.ResponseWriter, token string) {

@@ -184,7 +184,7 @@ function SignInContent() {
               </Button>
               <p className="text-center text-sm text-muted-foreground">
                 Need an account?{' '}
-                <Link to="/sign-up" className="underline hover:text-foreground">
+                <Link to="/sign-up" search={{ qrToken: search.qrToken }} className="underline hover:text-foreground">
                   Sign up
                 </Link>
               </p>

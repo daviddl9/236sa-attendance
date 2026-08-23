@@ -17,6 +17,7 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
+	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/attendance"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/matching"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -686,6 +687,23 @@ func (e *strongMatchApprovalError) Error() string {
 
 type pendingApproval struct {
 	ID, Username, PasswordHash, Name, Rank, Battery string
+	QRSessionID, QRSecret                           string
+}
+
+// approvalResult carries the side effects of an approval so the HTTP layer can
+// surface them to the commander. Attendance is nil when the registration
+// carried no QR scan intent.
+type approvalResult struct {
+	Attendance *approvalAttendanceResult `json:"attendance,omitempty"`
+}
+
+// approvalAttendanceResult describes the best-effort auto-mark of the session
+// the soldier scanned before signing up. Reason is empty when Marked is true.
+type approvalAttendanceResult struct {
+	Marked      bool   `json:"marked"`
+	SessionID   string `json:"sessionId"`
+	SessionName string `json:"sessionName,omitempty"`
+	Reason      string `json:"reason,omitempty"` // invalid_token | session_closed | already_marked
 }
 
 // ApproveRegistration links a pending signup to an explicit roster row or
@@ -709,7 +727,8 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 	if actor, ok := middleware.GetUserFromContext(r.Context()); ok {
 		actorID = actor.ID
 	}
-	if err := h.approveRegistration(r.Context(), chi.URLParam(r, "id"), req, actorID); err != nil {
+	result, err := h.approveRegistration(r.Context(), chi.URLParam(r, "id"), req, actorID)
+	if err != nil {
 		writeApprovalDBError(w, err)
 		return
 	}
@@ -717,78 +736,133 @@ func (h *AdminHandler) ApproveRegistration(w http.ResponseWriter, r *http.Reques
 	if req.Mode == "link" {
 		message = "Registration linked"
 	}
+	response := map[string]any{"message": message}
+	if result.Attendance != nil {
+		response["attendance"] = result.Attendance
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+	_ = json.NewEncoder(w).Encode(response)
 }
 
-func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID string, req approveRegistrationRequest, actorID string) error {
+func (h *AdminHandler) approveRegistration(ctx context.Context, registrationID string, req approveRegistrationRequest, actorID string) (approvalResult, error) {
+	var result approvalResult
 	tx, err := h.db.Pool.Begin(ctx)
 	if err != nil {
-		return err
+		return result, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var pending pendingApproval
 	err = tx.QueryRow(ctx, `
-		SELECT id, username, password_hash, claimed_name, claimed_rank, claimed_battery
+		SELECT id, username, password_hash, claimed_name, claimed_rank, claimed_battery,
+		       COALESCE(qr_session_id, ''), COALESCE(qr_secret, '')
 		FROM pending_registration WHERE id = $1 FOR UPDATE
-	`, registrationID).Scan(&pending.ID, &pending.Username, &pending.PasswordHash, &pending.Name, &pending.Rank, &pending.Battery)
+	`, registrationID).Scan(&pending.ID, &pending.Username, &pending.PasswordHash, &pending.Name, &pending.Rank, &pending.Battery, &pending.QRSessionID, &pending.QRSecret)
 	if err != nil {
-		return fmt.Errorf("registration not found or already approved: %w", err)
+		return result, fmt.Errorf("registration not found or already approved: %w", err)
 	}
 	if req.Bulk && req.Mode == "create" {
 		if isMigratedPending(pending.Username) {
-			return errBulkMigratedPending
+			return result, errBulkMigratedPending
 		}
 		strongMatch, err := h.strongCandidate(ctx, tx, pending)
 		if err != nil {
-			return err
+			return result, err
 		}
 		if strongMatch != nil {
-			return errBulkNeedsLink
+			return result, errBulkNeedsLink
 		}
 	}
 	if req.Mode == "create" && !req.Bulk && !req.AcknowledgeStrongMatch && !isMigratedPending(pending.Username) {
 		strongMatch, err := h.strongCandidate(ctx, tx, pending)
 		if err != nil {
-			return err
+			return result, err
 		}
 		if strongMatch != nil {
-			return &strongMatchApprovalError{Candidate: *strongMatch}
+			return result, &strongMatchApprovalError{Candidate: *strongMatch}
 		}
 	}
 	if isMigratedPending(pending.Username) {
 		if req.Mode == "create" {
-			return fmt.Errorf("carried-over registrations must be linked")
+			return result, fmt.Errorf("carried-over registrations must be linked")
 		}
 		if req.UserID == "" {
 			req.UserID = pending.ID
 		}
 		if req.UserID != pending.ID {
-			return fmt.Errorf("carried-over registration can only link to its existing row")
+			return result, fmt.Errorf("carried-over registration can only link to its existing row")
 		}
 	}
 	if req.Mode == "link" {
 		if req.UserID == "" {
-			return fmt.Errorf("userId is required for link mode")
+			return result, fmt.Errorf("userId is required for link mode")
 		}
 		if err := linkPendingRegistration(ctx, tx, pending, req.UserID); err != nil {
-			return err
+			return result, err
 		}
 	} else if err := createApprovedRegistration(ctx, tx, pending); err != nil {
-		return err
+		return result, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM pending_registration WHERE id = $1`, pending.ID); err != nil {
-		return err
+		return result, err
 	}
 	targetID := pending.ID
 	if req.Mode == "link" {
 		targetID = req.UserID
 	}
 	if err := recordAdminAction(ctx, tx, actorID, targetID, "approval"); err != nil {
-		return err
+		return result, err
 	}
-	return tx.Commit(ctx)
+	// Best-effort auto-mark of the session the soldier scanned before signing
+	// up. It runs inside the approval transaction so the mark commits atomically
+	// with the account; an invalid or closed session never fails the approval.
+	result.Attendance, err = h.markPendingAttendance(ctx, tx, pending, targetID, actorID)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+// markPendingAttendance records the scanned session for the approved user. It
+// returns nil when the registration carried no QR intent, and a result with an
+// explanatory reason when the token is stale or the session is no longer
+// markable, so the commander sees why attendance was not recorded.
+func (h *AdminHandler) markPendingAttendance(ctx context.Context, tx pgx.Tx, pending pendingApproval, userID, actorID string) (*approvalAttendanceResult, error) {
+	if strings.TrimSpace(pending.QRSessionID) == "" {
+		return nil, nil
+	}
+	// The token must still match the session it was captured from.
+	var sessionName string
+	err := tx.QueryRow(ctx, `
+		SELECT name FROM attendance_session
+		WHERE id = $1 AND qr_code_secret = $2
+	`, pending.QRSessionID, pending.QRSecret).Scan(&sessionName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &approvalAttendanceResult{SessionID: pending.QRSessionID, Reason: "invalid_token"}, nil
+		}
+		return nil, fmt.Errorf("validate approval attendance session: %w", err)
+	}
+
+	outcome, err := attendance.Mark(ctx, tx, attendance.MarkRequest{
+		SessionID: pending.QRSessionID,
+		UserID:    userID,
+		Method:    models.MarkingMethodApprovalAuto,
+		MarkedBy:  nullIfEmpty(actorID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("auto-mark attendance on approval: %w", err)
+	}
+	result := &approvalAttendanceResult{SessionID: pending.QRSessionID, SessionName: sessionName}
+	switch outcome {
+	case attendance.Marked, attendance.MarkedOutOfScope:
+		result.Marked = true
+	case attendance.AlreadyMarked:
+		result.Reason = "already_marked"
+	case attendance.SessionClosed:
+		result.Reason = "session_closed"
+	}
+	return result, nil
 }
 
 func (h *AdminHandler) strongCandidate(ctx context.Context, tx pgx.Tx, pending pendingApproval) (*matching.Candidate, error) {
@@ -851,7 +925,7 @@ func (h *AdminHandler) BulkApproveRegistrations(w http.ResponseWriter, r *http.R
 		result := bulkApprovalResult{ID: id}
 		if strings.TrimSpace(id) == "" {
 			result.Error = "Registration id is required"
-		} else if err := h.approveRegistration(r.Context(), id, approveRegistrationRequest{Mode: "create", Bulk: true}, actorID); err != nil {
+		} else if _, err := h.approveRegistration(r.Context(), id, approveRegistrationRequest{Mode: "create", Bulk: true}, actorID); err != nil {
 			result.Error = approvalErrorMessage(err)
 		} else {
 			result.Success = true

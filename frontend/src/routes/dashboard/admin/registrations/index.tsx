@@ -106,8 +106,21 @@ function RegistrationsContent() {
         acknowledgeStrongMatch: input.acknowledgeStrongMatch,
       });
     },
-    onSuccess: (_, { id }) => {
-      toast.success('Registration approved');
+    onSuccess: (response, { id }) => {
+      const attendance = response.attendance;
+      if (attendance?.marked) {
+        toast.success(`Approved — attendance marked for ${attendance.sessionName ?? 'the scanned session'}`);
+      } else if (attendance) {
+        const reason =
+          attendance.reason === 'session_closed'
+            ? 'session already closed'
+            : attendance.reason === 'already_marked'
+              ? 'already marked'
+              : 'QR token no longer valid';
+        toast.warning(`Approved — attendance not marked (${reason})`);
+      } else {
+        toast.success('Registration approved');
+      }
       setCreateConfirmation(null);
       setReviewId(null);
       setSelectedUserId('');
