@@ -14,7 +14,8 @@ import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
 import { apiClient } from '../lib/api-client';
 import { PublicFooter } from '../components/public-footer';
-import { formatDob } from '../lib/dob-format';
+import { DobFields } from '../components/dob-fields';
+import { isValidDob } from '../lib/dob-format';
 
 export const Route = createFileRoute('/')({
   component: IndexComponent,
@@ -32,8 +33,8 @@ function SignInContent() {
       toast.error('Please enter your full name and date of birth');
       return;
     }
-    if (!/^(\d{2}\/\d{2}\/\d{4}|\d{8})$/.test(dob.trim())) {
-      toast.error('Please enter your date of birth as dd/mm/yyyy');
+    if (!isValidDob(dob)) {
+      toast.error('Please enter a valid date of birth');
       return;
     }
     try {
@@ -83,18 +84,7 @@ function SignInContent() {
             </div>
             <div className="grid gap-2">
               <Label htmlFor="dob">Date of birth</Label>
-              <Input
-                id="dob"
-                type="text"
-                inputMode="numeric"
-                placeholder="dd/mm/yyyy"
-                autoComplete="bday"
-                maxLength={10}
-                value={dob}
-                onChange={(e) => setDob(formatDob(e.target.value))}
-                disabled={loading}
-                required
-              />
+              <DobFields id="dob" value={dob} onChange={setDob} disabled={loading} />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign In'}
