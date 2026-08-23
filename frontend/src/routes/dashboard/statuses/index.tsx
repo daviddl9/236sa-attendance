@@ -6,6 +6,7 @@ import {
   type StatusType,
   type CreateStatusRequest,
   type UserStatusWithUser,
+  type UserStatusDate,
 } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
 import { Button } from '../../../components/ui/button';
@@ -62,8 +63,10 @@ function StatusesPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [statusToDelete, setStatusToDelete] = useState<UserStatusWithUser | null>(null);
   const [statusToEdit, setStatusToEdit] = useState<UserStatusWithUser | null>(null);
+  const [statusToView, setStatusToView] = useState<UserStatusWithUser | null>(null);
 
   // Form state
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -87,7 +90,9 @@ function StatusesPage() {
 
   const filteredStatuses =
     data?.statuses.filter((s) =>
-      (s.userFullName || '').toLowerCase().includes(search.toLowerCase())
+      `${s.userFullName || ''} ${s.userBattery || ''}`
+        .toLowerCase()
+        .includes(search.toLowerCase())
     ) ?? [];
 
   const { data: usersData } = useQuery({
@@ -275,6 +280,19 @@ function StatusesPage() {
     return '-';
   };
 
+  const formatDateTime = (iso?: string) => {
+    if (!iso) return '-';
+    return new Date(iso).toLocaleString('en-SG', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+  };
+
+  const formatDateRange = (d: UserStatusDate) => {
+    const fmt = (date: string, time: string) => `${date} ${time.slice(0, 5)}`;
+    return `${fmt(d.startDate, d.startTime)} → ${fmt(d.endDate, d.endTime)}`;
+  };
+
   return (
     <DashboardLayout>
       <div className="flex flex-col gap-4 p-6">
@@ -296,7 +314,7 @@ function StatusesPage() {
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search by name..."
+                placeholder="Search by name or battery..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="pl-8"
@@ -383,8 +401,18 @@ function StatusesPage() {
                           <TableCell className="text-sm">
                             {formatStatusDetails(status)}
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                            {status.notes || '-'}
+                          <TableCell className="text-sm text-muted-foreground max-w-[200px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStatusToView(status);
+                                setViewDialogOpen(true);
+                              }}
+                              className="w-full truncate text-left cursor-pointer hover:underline"
+                              title="View full notes"
+                            >
+                              {status.notes || '-'}
+                            </button>
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-1">
@@ -766,6 +794,57 @@ function StatusesPage() {
             <Button onClick={handleUpdate} disabled={updateMutation.isPending} className="w-full sm:w-auto">
               {updateMutation.isPending ? 'Saving...' : 'Save'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Status Details</DialogTitle>
+            <DialogDescription>
+              {statusToView?.userFullName} ({statusToView?.userRank} -{' '}
+              {statusToView?.userBattery})
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <StatusBadge statusType={statusToView?.statusType as StatusType} />
+              <span className="text-sm text-muted-foreground">
+                {statusToView ? formatStatusDetails(statusToView) : ''}
+              </span>
+            </div>
+
+            {statusToView?.dates && statusToView.dates.length > 0 && (
+              <div className="space-y-1">
+                <Label>Dates</Label>
+                <div className="rounded-md border p-3 space-y-1 text-sm">
+                  {statusToView.dates.map((d, i) => (
+                    <div key={i} className="break-words">
+                      {formatDateRange(d)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <Label>Notes</Label>
+              <div className="rounded-md border p-3 text-sm whitespace-pre-wrap break-words">
+                {statusToView?.notes || '-'}
+              </div>
+            </div>
+
+            <div className="text-xs text-muted-foreground space-y-1">
+              <div>Created: {formatDateTime(statusToView?.createdAt)}</div>
+              <div>Updated: {formatDateTime(statusToView?.updatedAt)}</div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
