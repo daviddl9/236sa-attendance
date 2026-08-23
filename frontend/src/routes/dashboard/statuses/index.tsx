@@ -37,7 +37,7 @@ import {
 } from '../../../components/ui/table';
 import { Card, CardContent } from '../../../components/ui/card';
 import { useState } from 'react';
-import { Plus, Trash2, Pencil, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, X, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '../../../components/status-badge';
 import { cn } from '@/lib/utils';
@@ -56,7 +56,7 @@ interface StatusDateEntry {
 
 function StatusesPage() {
   const queryClient = useQueryClient();
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
   const [statusTypeFilter, setStatusTypeFilter] = useState<string>('');
   const [activeOnly, setActiveOnly] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -76,15 +76,19 @@ function StatusesPage() {
   const [userSearch, setUserSearch] = useState('');
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['statuses', page, statusTypeFilter, activeOnly],
+    queryKey: ['statuses', statusTypeFilter, activeOnly],
     queryFn: () =>
       apiClient.listStatuses({
-        page,
-        limit: 20,
+        limit: 1000,
         statusType: statusTypeFilter as StatusType | undefined,
         active: activeOnly,
       }),
   });
+
+  const filteredStatuses =
+    data?.statuses.filter((s) =>
+      (s.userFullName || '').toLowerCase().includes(search.toLowerCase())
+    ) ?? [];
 
   const { data: usersData } = useQuery({
     queryKey: ['users-for-status', userSearch],
@@ -288,11 +292,21 @@ function StatusesPage() {
         </div>
 
         <div className="flex gap-4 items-center">
+          <div className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+          </div>
           <Select
             value={statusTypeFilter || 'all'}
             onValueChange={(value) => {
               setStatusTypeFilter(value === 'all' ? '' : value);
-              setPage(1);
             }}
           >
             <SelectTrigger className="w-[180px]">
@@ -333,11 +347,10 @@ function StatusesPage() {
           </div>
         ) : (
           <>
-            {data && (
-              <div className="text-sm text-muted-foreground mb-2">
-                Found {data.total} status{data.total !== 1 ? 'es' : ''}
-              </div>
-            )}
+            <div className="text-sm text-muted-foreground mb-2">
+              Found {filteredStatuses.length} status
+              {filteredStatuses.length !== 1 ? 'es' : ''}
+            </div>
             <Card>
               <CardContent className="p-0">
                 <Table>
@@ -351,8 +364,8 @@ function StatusesPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data?.statuses && data.statuses.length > 0 ? (
-                      data.statuses.map((status) => (
+                    {filteredStatuses.length > 0 ? (
+                      filteredStatuses.map((status) => (
                         <TableRow key={status.id}>
                           <TableCell>
                             <div>
@@ -407,31 +420,6 @@ function StatusesPage() {
                 </Table>
               </CardContent>
             </Card>
-
-            {data && data.total > 20 && (
-              <div className="flex items-center justify-between">
-                <div className="text-sm text-muted-foreground">
-                  Showing {(page - 1) * 20 + 1} to {Math.min(page * 20, data.total)} of{' '}
-                  {data.total} statuses
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setPage((p) => p + 1)}
-                    disabled={page * 20 >= data.total}
-                  >
-                    Next
-                  </Button>
-                </div>
-              </div>
-            )}
           </>
         )}
       </div>
