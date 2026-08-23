@@ -15,7 +15,7 @@ import { toast } from 'sonner';
 import { apiClient } from '../lib/api-client';
 import { PublicFooter } from '../components/public-footer';
 import { DobFields } from '../components/dob-fields';
-import { isValidDob } from '../lib/dob-format';
+import { isValidDob, joinDob } from '../lib/dob-format';
 
 export const Route = createFileRoute('/')({
   component: IndexComponent,
@@ -24,22 +24,22 @@ export const Route = createFileRoute('/')({
 function SignInContent() {
   const [loading, setLoading] = useState(false);
   const [identifier, setIdentifier] = useState('');
-  const [dob, setDob] = useState('');
+  const [dob, setDob] = useState({ day: '', month: '', year: '' });
   const { refetch } = useAuth();
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!identifier || !dob) {
+    if (!identifier || !dob.day || !dob.month || !dob.year) {
       toast.error('Please enter your full name and date of birth');
       return;
     }
-    if (!isValidDob(dob)) {
+    if (!isValidDob(joinDob(dob.day, dob.month, dob.year))) {
       toast.error('Please enter a valid date of birth');
       return;
     }
     try {
       setLoading(true);
-      const response = await apiClient.signIn({ identifier, dob });
+      const response = await apiClient.signIn({ identifier, dob: joinDob(dob.day, dob.month, dob.year) });
       if (response.outcome === 'pending_approval') {
         setLoading(false);
         toast.info('Your registration is awaiting approval');

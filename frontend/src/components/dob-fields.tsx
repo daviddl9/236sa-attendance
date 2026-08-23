@@ -1,8 +1,13 @@
 import * as React from 'react';
-import { joinDob, splitDob } from '../lib/dob-format';
 import { Input } from './ui/input';
 
 type Field = 'day' | 'month' | 'year';
+
+export interface DobParts {
+  day: string;
+  month: string;
+  year: string;
+}
 
 const FIELDS: Record<
   Field,
@@ -14,8 +19,8 @@ const FIELDS: Record<
 };
 
 interface DobFieldsProps {
-  value: string;
-  onChange: (value: string) => void;
+  value: DobParts;
+  onChange: (value: DobParts) => void;
   disabled?: boolean;
   /** Applied to the day input so a Label can target the group. */
   id?: string;
@@ -27,12 +32,10 @@ export function DobFields({ value, onChange, disabled, id }: DobFieldsProps) {
   const yearRef = React.useRef<HTMLInputElement>(null);
   const refs = { day: dayRef, month: monthRef, year: yearRef };
 
-  const parts = splitDob(value);
-
   const handleChange = (field: Field) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawDigits = e.target.value.replace(/\D/g, '');
     const max = FIELDS[field].max;
-    const next = { ...parts };
+    const next = { ...value };
     next[field] = rawDigits.slice(0, max);
 
     // Paste (or overflow): distribute remaining digits across following fields.
@@ -46,7 +49,7 @@ export function DobFields({ value, onChange, disabled, id }: DobFieldsProps) {
       cursor = FIELDS[cursor].next;
     }
 
-    onChange(joinDob(next.day, next.month, next.year));
+    onChange(next);
 
     if (rawDigits.length > max) {
       const afterLast = FIELDS[lastFilled].next;
@@ -58,7 +61,7 @@ export function DobFields({ value, onChange, disabled, id }: DobFieldsProps) {
   };
 
   const handleKeyDown = (field: Field) => (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (parts[field] === '') {
+    if (value[field] === '') {
       if (e.key === 'Backspace') {
         e.preventDefault();
         const prev = FIELDS[field].prev;
@@ -68,7 +71,7 @@ export function DobFields({ value, onChange, disabled, id }: DobFieldsProps) {
     }
     // Field is full: swallow the digit and move focus so the next key lands there.
     if (
-      parts[field].length === FIELDS[field].max &&
+      value[field].length === FIELDS[field].max &&
       /^[0-9]$/.test(e.key) &&
       !e.ctrlKey &&
       !e.metaKey &&
@@ -94,7 +97,7 @@ export function DobFields({ value, onChange, disabled, id }: DobFieldsProps) {
             autoComplete={FIELDS[field].autoComplete}
             aria-label={field}
             className="w-16 text-center"
-            value={parts[field]}
+            value={value[field]}
             onChange={handleChange(field)}
             onKeyDown={handleKeyDown(field)}
             disabled={disabled}
