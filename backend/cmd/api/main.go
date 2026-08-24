@@ -181,8 +181,15 @@ func main() {
 					// Single-session metadata: Tier 1+ (needed for the read-only board)
 					r.Get("/{id}", sessionHandler.GetSession)
 
-					// Management routes: Tier 3+
-					r.With(middleware.RequireUnitCommander(db)).Post("/", sessionHandler.CreateSession)
+					// Creation flows: Tier 2+ (all commanders)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/", sessionHandler.CreateSession)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/custom/preview", sessionHandler.PreviewCustomSession)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/custom/create", sessionHandler.CreateCustomSession)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/from-groups", groupHandler.CreateSessionFromGroups)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/{id}/group", groupHandler.SaveSessionAsGroup)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/{id}/duplicate", groupHandler.DuplicateSession)
+
+					// Close/exports: Tier 3+
 					r.With(middleware.RequireUnitCommander(db)).Put("/{id}/close", sessionHandler.CloseSession)
 					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/csv", sessionHandler.ExportSessionCSV)
 					r.With(middleware.RequireUnitCommander(db)).Get("/{id}/export/excel", sessionHandler.ExportSessionExcel)
@@ -193,28 +200,19 @@ func main() {
 
 					// Delete: superadmin only
 					r.With(middleware.RequireSuperadmin(db)).Delete("/{id}", sessionHandler.DeleteSession)
-
-					// Custom participant sessions: Tier 3+
-					r.With(middleware.RequireUnitCommander(db)).Post("/custom/preview", sessionHandler.PreviewCustomSession)
-					r.With(middleware.RequireUnitCommander(db)).Post("/custom/create", sessionHandler.CreateCustomSession)
-					r.With(middleware.RequireUnitCommander(db)).Post("/from-groups", groupHandler.CreateSessionFromGroups)
-
-					// Reusable groups & duplication: Tier 3+
-					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/group", groupHandler.SaveSessionAsGroup)
-					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/duplicate", groupHandler.DuplicateSession)
 				})
 
-				// Reusable participant groups: Tier 3+
+				// Reusable participant groups: Tier 2+ (all commanders)
 				r.Route("/groups", func(r chi.Router) {
-					r.With(middleware.RequireUnitCommander(db)).Get("/", groupHandler.ListGroups)
-					r.With(middleware.RequireUnitCommander(db)).Post("/", groupHandler.CreateGroup)
-					r.With(middleware.RequireUnitCommander(db)).Post("/preview", groupHandler.PreviewGroupFromExcel)
-					r.With(middleware.RequireUnitCommander(db)).Get("/{id}", groupHandler.GetGroup)
-					r.With(middleware.RequireUnitCommander(db)).Put("/{id}", groupHandler.RenameGroup)
-					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}", groupHandler.DeleteGroup)
-					r.With(middleware.RequireUnitCommander(db)).Put("/{id}/members", groupHandler.SetMembers)
-					r.With(middleware.RequireUnitCommander(db)).Delete("/{id}/members/{userId}", groupHandler.RemoveMember)
-					r.With(middleware.RequireUnitCommander(db)).Post("/{id}/sessions", groupHandler.CreateSessionFromGroup)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/", groupHandler.ListGroups)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/", groupHandler.CreateGroup)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/preview", groupHandler.PreviewGroupFromExcel)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/{id}", groupHandler.GetGroup)
+					r.With(middleware.RequireBatteryNCO(db)).Put("/{id}", groupHandler.RenameGroup)
+					r.With(middleware.RequireBatteryNCO(db)).Delete("/{id}", groupHandler.DeleteGroup)
+					r.With(middleware.RequireBatteryNCO(db)).Put("/{id}/members", groupHandler.SetMembers)
+					r.With(middleware.RequireBatteryNCO(db)).Delete("/{id}/members/{userId}", groupHandler.RemoveMember)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/{id}/sessions", groupHandler.CreateSessionFromGroup)
 				})
 
 				// Reports routes
