@@ -6,7 +6,7 @@
 
 ## Summary
 
-Add hand-built group membership management (view/add/remove members, create-and-add people) to the existing Groups feature, and add a CLI `seed-groups` command that creates the unit's ops groups (RnS, FDC/BOC, BCS, CSS, PSO, MT Platoon, Technicians, CSS/A/B/HQ/All Commanders, A/B/HQ Bty) from the roster Excel using confirmed membership rules, idempotently.
+Add hand-built group membership management (view/add/remove members, create-and-add people) to the existing Groups feature, and add a CLI `seed-groups` command that creates the unit's ops groups (RnS, FDC/BOC, BCS, CSS, PSO, MT Platoon, Signal Platoon, Technicians, CSS/A/B/HQ/All Commanders, A/B/HQ Bty) from the roster Excel using confirmed membership rules, idempotently.
 
 ## Technical Context
 
@@ -89,6 +89,7 @@ Rows: 431 people. Columns (0-indexed): `[1]` NRIC last 5, `[2]` Rank, `[3]` Full
 | B Bty | Sub-Unit 1 = `FIELD ARTY BTY B` | 89 |
 | HQ Bty | Sub-Unit 1 = `HQ BTY` | 139 |
 | MT Platoon | Sub-Unit 2 = `MT PL` | 39 |
+| Signal Platoon | Sub-Unit 2 = `SIGNAL PL` | 13 |
 | Technicians | vocation ∈ {`AUTO TECH`, `AUTO SPEC TECH`, `ARMT TECH`, `ARMT SPEC TECH`} | 16 |
 | CSS Commanders | CSS members with rank ≥ 3SG | 22 |
 | A Commanders | A Bty members with rank ≥ 3SG | 29 |
