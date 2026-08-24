@@ -33,6 +33,25 @@ func TestMTPlatoonRule(t *testing.T) {
 	}
 }
 
+func TestSignalPlatoonRule(t *testing.T) {
+	r := ruleFor(t, "Signal Platoon")
+	cases := []struct {
+		name string
+		row  row
+		want bool
+	}{
+		{"signal platoon member", row{sub2: "SIGNAL PL"}, true},
+		{"MT platoon", row{sub2: "MT PL"}, false},
+		{"medical platoon", row{sub2: "MEDICAL PL"}, false},
+		{"no sub-unit", row{}, false},
+	}
+	for _, tc := range cases {
+		if got := r.matches(tc.row); got != tc.want {
+			t.Errorf("%s: matches(%+v) = %v, want %v", tc.name, tc.row, got, tc.want)
+		}
+	}
+}
+
 func TestTechniciansRule(t *testing.T) {
 	r := ruleFor(t, "Technicians")
 	cases := []struct {
