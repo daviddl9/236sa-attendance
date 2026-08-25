@@ -41,8 +41,10 @@ func TestSignalPlatoonRule(t *testing.T) {
 		want bool
 	}{
 		{"signal platoon member", row{sub2: "SIGNAL PL"}, true},
+		{"signal officer", row{voc: "SIG OFFR"}, true},
 		{"MT platoon", row{sub2: "MT PL"}, false},
 		{"medical platoon", row{sub2: "MEDICAL PL"}, false},
+		{"signal operator elsewhere", row{voc: "SIG OPR", sub2: "BTY HQ"}, false},
 		{"no sub-unit", row{}, false},
 	}
 	for _, tc := range cases {

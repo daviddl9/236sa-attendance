@@ -20,7 +20,7 @@
 //	B Bty           Sub-Unit 1 = FIELD ARTY BTY B
 //	HQ Bty          Sub-Unit 1 = HQ BTY
 //	MT Platoon      Sub-Unit 2 = MT PL
-//	Signal Platoon  Sub-Unit 2 = SIGNAL PL
+//	Signal Platoon  Sub-Unit 2 = SIGNAL PL, plus SIG OFFR officers
 //	Technicians     vocation in {AUTO TECH, AUTO SPEC TECH, ARMT TECH, ARMT SPEC TECH}
 //	CSS Commanders  CSS members with rank >= 3SG
 //	A Commanders    A Bty members with rank >= 3SG
@@ -99,7 +99,9 @@ var rules = []rule{
 	{group: "B Bty", matches: matchesB},
 	{group: "HQ Bty", matches: matchesHQ},
 	{group: "MT Platoon", matches: func(r row) bool { return r.sub2 == "MT PL" }},
-	{group: "Signal Platoon", matches: func(r row) bool { return r.sub2 == "SIGNAL PL" }},
+	{group: "Signal Platoon", matches: func(r row) bool {
+		return r.sub2 == "SIGNAL PL" || r.voc == "SIG OFFR"
+	}},
 	{group: "Technicians", matches: func(r row) bool {
 		switch r.voc {
 		case "AUTO TECH", "AUTO SPEC TECH", "ARMT TECH", "ARMT SPEC TECH":
