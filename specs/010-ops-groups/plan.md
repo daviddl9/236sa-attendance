@@ -89,7 +89,7 @@ Rows: 431 people. Columns (0-indexed): `[1]` NRIC last 5, `[2]` Rank, `[3]` Full
 | B Bty | Sub-Unit 1 = `FIELD ARTY BTY B` | 89 |
 | HQ Bty | Sub-Unit 1 = `HQ BTY` | 139 |
 | MT Platoon | Sub-Unit 2 = `MT PL` | 39 |
-| Signal Platoon | Sub-Unit 2 = `SIGNAL PL` | 13 |
+| Signal Platoon | Sub-Unit 2 = `SIGNAL PL`, plus SIG OFFR officers | 15 |
 | Technicians | vocation ∈ {`AUTO TECH`, `AUTO SPEC TECH`, `ARMT TECH`, `ARMT SPEC TECH`} | 16 |
 | CSS Commanders | CSS members with rank ≥ 3SG | 22 |
 | A Commanders | A Bty members with rank ≥ 3SG | 29 |
