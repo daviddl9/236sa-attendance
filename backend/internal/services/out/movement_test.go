@@ -79,8 +79,10 @@ func TestRecordSecondScanMarksInAndThirdGoesOutAgain(t *testing.T) {
 	}
 }
 
-// The scan that must never be mis-recorded: a repeat tap at the gate.
-func TestRecordTreatsRapidRepeatScanAsDuplicate(t *testing.T) {
+// A soldier who steps out and comes straight back must be able to record the
+// return immediately. The confirm screen, not a timer, is what guards against
+// a stray tap.
+func TestRecordAllowsAnImmediateReturn(t *testing.T) {
 	db, prefix := openOutServiceDB(t)
 	sess, soldier := seedSessionAndSoldier(t, db, prefix)
 	svc := NewService(db)
@@ -99,11 +101,11 @@ func TestRecordTreatsRapidRepeatScanAsDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecordMovement: %v", err)
 	}
-	if second.Outcome != Duplicate {
-		t.Fatalf("rapid repeat = %v; want Duplicate", second.Outcome)
+	if second.Outcome != Recorded {
+		t.Fatalf("immediate return outcome = %v; want Recorded", second.Outcome)
 	}
-	if second.Direction != models.DirectionOut {
-		t.Fatalf("duplicate reports %q; want the standing direction out", second.Direction)
+	if second.Direction != models.DirectionIn {
+		t.Fatalf("immediate return direction = %q; want in", second.Direction)
 	}
 
 	var count int
@@ -112,8 +114,8 @@ func TestRecordTreatsRapidRepeatScanAsDuplicate(t *testing.T) {
 		sess, soldier).Scan(&count); err != nil {
 		t.Fatalf("count movements: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("movements written = %d; want 1 — the duplicate must not be recorded", count)
+	if count != 2 {
+		t.Fatalf("movements written = %d; want 2", count)
 	}
 }
 
@@ -270,50 +272,5 @@ func TestCloseRequiresAcknowledgementWhilePeopleAreOut(t *testing.T) {
 	}
 	if _, err := svc.Close(ctx, sess, creator, true); err != ErrSessionNotActive {
 		t.Fatalf("re-close = %v; want ErrSessionNotActive", err)
-	}
-}
-
-func TestNextMovementAtReportsTheWait(t *testing.T) {
-	now := time.Now()
-
-	if got := NextMovementAt(nil, now); got != nil {
-		t.Fatalf("no prior movement = %v; want nil (scan allowed)", got)
-	}
-
-	justNow := &models.OutMovement{Direction: models.DirectionOut, OccurredAt: now.Add(-10 * time.Second)}
-	got := NextMovementAt(justNow, now)
-	if got == nil {
-		t.Fatal("a scan 10s ago should still be inside the window")
-	}
-	if want := justNow.OccurredAt.Add(MinMovementInterval); !got.Equal(want) {
-		t.Fatalf("ready at %s; want %s", got.Format(time.RFC3339), want.Format(time.RFC3339))
-	}
-
-	older := &models.OutMovement{Direction: models.DirectionOut, OccurredAt: now.Add(-MinMovementInterval - time.Second)}
-	if got := NextMovementAt(older, now); got != nil {
-		t.Fatalf("a scan outside the window = %v; want nil so the return can be recorded", got)
-	}
-}
-
-// The window must not block a genuine return once it has passed.
-func TestReturnIsRecordedOnceTheWindowPasses(t *testing.T) {
-	db, prefix := openOutServiceDB(t)
-	sess, soldier := seedSessionAndSoldier(t, db, prefix)
-
-	writeMovement(t, db, sess, soldier, models.DirectionOut,
-		time.Now().Add(-MinMovementInterval-time.Second))
-
-	res, err := NewService(db).RecordMovement(context.Background(), RecordRequest{
-		SessionID: sess, UserID: soldier, Method: models.MarkingMethodQRScan,
-		ExpectedDirection: models.DirectionIn,
-	})
-	if err != nil {
-		t.Fatalf("RecordMovement: %v", err)
-	}
-	if res.Outcome != Recorded {
-		t.Fatalf("outcome = %v; want Recorded", res.Outcome)
-	}
-	if res.Direction != models.DirectionIn {
-		t.Fatalf("direction = %q; want in", res.Direction)
 	}
 }

@@ -11,41 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// MinMovementInterval is how long a repeat scan is treated as a duplicate
-// rather than a direction change. A soldier who scans twice at the gate —
-// a slow confirmation screen, a stray second tap — must not be recorded as
-// back inside camp while walking out of it.
-//
-// It is deliberately short. Accidental repeats happen within seconds, while a
-// genuine turnaround — stepping out and coming straight back for something
-// forgotten — is a real movement worth recording. A minute separates the two
-// without making anyone wait long.
-const MinMovementInterval = time.Minute
-
-// NextMovementAt returns the instant at which a further movement will be
-// accepted, or nil when one can be recorded now. The scan screen uses it to
-// say when someone may scan again rather than offering a button the server
-// would refuse.
-func NextMovementAt(latest *models.OutMovement, now time.Time) *time.Time {
-	if latest == nil {
-		return nil
-	}
-	ready := latest.OccurredAt.Add(MinMovementInterval)
-	if !ready.After(now) {
-		return nil
-	}
-	return &ready
-}
-
 // RecordOutcome is the result of evaluating a movement request.
 type RecordOutcome int
 
 const (
 	// Recorded means a new movement row was written.
 	Recorded RecordOutcome = iota
-	// Duplicate means the scan arrived within MinMovementInterval of the
-	// previous one and was deliberately not recorded.
-	Duplicate
 	// DirectionChanged means the caller's expected direction no longer matches
 	// what the log implies — a stale page, or a correction in between.
 	DirectionChanged
@@ -135,16 +106,10 @@ func Record(ctx context.Context, tx pgx.Tx, req RecordRequest, now time.Time) (R
 		return RecordResult{}, err
 	}
 
-	// Duplicate guard runs before the direction check so a double tap reports
-	// the state the person is actually in rather than a confusing conflict.
-	if latest != nil && now.Sub(latest.OccurredAt) < MinMovementInterval {
-		return RecordResult{
-			Outcome:   Duplicate,
-			Direction: latest.Direction,
-			Previous:  latest,
-		}, nil
-	}
-
+	// There is no minimum interval between movements. The confirm screen is
+	// the guard against a stray tap: it names the direction and records
+	// nothing until the person accepts it. A soldier who steps out and comes
+	// straight back should be able to record that immediately.
 	direction := NextDirection(latest)
 	if req.ExpectedDirection != "" && req.ExpectedDirection != direction {
 		return RecordResult{

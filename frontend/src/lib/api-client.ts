@@ -91,8 +91,6 @@ export interface OutSelfState {
   nextDirection: OutDirection;
   last?: OutMovement | null;
   scanned: boolean;
-  /** Set while a repeat scan would be refused; the screen shows the wait. */
-  nextMovementAt?: string | null;
 }
 
 export interface CreateOutSessionRequest {
@@ -101,9 +99,11 @@ export interface CreateOutSessionRequest {
   expectedReturnAt?: string;
 }
 
-export type RecordOutMovementResponse =
-  | { outcome: 'recorded'; direction: OutDirection; movement: OutMovement }
-  | { outcome: 'duplicate'; direction: OutDirection; message: string; last?: OutMovement };
+export type RecordOutMovementResponse = {
+  outcome: 'recorded';
+  direction: OutDirection;
+  movement: OutMovement;
+};
 
 /** Which lists a session export should contain. Both default to true. */
 export interface ExportOptions {

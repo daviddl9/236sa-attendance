@@ -167,10 +167,6 @@ type OutSelfState struct {
 	NextDirection string              `json:"nextDirection"`
 	Last          *models.OutMovement `json:"last,omitempty"`
 	Scanned       bool                `json:"scanned"`
-	// NextMovementAt is set while the repeat-scan window is still open. The
-	// screen shows the wait instead of offering a confirm the server would
-	// refuse.
-	NextMovementAt *time.Time `json:"nextMovementAt,omitempty"`
 }
 
 // GetOutSelfState handles GET /api/out/sessions/{id}/me.
@@ -197,11 +193,10 @@ func (h *OutHandler) GetOutSelfState(w http.ResponseWriter, r *http.Request) {
 		session.QRCode = ""
 	}
 	writeJSON(w, http.StatusOK, OutSelfState{
-		Session:        session,
-		NextDirection:  outservice.NextDirection(last),
-		Last:           last,
-		Scanned:        scanned,
-		NextMovementAt: outservice.NextMovementAt(last, time.Now()),
+		Session:       session,
+		NextDirection: outservice.NextDirection(last),
+		Last:          last,
+		Scanned:       scanned,
 	})
 }
 
@@ -414,14 +409,6 @@ func (h *OutHandler) writeMovementResult(w http.ResponseWriter, r *http.Request,
 			"error":     "direction_changed",
 			"message":   "Your status changed since this screen loaded. Check it and try again.",
 			"direction": result.Direction,
-		})
-		return
-	case outservice.Duplicate:
-		writeJSON(w, http.StatusOK, map[string]any{
-			"outcome":   "duplicate",
-			"message":   "Already recorded a moment ago — nothing changed.",
-			"direction": result.Direction,
-			"last":      result.Previous,
 		})
 		return
 	}
