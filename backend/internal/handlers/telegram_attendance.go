@@ -49,7 +49,7 @@ func (s *TelegramPairingStore) MarkAttendance(ctx context.Context, telegramID in
 	var sessionID, sessionName string
 	err = tx.QueryRow(ctx, `
 		SELECT id, name FROM attendance_session
-		WHERE deeplink_code = $1
+		WHERE deeplink_code = $1 AND session_type = 'attendance'
 		FOR UPDATE
 	`, deeplinkCode).Scan(&sessionID, &sessionName)
 	if errors.Is(err, pgx.ErrNoRows) {

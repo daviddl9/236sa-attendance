@@ -8,6 +8,7 @@ const (
 	EventTypeAttendanceRemoved = "attendance_removed"
 	EventTypeSessionClosed     = "session_closed"
 	EventTypeStatusChanged     = "status_changed"
+	EventTypeOutMovement       = "out_movement"
 	EventTypeHeartbeat         = "heartbeat"
 )
 
@@ -46,4 +47,19 @@ type StatusChangedPayload struct {
 	UserID     string `json:"userId"`
 	StatusType string `json:"statusType"`
 	Action     string `json:"action"` // "created", "updated", "deleted"
+}
+
+// OutMovementPayload is sent when someone scans out of, or back into, camp
+// during an Out session. Counts are recomputed so a board that missed an
+// earlier event still lands on the right totals.
+type OutMovementPayload struct {
+	UserID        string    `json:"userId"`
+	UserName      string    `json:"userName,omitempty"`
+	UserRank      string    `json:"userRank,omitempty"`
+	Direction     string    `json:"direction"`
+	MarkingMethod string    `json:"markingMethod"`
+	OccurredAt    time.Time `json:"occurredAt"`
+	OutCount      int       `json:"outCount"`
+	ReturnedCount int       `json:"returnedCount"`
+	OverdueCount  int       `json:"overdueCount"`
 }

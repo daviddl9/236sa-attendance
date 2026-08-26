@@ -201,7 +201,7 @@ func (s *Service) listActive(ctx context.Context, q sessionQueryer, actor *model
 		       status, created_by, start_time, end_time, closed_at, deeplink_code,
 		       "createdAt", "updatedAt"
 		FROM attendance_session
-		WHERE status = $1
+		WHERE status = $1 AND session_type = 'attendance'
 	`
 	args := []any{models.SessionStatusActive}
 	if actor != nil && actor.GetTier() < models.TierUnitCommander {

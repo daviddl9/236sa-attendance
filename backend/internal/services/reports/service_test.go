@@ -292,3 +292,97 @@ func rowIDs(rows []UserRow) []string {
 }
 
 func stringPtr(value string) *string { return &value }
+
+// Roster underpins the session exports: present users keep the order they were
+// marked in, and absentees follow so an export can include them.
+func TestRosterReturnsPresentAndAbsent(t *testing.T) {
+	db, prefix := openReportsServiceDB(t)
+	creator := prefix + "-creator"
+	seedReportUser(t, db, creator, "Creator", "SSG", models.BatteryAlpha, false)
+
+	present := prefix + "-present"
+	absent := prefix + "-absent"
+	otherBattery := prefix + "-bravo"
+	seedReportUser(t, db, present, "Zulu Present", "PTE", models.BatteryAlpha, false)
+	seedReportUser(t, db, absent, "Alpha Absent", "CPL", models.BatteryAlpha, false)
+	seedReportUser(t, db, otherBattery, "Bravo Absent", "LCP", models.BatteryBravo, false)
+
+	session := prefix + "-session"
+	seedReportSession(t, db, session, models.SessionScopeUnitWide, nil, creator)
+	seedReportRecord(t, db, session, present, models.MarkingMethodQRScan, "")
+
+	svc := NewService(db)
+	actor := &models.User{ID: creator, IsSuperadmin: true}
+	entries, err := svc.Roster(context.Background(), session, actor)
+	if err != nil {
+		t.Fatalf("Roster: %v", err)
+	}
+
+	byID := make(map[string]RosterEntry, len(entries))
+	for _, e := range entries {
+		byID[e.ID] = e
+	}
+	if got, ok := byID[present]; !ok || !got.Present {
+		t.Fatalf("present user missing or not marked present: %+v", got)
+	}
+	if byID[present].MarkedAt == nil {
+		t.Fatal("present user has no marked_at")
+	}
+	if byID[present].MarkingMethod != models.MarkingMethodQRScan {
+		t.Fatalf("marking method = %q; want qr_scan", byID[present].MarkingMethod)
+	}
+	for _, id := range []string{absent, otherBattery} {
+		e, ok := byID[id]
+		if !ok {
+			t.Fatalf("absent user %s missing from roster", id)
+		}
+		if e.Present || e.MarkedAt != nil {
+			t.Fatalf("user %s should be absent: %+v", id, e)
+		}
+	}
+
+	// Present entries sort ahead of absentees so an export reads present-first.
+	if !entries[0].Present {
+		t.Fatalf("first entry is not present: %+v", entries[0])
+	}
+	for i := 1; i < len(entries); i++ {
+		if entries[i-1].Present == false && entries[i].Present {
+			t.Fatal("a present entry follows an absent one; ordering is wrong")
+		}
+	}
+}
+
+// A battery-specific session must not leak personnel from other batteries into
+// the absent list.
+func TestRosterHonoursBatteryScope(t *testing.T) {
+	db, prefix := openReportsServiceDB(t)
+	creator := prefix + "-creator"
+	seedReportUser(t, db, creator, "Creator", "SSG", models.BatteryAlpha, false)
+	inScope := prefix + "-alpha"
+	outOfScope := prefix + "-bravo"
+	seedReportUser(t, db, inScope, "Alpha Soldier", "PTE", models.BatteryAlpha, false)
+	seedReportUser(t, db, outOfScope, "Bravo Soldier", "PTE", models.BatteryBravo, false)
+
+	session := prefix + "-session"
+	seedReportSession(t, db, session, models.SessionScopeBatterySpecific, []string{models.BatteryAlpha}, creator)
+
+	entries, err := NewService(db).Roster(context.Background(), session,
+		&models.User{ID: creator, IsSuperadmin: true})
+	if err != nil {
+		t.Fatalf("Roster: %v", err)
+	}
+	for _, e := range entries {
+		if e.ID == outOfScope {
+			t.Fatal("a Bravo soldier appeared in an Alpha-only session roster")
+		}
+	}
+	found := false
+	for _, e := range entries {
+		if e.ID == inScope {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the in-scope Alpha soldier is missing from the roster")
+	}
+}

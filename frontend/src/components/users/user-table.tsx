@@ -10,7 +10,7 @@ import {
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { Link } from '@tanstack/react-router';
-import { Pencil, Trash2, UserCheck, UserX } from 'lucide-react';
+import { Pencil, Trash2, UserCheck, UserPlus, UserX } from 'lucide-react';
 import type { UserInfo, UserProfile } from '../../lib/api-client';
 import { StatusBadge } from '../status-badge';
 
@@ -21,6 +21,11 @@ interface UserTableProps {
   onDelete?: (userId: string) => void;
   onMark?: (userId: string) => void;
   markingUserId?: string;
+  // The row action is reused for two different jobs: marking attendance and
+  // adding someone to a group. The wording and icon follow the caller so the
+  // button says what it actually does.
+  markLabel?: string;
+  markIcon?: 'check' | 'plus';
   onUnmark?: (userId: string) => void;
   unmarkingUserId?: string;
   // Selection support (feature 004). When `selectable` is true, a leading
@@ -44,6 +49,8 @@ export function UserTable({
   onDelete,
   onMark,
   markingUserId,
+  markLabel = 'Mark',
+  markIcon = 'check',
   onUnmark,
   unmarkingUserId,
   selectable = false,
@@ -230,10 +237,15 @@ export function UserTable({
                       className="h-8 px-2"
                       onClick={() => onMark(user.id)}
                       disabled={markingUserId === user.id}
+                      aria-label={`${markLabel} ${user.fullName ?? 'user'}`}
                     >
-                      <UserCheck className="h-4 w-4 sm:mr-1" />
+                      {markIcon === 'plus' ? (
+                        <UserPlus className="h-4 w-4 sm:mr-1" />
+                      ) : (
+                        <UserCheck className="h-4 w-4 sm:mr-1" />
+                      )}
                       <span className="hidden sm:inline">
-                        {markingUserId === user.id ? '...' : 'Mark'}
+                        {markingUserId === user.id ? '...' : markLabel}
                       </span>
                     </Button>
                   </TableCell>

@@ -139,12 +139,20 @@ func loadSession(ctx context.Context, tx pgx.Tx, sessionID string) (string, stri
 	var status, scope string
 	var batteries []string
 	var endTime *time.Time
+	var sessionType string
 	err := tx.QueryRow(ctx, `
-		SELECT status, scope, batteries, end_time
+		SELECT status, scope, batteries, end_time, session_type
 		FROM attendance_session
 		WHERE id = $1
 		FOR UPDATE
-	`, sessionID).Scan(&status, &scope, &batteries, &endTime)
+	`, sessionID).Scan(&status, &scope, &batteries, &endTime, &sessionType)
+	if err == nil && sessionType != models.SessionTypeAttendance {
+		// Out sessions keep their own append-only movement log and must never
+		// accept an attendance record. Reporting them as closed keeps the
+		// public MarkOutcome contract intact for every scanner and Telegram
+		// caller without adding an outcome they would have to handle.
+		return models.SessionStatusClosed, scope, batteries, nil
+	}
 	if err == nil && status == models.SessionStatusActive && sessionservice.IsExpired(endTime, time.Now()) {
 		// Keep the public MarkOutcome contract: expiry is an unavailable/closed
 		// session for all existing scanner and Telegram callers.

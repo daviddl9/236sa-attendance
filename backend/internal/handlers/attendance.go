@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -47,13 +48,32 @@ func (h *AttendanceHandler) HandleQRScan(w http.ResponseWriter, r *http.Request)
 
 	// Verify the session exists and authorize the QR secret. The attendance
 	// service owns the session-validity decision below.
-	var qrSecret string
+	var qrSecret, sessionType string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code_secret FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrSecret)
+		SELECT qr_code_secret, session_type FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret, &sessionType)
 
 	if err != nil {
 		http.Error(w, "Invalid session", http.StatusNotFound)
+		return
+	}
+
+	// Out sessions have their own flow: hand the secret over in a short-lived
+	// cookie and send the scanner to the confirm screen. The secret never
+	// enters a URL, so it stays out of browser history, Referer headers and
+	// the request log.
+	if sessionType == models.SessionTypeOut {
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(qrSecret)) != 1 {
+			http.Error(w, "Invalid QR code", http.StatusUnauthorized)
+			return
+		}
+		SetOutScanCookie(w, sessionID, secret)
+		http.Redirect(w, r, fmt.Sprintf("%s/out/%s",
+			getEnv("FRONTEND_URL", "http://localhost:5173"), sessionID), http.StatusFound)
+		return
+	}
+	if sessionType != models.SessionTypeAttendance {
+		http.Error(w, "Unsupported session type", http.StatusBadRequest)
 		return
 	}
 
@@ -195,13 +215,20 @@ func (h *AttendanceHandler) MarkAttendance(w http.ResponseWriter, r *http.Reques
 
 	// Verify the session exists and authorize the QR secret. The attendance
 	// service owns the session-validity decision below.
-	var qrSecret string
+	var qrSecret, sessionType string
 	err := h.db.Pool.QueryRow(ctx, `
-		SELECT qr_code_secret FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&qrSecret)
+		SELECT qr_code_secret, session_type FROM attendance_session WHERE id = $1
+	`, sessionID).Scan(&qrSecret, &sessionType)
 
 	if err != nil {
 		http.Error(w, "Invalid session", http.StatusNotFound)
+		return
+	}
+
+	// The scan-to-mark endpoint only serves ordinary attendance; Out sessions
+	// are recorded through their own movement endpoints.
+	if sessionType != models.SessionTypeAttendance {
+		http.Error(w, "This QR code belongs to an Out session", http.StatusBadRequest)
 		return
 	}
 

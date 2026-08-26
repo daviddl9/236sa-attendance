@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/database"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
@@ -255,6 +256,92 @@ func (s *Service) Extras(ctx context.Context, sessionID string, actor *models.Us
 		return nil, fmt.Errorf("iterate walk-in attendance users: %w", err)
 	}
 	return users, nil
+}
+
+// RosterEntry is one person listed against a session together with their
+// attendance status. Absent users carry a nil MarkedAt; WalkIn marks someone
+// who attended without being on the session's roster.
+type RosterEntry struct {
+	UserRow
+	Present       bool
+	MarkedAt      *time.Time
+	MarkingMethod string
+	WalkIn        bool
+}
+
+// Roster returns everyone who appears against a session: the scoped roster
+// with each person's attendance status, plus walk-ins who marked without
+// being on it. Present entries come first in the order they were marked and
+// absentees follow by name, which is the order the exports render.
+//
+// It shares scopedRoster with Missing and EligibleUsers so the scope,
+// verification and battery rules stay in one place, and applies the same
+// battery restriction to walk-ins that Extras does.
+func (s *Service) Roster(ctx context.Context, sessionID string, actor *models.User) ([]RosterEntry, error) {
+	if s == nil || s.db == nil || s.db.Pool == nil {
+		return nil, errors.New("report service is not configured")
+	}
+	_, rosterSQL, args, err := s.scopedRosterWith(ctx, s.db.Pool, sessionID, actor)
+	if err != nil {
+		return nil, err
+	}
+
+	attendanceArg := len(args) + 1
+	args = appendCopy(args, sessionID)
+
+	walkInWhere := fmt.Sprintf(`m.session_id = $%d AND mu.verified = true`, attendanceArg)
+	if restricted, battery := restrictedBattery(actor); restricted {
+		if battery == "" {
+			walkInWhere += " AND false"
+		} else {
+			walkInWhere += fmt.Sprintf(" AND mu.battery = $%d", len(args)+1)
+			args = appendCopy(args, battery)
+		}
+	}
+
+	rows, err := s.db.Pool.Query(ctx, fmt.Sprintf(`
+		WITH eligible AS (%s)
+		SELECT user_id, user_name, user_rank, user_battery, marked_at, marking_method, walk_in
+		FROM (
+			SELECT e.user_id, e.user_name, e.user_rank, e.user_battery,
+			       ar.marked_at, COALESCE(ar.marking_method, '') AS marking_method,
+			       false AS walk_in
+			FROM eligible e
+			LEFT JOIN attendance_record ar
+			       ON ar.session_id = $%d AND ar.user_id = e.user_id
+			UNION ALL
+			SELECT m.user_id,
+			       COALESCE(mu."full_name", '') AS user_name,
+			       COALESCE(mu.rank, '') AS user_rank,
+			       COALESCE(mu.battery, '') AS user_battery,
+			       m.marked_at, COALESCE(m.marking_method, '') AS marking_method,
+			       true AS walk_in
+			FROM attendance_record m
+			JOIN "user" mu ON mu.id = m.user_id
+			WHERE %s
+			  AND m.user_id NOT IN (SELECT user_id FROM eligible)
+		) AS combined
+		ORDER BY (marked_at IS NULL), marked_at, lower(user_name), user_id
+	`, rosterSQL, attendanceArg, walkInWhere), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list session roster: %w", err)
+	}
+	defer rows.Close()
+
+	entries := make([]RosterEntry, 0)
+	for rows.Next() {
+		var e RosterEntry
+		if err := rows.Scan(&e.ID, &e.Name, &e.Rank, &e.Battery,
+			&e.MarkedAt, &e.MarkingMethod, &e.WalkIn); err != nil {
+			return nil, fmt.Errorf("scan session roster row: %w", err)
+		}
+		e.Present = e.MarkedAt != nil
+		entries = append(entries, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session roster: %w", err)
+	}
+	return entries, nil
 }
 
 // Missing returns an authorized, name-searchable page. Telegram callers use

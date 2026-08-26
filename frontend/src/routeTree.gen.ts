@@ -16,12 +16,14 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard/index'
 import { Route as QrTokenRouteImport } from './routes/qr/$token'
+import { Route as OutSessionIdRouteImport } from './routes/out/$sessionId'
 import { Route as DashboardSettingsRouteImport } from './routes/dashboard/settings'
 import { Route as AttendanceMarkedRouteImport } from './routes/attendance/marked'
 import { Route as DashboardUsersIndexRouteImport } from './routes/dashboard/users/index'
 import { Route as DashboardStatusesIndexRouteImport } from './routes/dashboard/statuses/index'
 import { Route as DashboardSessionsIndexRouteImport } from './routes/dashboard/sessions/index'
 import { Route as DashboardReportsIndexRouteImport } from './routes/dashboard/reports/index'
+import { Route as DashboardOutIndexRouteImport } from './routes/dashboard/out/index'
 import { Route as DashboardGroupsIndexRouteImport } from './routes/dashboard/groups/index'
 import { Route as DashboardUsersImportDocumentRouteImport } from './routes/dashboard/users/import-document'
 import { Route as DashboardUsersBulkUploadRouteImport } from './routes/dashboard/users/bulk-upload'
@@ -29,6 +31,8 @@ import { Route as DashboardUsersUserIdRouteImport } from './routes/dashboard/use
 import { Route as DashboardSessionsCreateRouteImport } from './routes/dashboard/sessions/create'
 import { Route as DashboardSessionsSessionIdRouteImport } from './routes/dashboard/sessions/$sessionId'
 import { Route as DashboardReportsBatteriesRouteImport } from './routes/dashboard/reports/batteries'
+import { Route as DashboardOutCreateRouteImport } from './routes/dashboard/out/create'
+import { Route as DashboardOutSessionIdRouteImport } from './routes/dashboard/out/$sessionId'
 import { Route as DashboardAttendanceScanRouteImport } from './routes/dashboard/attendance/scan'
 import { Route as DashboardAdminTelegramPairingsRouteImport } from './routes/dashboard/admin/telegram-pairings'
 import { Route as DashboardAdminRegistrationsIndexRouteImport } from './routes/dashboard/admin/registrations/index'
@@ -69,6 +73,11 @@ const QrTokenRoute = QrTokenRouteImport.update({
   path: '/qr/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OutSessionIdRoute = OutSessionIdRouteImport.update({
+  id: '/out/$sessionId',
+  path: '/out/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardSettingsRoute = DashboardSettingsRouteImport.update({
   id: '/dashboard/settings',
   path: '/dashboard/settings',
@@ -97,6 +106,11 @@ const DashboardSessionsIndexRoute = DashboardSessionsIndexRouteImport.update({
 const DashboardReportsIndexRoute = DashboardReportsIndexRouteImport.update({
   id: '/dashboard/reports/',
   path: '/dashboard/reports/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardOutIndexRoute = DashboardOutIndexRouteImport.update({
+  id: '/dashboard/out/',
+  path: '/dashboard/out/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardGroupsIndexRoute = DashboardGroupsIndexRouteImport.update({
@@ -138,6 +152,16 @@ const DashboardReportsBatteriesRoute =
     path: '/dashboard/reports/batteries',
     getParentRoute: () => rootRouteImport,
   } as any)
+const DashboardOutCreateRoute = DashboardOutCreateRouteImport.update({
+  id: '/dashboard/out/create',
+  path: '/dashboard/out/create',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardOutSessionIdRoute = DashboardOutSessionIdRouteImport.update({
+  id: '/dashboard/out/$sessionId',
+  path: '/dashboard/out/$sessionId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardAttendanceScanRoute = DashboardAttendanceScanRouteImport.update({
   id: '/dashboard/attendance/scan',
   path: '/dashboard/attendance/scan',
@@ -170,10 +194,13 @@ export interface FileRoutesByFullPath {
   '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/out/$sessionId': typeof OutSessionIdRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
   '/dashboard/admin/telegram-pairings': typeof DashboardAdminTelegramPairingsRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
+  '/dashboard/out/$sessionId': typeof DashboardOutSessionIdRoute
+  '/dashboard/out/create': typeof DashboardOutCreateRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
   '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
   '/dashboard/sessions/create': typeof DashboardSessionsCreateRoute
@@ -181,6 +208,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
   '/dashboard/users/import-document': typeof DashboardUsersImportDocumentRoute
   '/dashboard/groups': typeof DashboardGroupsIndexRoute
+  '/dashboard/out': typeof DashboardOutIndexRoute
   '/dashboard/reports': typeof DashboardReportsIndexRoute
   '/dashboard/sessions': typeof DashboardSessionsIndexRoute
   '/dashboard/statuses': typeof DashboardStatusesIndexRoute
@@ -196,10 +224,13 @@ export interface FileRoutesByTo {
   '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/out/$sessionId': typeof OutSessionIdRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard': typeof DashboardIndexRoute
   '/dashboard/admin/telegram-pairings': typeof DashboardAdminTelegramPairingsRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
+  '/dashboard/out/$sessionId': typeof DashboardOutSessionIdRoute
+  '/dashboard/out/create': typeof DashboardOutCreateRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
   '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
   '/dashboard/sessions/create': typeof DashboardSessionsCreateRoute
@@ -207,6 +238,7 @@ export interface FileRoutesByTo {
   '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
   '/dashboard/users/import-document': typeof DashboardUsersImportDocumentRoute
   '/dashboard/groups': typeof DashboardGroupsIndexRoute
+  '/dashboard/out': typeof DashboardOutIndexRoute
   '/dashboard/reports': typeof DashboardReportsIndexRoute
   '/dashboard/sessions': typeof DashboardSessionsIndexRoute
   '/dashboard/statuses': typeof DashboardStatusesIndexRoute
@@ -223,10 +255,13 @@ export interface FileRoutesById {
   '/terms': typeof TermsRoute
   '/attendance/marked': typeof AttendanceMarkedRoute
   '/dashboard/settings': typeof DashboardSettingsRoute
+  '/out/$sessionId': typeof OutSessionIdRoute
   '/qr/$token': typeof QrTokenRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/dashboard/admin/telegram-pairings': typeof DashboardAdminTelegramPairingsRoute
   '/dashboard/attendance/scan': typeof DashboardAttendanceScanRoute
+  '/dashboard/out/$sessionId': typeof DashboardOutSessionIdRoute
+  '/dashboard/out/create': typeof DashboardOutCreateRoute
   '/dashboard/reports/batteries': typeof DashboardReportsBatteriesRoute
   '/dashboard/sessions/$sessionId': typeof DashboardSessionsSessionIdRoute
   '/dashboard/sessions/create': typeof DashboardSessionsCreateRoute
@@ -234,6 +269,7 @@ export interface FileRoutesById {
   '/dashboard/users/bulk-upload': typeof DashboardUsersBulkUploadRoute
   '/dashboard/users/import-document': typeof DashboardUsersImportDocumentRoute
   '/dashboard/groups/': typeof DashboardGroupsIndexRoute
+  '/dashboard/out/': typeof DashboardOutIndexRoute
   '/dashboard/reports/': typeof DashboardReportsIndexRoute
   '/dashboard/sessions/': typeof DashboardSessionsIndexRoute
   '/dashboard/statuses/': typeof DashboardStatusesIndexRoute
@@ -251,10 +287,13 @@ export interface FileRouteTypes {
     | '/terms'
     | '/attendance/marked'
     | '/dashboard/settings'
+    | '/out/$sessionId'
     | '/qr/$token'
     | '/dashboard'
     | '/dashboard/admin/telegram-pairings'
     | '/dashboard/attendance/scan'
+    | '/dashboard/out/$sessionId'
+    | '/dashboard/out/create'
     | '/dashboard/reports/batteries'
     | '/dashboard/sessions/$sessionId'
     | '/dashboard/sessions/create'
@@ -262,6 +301,7 @@ export interface FileRouteTypes {
     | '/dashboard/users/bulk-upload'
     | '/dashboard/users/import-document'
     | '/dashboard/groups'
+    | '/dashboard/out'
     | '/dashboard/reports'
     | '/dashboard/sessions'
     | '/dashboard/statuses'
@@ -277,10 +317,13 @@ export interface FileRouteTypes {
     | '/terms'
     | '/attendance/marked'
     | '/dashboard/settings'
+    | '/out/$sessionId'
     | '/qr/$token'
     | '/dashboard'
     | '/dashboard/admin/telegram-pairings'
     | '/dashboard/attendance/scan'
+    | '/dashboard/out/$sessionId'
+    | '/dashboard/out/create'
     | '/dashboard/reports/batteries'
     | '/dashboard/sessions/$sessionId'
     | '/dashboard/sessions/create'
@@ -288,6 +331,7 @@ export interface FileRouteTypes {
     | '/dashboard/users/bulk-upload'
     | '/dashboard/users/import-document'
     | '/dashboard/groups'
+    | '/dashboard/out'
     | '/dashboard/reports'
     | '/dashboard/sessions'
     | '/dashboard/statuses'
@@ -303,10 +347,13 @@ export interface FileRouteTypes {
     | '/terms'
     | '/attendance/marked'
     | '/dashboard/settings'
+    | '/out/$sessionId'
     | '/qr/$token'
     | '/dashboard/'
     | '/dashboard/admin/telegram-pairings'
     | '/dashboard/attendance/scan'
+    | '/dashboard/out/$sessionId'
+    | '/dashboard/out/create'
     | '/dashboard/reports/batteries'
     | '/dashboard/sessions/$sessionId'
     | '/dashboard/sessions/create'
@@ -314,6 +361,7 @@ export interface FileRouteTypes {
     | '/dashboard/users/bulk-upload'
     | '/dashboard/users/import-document'
     | '/dashboard/groups/'
+    | '/dashboard/out/'
     | '/dashboard/reports/'
     | '/dashboard/sessions/'
     | '/dashboard/statuses/'
@@ -330,10 +378,13 @@ export interface RootRouteChildren {
   TermsRoute: typeof TermsRoute
   AttendanceMarkedRoute: typeof AttendanceMarkedRoute
   DashboardSettingsRoute: typeof DashboardSettingsRoute
+  OutSessionIdRoute: typeof OutSessionIdRoute
   QrTokenRoute: typeof QrTokenRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
   DashboardAdminTelegramPairingsRoute: typeof DashboardAdminTelegramPairingsRoute
   DashboardAttendanceScanRoute: typeof DashboardAttendanceScanRoute
+  DashboardOutSessionIdRoute: typeof DashboardOutSessionIdRoute
+  DashboardOutCreateRoute: typeof DashboardOutCreateRoute
   DashboardReportsBatteriesRoute: typeof DashboardReportsBatteriesRoute
   DashboardSessionsSessionIdRoute: typeof DashboardSessionsSessionIdRoute
   DashboardSessionsCreateRoute: typeof DashboardSessionsCreateRoute
@@ -341,6 +392,7 @@ export interface RootRouteChildren {
   DashboardUsersBulkUploadRoute: typeof DashboardUsersBulkUploadRoute
   DashboardUsersImportDocumentRoute: typeof DashboardUsersImportDocumentRoute
   DashboardGroupsIndexRoute: typeof DashboardGroupsIndexRoute
+  DashboardOutIndexRoute: typeof DashboardOutIndexRoute
   DashboardReportsIndexRoute: typeof DashboardReportsIndexRoute
   DashboardSessionsIndexRoute: typeof DashboardSessionsIndexRoute
   DashboardStatusesIndexRoute: typeof DashboardStatusesIndexRoute
@@ -400,6 +452,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof QrTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/out/$sessionId': {
+      id: '/out/$sessionId'
+      path: '/out/$sessionId'
+      fullPath: '/out/$sessionId'
+      preLoaderRoute: typeof OutSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/settings': {
       id: '/dashboard/settings'
       path: '/dashboard/settings'
@@ -440,6 +499,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard/reports'
       fullPath: '/dashboard/reports'
       preLoaderRoute: typeof DashboardReportsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/out/': {
+      id: '/dashboard/out/'
+      path: '/dashboard/out'
+      fullPath: '/dashboard/out'
+      preLoaderRoute: typeof DashboardOutIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/groups/': {
@@ -491,6 +557,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardReportsBatteriesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/out/create': {
+      id: '/dashboard/out/create'
+      path: '/dashboard/out/create'
+      fullPath: '/dashboard/out/create'
+      preLoaderRoute: typeof DashboardOutCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard/out/$sessionId': {
+      id: '/dashboard/out/$sessionId'
+      path: '/dashboard/out/$sessionId'
+      fullPath: '/dashboard/out/$sessionId'
+      preLoaderRoute: typeof DashboardOutSessionIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/attendance/scan': {
       id: '/dashboard/attendance/scan'
       path: '/dashboard/attendance/scan'
@@ -530,10 +610,13 @@ const rootRouteChildren: RootRouteChildren = {
   TermsRoute: TermsRoute,
   AttendanceMarkedRoute: AttendanceMarkedRoute,
   DashboardSettingsRoute: DashboardSettingsRoute,
+  OutSessionIdRoute: OutSessionIdRoute,
   QrTokenRoute: QrTokenRoute,
   DashboardIndexRoute: DashboardIndexRoute,
   DashboardAdminTelegramPairingsRoute: DashboardAdminTelegramPairingsRoute,
   DashboardAttendanceScanRoute: DashboardAttendanceScanRoute,
+  DashboardOutSessionIdRoute: DashboardOutSessionIdRoute,
+  DashboardOutCreateRoute: DashboardOutCreateRoute,
   DashboardReportsBatteriesRoute: DashboardReportsBatteriesRoute,
   DashboardSessionsSessionIdRoute: DashboardSessionsSessionIdRoute,
   DashboardSessionsCreateRoute: DashboardSessionsCreateRoute,
@@ -541,6 +624,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardUsersBulkUploadRoute: DashboardUsersBulkUploadRoute,
   DashboardUsersImportDocumentRoute: DashboardUsersImportDocumentRoute,
   DashboardGroupsIndexRoute: DashboardGroupsIndexRoute,
+  DashboardOutIndexRoute: DashboardOutIndexRoute,
   DashboardReportsIndexRoute: DashboardReportsIndexRoute,
   DashboardSessionsIndexRoute: DashboardSessionsIndexRoute,
   DashboardStatusesIndexRoute: DashboardStatusesIndexRoute,

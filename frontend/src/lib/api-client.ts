@@ -22,6 +22,94 @@ export interface User {
   updatedAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// Out sessions — soldiers leaving camp (Nights Out / Stay Out / Off Pass).
+// ---------------------------------------------------------------------------
+
+export type OutSubtype = 'nights_out' | 'stay_out' | 'off_pass';
+export type OutDirection = 'out' | 'in';
+
+export const OUT_SUBTYPE_LABELS: Record<OutSubtype, string> = {
+  nights_out: 'Nights Out',
+  stay_out: 'Stay Out',
+  off_pass: 'Off Pass',
+};
+
+export interface OutSession {
+  id: string;
+  name: string;
+  subtype: OutSubtype;
+  subtypeLabel: string;
+  qrCode?: string;
+  status: 'active' | 'closed';
+  createdBy: string;
+  startTime: string;
+  expectedReturnAt: string;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutMovement {
+  id: string;
+  sessionId: string;
+  userId: string;
+  direction: OutDirection;
+  occurredAt: string;
+  method: string;
+  recordedBy?: string | null;
+}
+
+export interface OutMemberState {
+  userId: string;
+  fullName?: string | null;
+  rank?: string | null;
+  battery?: string | null;
+  direction: OutDirection;
+  occurredAt: string;
+  method: string;
+  overdue: boolean;
+  firstOutAt?: string | null;
+}
+
+export interface OutBoard {
+  session: OutSession;
+  members: OutMemberState[];
+  outCount: number;
+  returnedCount: number;
+  overdueCount: number;
+}
+
+export interface OutSubtypeOption {
+  subtype: OutSubtype;
+  label: string;
+  defaultReturnAt: string;
+}
+
+export interface OutSelfState {
+  session: OutSession;
+  nextDirection: OutDirection;
+  last?: OutMovement | null;
+  scanned: boolean;
+}
+
+export interface CreateOutSessionRequest {
+  name: string;
+  subtype: OutSubtype;
+  expectedReturnAt?: string;
+}
+
+export type RecordOutMovementResponse =
+  | { outcome: 'recorded'; direction: OutDirection; movement: OutMovement }
+  | { outcome: 'duplicate'; direction: OutDirection; message: string; last?: OutMovement };
+
+/** Which lists a session export should contain. Both default to true. */
+export interface ExportOptions {
+  battery?: string;
+  includePresent?: boolean;
+  includeAbsent?: boolean;
+}
+
 export type SignInOutcome = 'authenticated' | 'pending_approval';
 
 export interface SignInAuthenticatedResponse {
@@ -872,38 +960,31 @@ export class APIClient {
   }
 
   // Export endpoints
-  async exportSessionCSV(sessionId: string, battery?: string): Promise<Blob> {
-    let url = `${this.baseURL}/api/sessions/${sessionId}/export/csv`;
-    if (battery) {
-      url += `?battery=${encodeURIComponent(battery)}`;
-    }
-    const response = await fetch(url, {
-      credentials: 'include',
-    });
 
+  private exportUrl(sessionId: string, format: 'csv' | 'excel', options?: ExportOptions): string {
+    const params = new URLSearchParams();
+    if (options?.battery) params.set('battery', options.battery);
+    if (options?.includePresent === false) params.set('includePresent', 'false');
+    if (options?.includeAbsent === false) params.set('includeAbsent', 'false');
+    const query = params.toString();
+    return `${this.baseURL}/api/sessions/${sessionId}/export/${format}${query ? `?${query}` : ''}`;
+  }
+
+  private async fetchExport(url: string): Promise<Blob> {
+    const response = await fetch(url, { credentials: 'include' });
     if (!response.ok) {
       const error = await response.text();
       throw new Error(error || response.statusText);
     }
-
     return response.blob();
   }
 
-  async exportSessionExcel(sessionId: string, battery?: string): Promise<Blob> {
-    let url = `${this.baseURL}/api/sessions/${sessionId}/export/excel`;
-    if (battery) {
-      url += `?battery=${encodeURIComponent(battery)}`;
-    }
-    const response = await fetch(url, {
-      credentials: 'include',
-    });
+  async exportSessionCSV(sessionId: string, options?: ExportOptions): Promise<Blob> {
+    return this.fetchExport(this.exportUrl(sessionId, 'csv', options));
+  }
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(error || response.statusText);
-    }
-
-    return response.blob();
+  async exportSessionExcel(sessionId: string, options?: ExportOptions): Promise<Blob> {
+    return this.fetchExport(this.exportUrl(sessionId, 'excel', options));
   }
 
   // Status endpoints (superadmin only)
@@ -1134,6 +1215,66 @@ export class APIClient {
     return this.request<SessionResponse>(`/api/sessions/${sessionId}/duplicate`, {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  // --- Out sessions ---
+
+  async listOutSubtypes(): Promise<{ subtypes: OutSubtypeOption[] }> {
+    return this.request<{ subtypes: OutSubtypeOption[] }>('/api/sessions/out/subtypes');
+  }
+
+  async listOutSessions(includeClosed = false): Promise<{ sessions: OutSession[] }> {
+    const q = includeClosed ? '?includeClosed=true' : '';
+    return this.request<{ sessions: OutSession[] }>(`/api/sessions/out${q}`);
+  }
+
+  async createOutSession(data: CreateOutSessionRequest): Promise<OutSession> {
+    return this.request<OutSession>('/api/sessions/out', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getOutBoard(sessionId: string): Promise<OutBoard> {
+    return this.request<OutBoard>(`/api/out/sessions/${sessionId}/board`);
+  }
+
+  async getOutSelfState(sessionId: string): Promise<OutSelfState> {
+    return this.request<OutSelfState>(`/api/out/sessions/${sessionId}/me`);
+  }
+
+  async recordOutMovement(
+    sessionId: string,
+    expectedDirection: OutDirection,
+  ): Promise<RecordOutMovementResponse> {
+    return this.request<RecordOutMovementResponse>(`/api/out/sessions/${sessionId}/movement`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedDirection }),
+    });
+  }
+
+  async recordOutMovementManually(
+    sessionId: string,
+    userId: string,
+  ): Promise<RecordOutMovementResponse> {
+    return this.request<RecordOutMovementResponse>(`/api/out/sessions/${sessionId}/manual`, {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  }
+
+  async voidOutMovement(movementId: string, reason?: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>(`/api/out/movements/${movementId}/void`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? '' }),
+    });
+  }
+
+  async closeOutSession(sessionId: string, acknowledgeStillOut = false): Promise<OutBoard> {
+    return this.request<OutBoard>(`/api/sessions/out/${sessionId}/close`, {
+      method: 'PUT',
+      body: JSON.stringify({ acknowledgeStillOut }),
     });
   }
 }

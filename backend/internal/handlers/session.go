@@ -15,10 +15,12 @@ import (
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/middleware"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/models"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/services/deeplink"
+	reportservice "github.com/davidlivingston/go-nextjs-starter/backend/internal/services/reports"
 	sessionservice "github.com/davidlivingston/go-nextjs-starter/backend/internal/services/sessions"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/sse"
 	"github.com/davidlivingston/go-nextjs-starter/backend/internal/telegram"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -26,6 +28,7 @@ type SessionHandler struct {
 	db      *database.DB
 	hub     *sse.Hub
 	service *sessionservice.Service
+	reports *reportservice.Service
 }
 
 func NewSessionHandler(db *database.DB, hub *sse.Hub) *SessionHandler {
@@ -34,6 +37,7 @@ func NewSessionHandler(db *database.DB, hub *sse.Hub) *SessionHandler {
 		db:      db,
 		hub:     hub,
 		service: sessionservice.NewService(db, config.BotUsername),
+		reports: reportservice.NewService(db),
 	}
 }
 
@@ -130,7 +134,7 @@ func (h *SessionHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			status, created_by, start_time, end_time, closed_at, deeplink_code,
 			"createdAt", "updatedAt"
 		FROM attendance_session
-		WHERE 1=1
+		WHERE session_type = 'attendance'
 	`
 	args := []interface{}{}
 	argIndex := 1
@@ -314,102 +318,123 @@ func (h *SessionHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // ExportSessionCSV exports session attendance to CSV
-func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
-	sessionID := chi.URLParam(r, "id")
-	batteryFilter := r.URL.Query().Get("battery")
+// exportSelection reads which lists an export should contain. Both default to
+// true so a request without the parameters returns the whole roster, which is
+// what the dashboard's checkboxes both being ticked means.
+type exportSelection struct {
+	present bool
+	absent  bool
+	battery string
+}
 
-	// Get session name
+func readExportSelection(r *http.Request) exportSelection {
+	boolParam := func(name string) bool {
+		switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get(name))) {
+		case "false", "0", "no":
+			return false
+		default:
+			return true
+		}
+	}
+	return exportSelection{
+		present: boolParam("includePresent"),
+		absent:  boolParam("includeAbsent"),
+		battery: r.URL.Query().Get("battery"),
+	}
+}
+
+// exportRows resolves the rows an export should render: the scoped roster,
+// filtered to the requested lists and battery. Absentees come from the same
+// authorization-aware roster the missing-users report uses, so an export can
+// never reveal anyone the caller could not already see.
+func (h *SessionHandler) exportRows(r *http.Request, sessionID string, sel exportSelection) ([]reportservice.RosterEntry, string, error) {
 	var sessionName string
-	err := h.db.Pool.QueryRow(ctx, `SELECT name FROM attendance_session WHERE id = $1`, sessionID).Scan(&sessionName)
-	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
+	if err := h.db.Pool.QueryRow(r.Context(),
+		`SELECT name FROM attendance_session WHERE id = $1`, sessionID).Scan(&sessionName); err != nil {
+		return nil, "", err
 	}
-
-	// Build query with optional battery filter
-	query := `
-		SELECT
-			u."full_name", u.rank, u.battery,
-			ar.marked_at, ar.marking_method
-		FROM attendance_record ar
-		JOIN "user" u ON u.id = ar.user_id
-		WHERE ar.session_id = $1`
-	args := []interface{}{sessionID}
-
-	if batteryFilter != "" {
-		query += ` AND u.battery = $2`
-		args = append(args, batteryFilter)
-	}
-	query += ` ORDER BY ar.marked_at`
-
-	// Get attendance records with user info
-	rows, err := h.db.Pool.Query(ctx, query, args...)
+	actor, _ := middleware.GetUserFromContext(r.Context())
+	entries, err := h.reports.Roster(r.Context(), sessionID, actor)
 	if err != nil {
+		return nil, sessionName, err
+	}
+	filtered := make([]reportservice.RosterEntry, 0, len(entries))
+	for _, e := range entries {
+		if e.Present && !sel.present {
+			continue
+		}
+		if !e.Present && !sel.absent {
+			continue
+		}
+		if sel.battery != "" && e.Battery != sel.battery {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	return filtered, sessionName, nil
+}
+
+// exportCells renders one roster entry as the shared column layout. Walk-ins
+// are present, and are labelled so a commander reading the file can see they
+// attended without being on the session's roster.
+func exportCells(e reportservice.RosterEntry) []string {
+	status, markedAt := "Absent", ""
+	if e.Present {
+		status = "Present"
+		if e.WalkIn {
+			status = "Present (walk-in)"
+		}
+		if e.MarkedAt != nil {
+			markedAt = e.MarkedAt.Format("2006-01-02 15:04:05")
+		}
+	}
+	return []string{e.Name, e.Rank, e.Battery, status, markedAt, e.MarkingMethod}
+}
+
+var exportHeaders = []string{"Full Name", "Rank", "Battery", "Status", "Marked At", "Method"}
+
+func (h *SessionHandler) ExportSessionCSV(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "id")
+	sel := readExportSelection(r)
+
+	entries, sessionName, err := h.exportRows(r, sessionID, sel)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, reportservice.ErrSessionNotFound) {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "Failed to fetch attendance", http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
 
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s_attendance.csv\"", sessionName))
 	writer := csv.NewWriter(w)
 	defer writer.Flush()
 
-	// Write header
-	if err := writer.Write([]string{"Full Name", "Rank", "Battery", "Status", "Marked At", "Method"}); err != nil {
+	if err := writer.Write(exportHeaders); err != nil {
 		http.Error(w, "Failed to write CSV header", http.StatusInternalServerError)
 		return
 	}
-
-	// Write data
-	for rows.Next() {
-		var fullName, rank, battery *string
-		var markingMethod string
-		var markedAt time.Time
-
-		err := rows.Scan(&fullName, &rank, &battery, &markedAt, &markingMethod)
-		if err != nil {
-			continue
-		}
-
-		fullNameStr := ""
-		if fullName != nil {
-			fullNameStr = *fullName
-		}
-		rankStr := ""
-		if rank != nil {
-			rankStr = *rank
-		}
-		batteryStr := ""
-		if battery != nil {
-			batteryStr = *battery
-		}
-
-		if err := writer.Write([]string{
-			fullNameStr,
-			rankStr,
-			batteryStr,
-			"Present",
-			markedAt.Format("2006-01-02 15:04:05"),
-			markingMethod,
-		}); err != nil {
-			continue
+	for _, e := range entries {
+		if err := writer.Write(exportCells(e)); err != nil {
+			return
 		}
 	}
 }
 
 // ExportSessionExcel exports session attendance to Excel
 func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Request) {
-	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
-	batteryFilter := r.URL.Query().Get("battery")
+	sel := readExportSelection(r)
 
-	// Get session name
-	var sessionName string
-	err := h.db.Pool.QueryRow(ctx, `SELECT name FROM attendance_session WHERE id = $1`, sessionID).Scan(&sessionName)
+	entries, sessionName, err := h.exportRows(r, sessionID, sel)
 	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, reportservice.ErrSessionNotFound) {
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to fetch attendance", http.StatusInternalServerError)
 		return
 	}
 
@@ -430,8 +455,7 @@ func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Set headers
-	headers := []string{"Full Name", "Rank", "Battery", "Status", "Marked At", "Method"}
-	for i, header := range headers {
+	for i, header := range exportHeaders {
 		cell := fmt.Sprintf("%c1", 'A'+i)
 		if err := f.SetCellValue(sheetName, cell, header); err != nil {
 			http.Error(w, "Failed to set Excel header", http.StatusInternalServerError)
@@ -439,73 +463,14 @@ func (h *SessionHandler) ExportSessionExcel(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	// Build query with optional battery filter
-	query := `
-		SELECT
-			u."full_name", u.rank, u.battery,
-			ar.marked_at, ar.marking_method
-		FROM attendance_record ar
-		JOIN "user" u ON u.id = ar.user_id
-		WHERE ar.session_id = $1`
-	args := []interface{}{sessionID}
-
-	if batteryFilter != "" {
-		query += ` AND u.battery = $2`
-		args = append(args, batteryFilter)
-	}
-	query += ` ORDER BY ar.marked_at`
-
-	// Get attendance records
-	rows, err := h.db.Pool.Query(ctx, query, args...)
-	if err != nil {
-		http.Error(w, "Failed to fetch attendance", http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
-	rowNum := 2
-	for rows.Next() {
-		var fullName, rank, battery *string
-		var markingMethod string
-		var markedAt time.Time
-
-		err := rows.Scan(&fullName, &rank, &battery, &markedAt, &markingMethod)
-		if err != nil {
-			continue
+	for rowNum, entry := range entries {
+		for col, value := range exportCells(entry) {
+			cell := fmt.Sprintf("%c%d", 'A'+col, rowNum+2)
+			if err := f.SetCellValue(sheetName, cell, value); err != nil {
+				http.Error(w, "Failed to write Excel row", http.StatusInternalServerError)
+				return
+			}
 		}
-
-		fullNameStr := ""
-		if fullName != nil {
-			fullNameStr = *fullName
-		}
-		rankStr := ""
-		if rank != nil {
-			rankStr = *rank
-		}
-		batteryStr := ""
-		if battery != nil {
-			batteryStr = *battery
-		}
-
-		if err := f.SetCellValue(sheetName, fmt.Sprintf("A%d", rowNum), fullNameStr); err != nil {
-			continue
-		}
-		if err := f.SetCellValue(sheetName, fmt.Sprintf("B%d", rowNum), rankStr); err != nil {
-			continue
-		}
-		if err := f.SetCellValue(sheetName, fmt.Sprintf("C%d", rowNum), batteryStr); err != nil {
-			continue
-		}
-		if err := f.SetCellValue(sheetName, fmt.Sprintf("D%d", rowNum), "Present"); err != nil {
-			continue
-		}
-		if err := f.SetCellValue(sheetName, fmt.Sprintf("E%d", rowNum), markedAt.Format("2006-01-02 15:04:05")); err != nil {
-			continue
-		}
-		if err := f.SetCellValue(sheetName, fmt.Sprintf("F%d", rowNum), markingMethod); err != nil {
-			continue
-		}
-		rowNum++
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

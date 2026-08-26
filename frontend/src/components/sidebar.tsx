@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { Users, Calendar, ScanLine, BarChart3, Clock, UserCheck, Link2 } from "lucide-react";
+import { Users, Calendar, ScanLine, BarChart3, Clock, UserCheck, Link2, DoorOpen } from "lucide-react";
 import { useAuth } from "../lib/auth-context";
 import { canManageUnit, isSuperadmin, getUserTier } from "../lib/user-utils";
 import { useQuery } from "@tanstack/react-query";
@@ -31,6 +31,12 @@ const navItems: NavItem[] = [
     label: "Scan QR",
     href: "/dashboard/attendance/scan",
     icon: ScanLine,
+  },
+  {
+    label: "Out",
+    href: "/dashboard/out",
+    icon: DoorOpen,
+    minTier: 2,
   },
   {
     label: "Users",

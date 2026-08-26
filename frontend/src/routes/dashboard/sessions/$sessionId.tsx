@@ -309,12 +309,23 @@ function SessionDetailPage() {
   };
 
   const handleExport = async (format: 'csv' | 'excel') => {
+    // The Include present / Include absent checkboxes govern the file exports
+    // as well as the copied text; unticking both would produce an empty file.
+    if (!includeAbsentList && !includePresentList) {
+      toast.error('Please select at least one list to include');
+      return;
+    }
     try {
       const battery = exportTab === 'All' ? undefined : exportTab;
+      const options = {
+        battery,
+        includePresent: includePresentList,
+        includeAbsent: includeAbsentList,
+      };
       const blob =
         format === 'csv'
-          ? await apiClient.exportSessionCSV(sessionId, battery)
-          : await apiClient.exportSessionExcel(sessionId, battery);
+          ? await apiClient.exportSessionCSV(sessionId, options)
+          : await apiClient.exportSessionExcel(sessionId, options);
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

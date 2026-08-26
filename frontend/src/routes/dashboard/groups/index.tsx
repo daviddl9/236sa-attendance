@@ -632,6 +632,8 @@ function GroupsPage() {
                   emptyMessage="No matching users"
                   onMark={handleAddOne}
                   markingUserId={addingUserId ?? undefined}
+                  markLabel="Add"
+                  markIcon="plus"
                 />
               </div>
             )}

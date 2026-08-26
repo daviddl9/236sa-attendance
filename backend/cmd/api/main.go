@@ -174,6 +174,7 @@ func main() {
 				// Session routes
 				sessionHandler := handlers.NewSessionHandler(db, sseHub)
 				groupHandler := handlers.NewGroupHandler(db)
+				outHandler := handlers.NewOutHandler(db, sseHub)
 				r.Route("/sessions", func(r chi.Router) {
 					// List/active: Tier 2+
 					r.With(middleware.RequireBatteryNCO(db)).Get("/", sessionHandler.ListSessions)
@@ -200,6 +201,27 @@ func main() {
 
 					// Delete: superadmin only
 					r.With(middleware.RequireSuperadmin(db)).Delete("/{id}", sessionHandler.DeleteSession)
+					// Out sessions (Nights Out / Stay Out / Off Pass). No roster:
+					// soldiers enrol themselves by scanning at the gate.
+					// Creation sits with the other creation flows at Tier 2+;
+					// closing matches the Tier 3+ close above.
+					r.With(middleware.RequireBatteryNCO(db)).Get("/out", outHandler.ListOutSessions)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/out/subtypes", outHandler.ListOutSubtypes)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/out", outHandler.CreateOutSession)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/out/{id}", outHandler.GetOutSession)
+					r.With(middleware.RequireUnitCommander(db)).Put("/out/{id}/close", outHandler.CloseOutSession)
+				})
+
+				// Out movements. The two soldier-facing routes are open to any
+				// authenticated roster member — self-enrolment is the point —
+				// and are additionally gated on presenting the session's QR
+				// secret. Board and corrections are Tier 2+.
+				r.Route("/out", func(r chi.Router) {
+					r.Get("/sessions/{id}/me", outHandler.GetOutSelfState)
+					r.Post("/sessions/{id}/movement", outHandler.RecordOutMovement)
+					r.With(middleware.RequireBatteryNCO(db)).Get("/sessions/{id}/board", outHandler.GetOutBoard)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/sessions/{id}/manual", outHandler.ManualOutMovement)
+					r.With(middleware.RequireBatteryNCO(db)).Post("/movements/{movementId}/void", outHandler.VoidOutMovement)
 				})
 
 				// Reusable participant groups: Tier 2+ (all commanders)

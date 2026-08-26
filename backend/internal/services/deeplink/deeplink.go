@@ -39,12 +39,24 @@ func BackfillActiveSessionCodes(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return fmt.Errorf("database is nil")
 	}
-	columnExists, err := deeplinkColumnExists(ctx, db)
+	columnExists, err := sessionColumnExists(ctx, db, "deeplink_code")
 	if err != nil {
 		return fmt.Errorf("check deeplink column: %w", err)
 	}
 	if !columnExists {
 		return nil
+	}
+
+	// Out sessions run their own scan flow and must never be handed a Telegram
+	// deep-link code. The predicate is omitted when the column is not present
+	// yet, which is the same tolerance the deeplink_code probe above provides.
+	hasSessionType, err := sessionColumnExists(ctx, db, "session_type")
+	if err != nil {
+		return fmt.Errorf("check session_type column: %w", err)
+	}
+	typeFilter := ""
+	if hasSessionType {
+		typeFilter = " AND session_type = 'attendance'"
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -56,7 +68,7 @@ func BackfillActiveSessionCodes(ctx context.Context, db *sql.DB) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id
 		FROM attendance_session
-		WHERE status = 'active' AND deeplink_code IS NULL
+		WHERE status = 'active' AND deeplink_code IS NULL`+typeFilter+`
 		FOR UPDATE
 	`)
 	if err != nil {
@@ -87,7 +99,7 @@ func BackfillActiveSessionCodes(ctx context.Context, db *sql.DB) error {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE attendance_session
 			SET deeplink_code = $1
-			WHERE id = $2 AND status = 'active' AND deeplink_code IS NULL
+			WHERE id = $2 AND status = 'active' AND deeplink_code IS NULL`+typeFilter+`
 		`, code, sessionID); err != nil {
 			return fmt.Errorf("write deeplink code for session %s: %w", sessionID, err)
 		}
@@ -98,7 +110,11 @@ func BackfillActiveSessionCodes(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func deeplinkColumnExists(ctx context.Context, db *sql.DB) (bool, error) {
+// sessionColumnExists reports whether attendance_session currently has the
+// named column. The backfill runs immediately after migrations and must
+// tolerate a schema that has not caught up yet, so every optional column it
+// depends on is probed rather than assumed.
+func sessionColumnExists(ctx context.Context, db *sql.DB, column string) (bool, error) {
 	var exists bool
 	err := db.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -106,8 +122,8 @@ func deeplinkColumnExists(ctx context.Context, db *sql.DB) (bool, error) {
 			FROM information_schema.columns
 			WHERE table_schema = current_schema()
 			  AND table_name = 'attendance_session'
-			  AND column_name = 'deeplink_code'
+			  AND column_name = $1
 		)
-	`).Scan(&exists)
+	`, column).Scan(&exists)
 	return exists, err
 }
