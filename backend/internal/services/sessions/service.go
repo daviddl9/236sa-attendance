@@ -436,7 +436,7 @@ func (s *Service) Get(ctx context.Context, sessionID string) (models.AttendanceS
 		       status, created_by, start_time, end_time, closed_at, deeplink_code,
 		       "createdAt", "updatedAt"
 		FROM attendance_session
-		WHERE id = $1
+		WHERE id = $1 AND session_type = 'attendance'
 	`, sessionID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

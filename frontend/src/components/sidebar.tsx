@@ -1,62 +1,14 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import UserProfile from "./dashboard/user-profile";
 import clsx from "clsx";
-import { Users, Calendar, ScanLine, BarChart3, Clock, UserCheck, Link2, DoorOpen } from "lucide-react";
+import { UserCheck, Link2 } from "lucide-react";
+import { navItems } from "../lib/nav-items";
 import { useAuth } from "../lib/auth-context";
 import { canManageUnit, isSuperadmin, getUserTier } from "../lib/user-utils";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/api-client";
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  minTier?: number;
-}
 
-const navItems: NavItem[] = [
-  {
-    label: "Sessions",
-    href: "/dashboard/sessions",
-    icon: Calendar,
-    minTier: 2,
-  },
-  {
-    label: "Groups",
-    href: "/dashboard/groups",
-    icon: Users,
-    minTier: 2,
-  },
-  {
-    label: "Scan QR",
-    href: "/dashboard/attendance/scan",
-    icon: ScanLine,
-  },
-  {
-    label: "Out",
-    href: "/dashboard/out",
-    icon: DoorOpen,
-    minTier: 2,
-  },
-  {
-    label: "Users",
-    href: "/dashboard/users",
-    icon: Users,
-    minTier: 2,
-  },
-  {
-    label: "Statuses",
-    href: "/dashboard/statuses",
-    icon: Clock,
-    minTier: 3,
-  },
-  {
-    label: "Reports",
-    href: "/dashboard/reports",
-    icon: BarChart3,
-    minTier: 2,
-  },
-];
 
 export default function Sidebar() {
   const location = useLocation();

@@ -33,6 +33,20 @@ function errorMessageForStatus(status: number): string {
   }
 }
 
+// The backend redirects an Out-session scan to the Out confirm screen, but a
+// fetch with redirect:'manual' hides the Location header, so the destination
+// has to be established separately. /me answers for any authenticated user —
+// 200 for an Out session, 404 for an ordinary one — where the Out board and
+// session endpoints would 403 a soldier.
+async function scanDestination(sessionId: string): Promise<string> {
+  try {
+    await apiClient.getOutSelfState(sessionId);
+    return `/out/${sessionId}`;
+  } catch {
+    return `/dashboard/sessions/${sessionId}?scanned=true`;
+  }
+}
+
 function QRScanPage() {
   const { token } = Route.useParams();
   const navigate = useNavigate();
@@ -81,9 +95,7 @@ function QRScanPage() {
 
         // Handle opaque redirects (CORS) - backend returned a redirect
         if (response.type === 'opaqueredirect') {
-          // Attendance marked (or already marked) - land on the session page
-          // with the confirmation modal, matching the in-app camera scan flow.
-          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
+          window.location.href = await scanDestination(sessionId);
           return;
         }
 
@@ -111,7 +123,7 @@ function QRScanPage() {
 
         // If successful (shouldn't happen, backend always redirects)
         if (response.ok) {
-          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
+          window.location.href = await scanDestination(sessionId);
           return;
         }
 

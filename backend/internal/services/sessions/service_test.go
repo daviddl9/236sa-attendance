@@ -291,3 +291,41 @@ func sameStrings(got, want []string) bool {
 	}
 	return true
 }
+
+// An Out session must not resolve through the attendance session endpoint.
+// It has its own board; rendering it as an attendance session showed the
+// whole unit as its roster and offered attendance actions that do not apply.
+func TestGetRejectsOutSession(t *testing.T) {
+	db, prefix := openSessionServiceDB(t)
+	creatorID := prefix + "-creator"
+	seedSessionUser(t, db, creatorID, "SSG", models.BatteryAlpha, true)
+
+	outID := prefix + "-out"
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attendance_session (
+			id, name, qr_code, qr_code_secret, scope, batteries, status,
+			created_by, start_time, session_type, out_subtype,
+			expected_return_at, "createdAt", "updatedAt"
+		) VALUES ($1, 'Nights Out', $2, 'secret', 'unit_wide', '{}', 'active',
+		          $3, NOW(), 'out', 'nights_out', NOW() + interval '6 hours', NOW(), NOW())
+	`, outID, outID+":secret", creatorID)
+	if err != nil {
+		t.Fatalf("insert out session: %v", err)
+	}
+
+	svc := NewService(db, "@bot")
+	if _, err := svc.Get(context.Background(), outID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("Get(out session) error = %v; want ErrSessionNotFound", err)
+	}
+
+	// An ordinary session still resolves.
+	ordinary, err := svc.Create(context.Background(), CreateRequest{
+		Name: "Morning parade", Scope: models.SessionScopeUnitWide, CreatedBy: creatorID,
+	})
+	if err != nil {
+		t.Fatalf("create attendance session: %v", err)
+	}
+	if _, err := svc.Get(context.Background(), ordinary.ID); err != nil {
+		t.Fatalf("Get(attendance session) error = %v; want success", err)
+	}
+}

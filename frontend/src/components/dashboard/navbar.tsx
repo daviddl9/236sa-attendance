@@ -8,57 +8,15 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import UserProfile from "./user-profile";
-import { Menu, Settings, Users, Calendar, ScanLine, BarChart3, Clock, UserCheck } from "lucide-react";
+import { Menu, Settings, UserCheck } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
+import { navItems } from "@/lib/nav-items";
 import { isSuperadmin, getUserTier } from "@/lib/user-utils";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
 
-interface NavItem {
-  label: string;
-  href: string;
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>;
-  minTier?: number;
-}
 
-const navItems: NavItem[] = [
-  {
-    label: "Sessions",
-    href: "/dashboard/sessions",
-    icon: Calendar,
-    minTier: 2,
-  },
-  {
-    label: "Groups",
-    href: "/dashboard/groups",
-    icon: Users,
-    minTier: 2,
-  },
-  {
-    label: "Scan QR",
-    href: "/dashboard/attendance/scan",
-    icon: ScanLine,
-  },
-  {
-    label: "Users",
-    href: "/dashboard/users",
-    icon: Users,
-    minTier: 2,
-  },
-  {
-    label: "Statuses",
-    href: "/dashboard/statuses",
-    icon: Clock,
-    minTier: 3,
-  },
-  {
-    label: "Reports",
-    href: "/dashboard/reports",
-    icon: BarChart3,
-    minTier: 2,
-  },
-];
 
 export default function DashboardTopNav({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
