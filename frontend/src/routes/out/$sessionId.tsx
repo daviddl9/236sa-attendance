@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient, type OutDirection } from '../../lib/api-client';
 import { Button } from '../../components/ui/button';
 import { DoorOpen, DoorClosed, CheckCircle2, AlertTriangle } from 'lucide-react';
@@ -32,6 +32,25 @@ function OutScanPage() {
     queryFn: () => apiClient.getOutSelfState(sessionId),
     retry: false,
   });
+
+  // While the repeat-scan window is open, count down and re-check when it
+  // closes, so the confirm button appears on its own without a manual reload.
+  const readyAt = data?.nextMovementAt ? new Date(data.nextMovementAt) : null;
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  useEffect(() => {
+    if (!readyAt) {
+      setSecondsLeft(0);
+      return;
+    }
+    const tick = () => {
+      const remaining = Math.ceil((readyAt.getTime() - Date.now()) / 1000);
+      setSecondsLeft(remaining > 0 ? remaining : 0);
+      if (remaining <= 0) refetch();
+    };
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [data?.nextMovementAt, refetch]);
 
   const record = useMutation({
     mutationFn: (dir: OutDirection) => apiClient.recordOutMovement(sessionId, dir),
@@ -74,7 +93,8 @@ function OutScanPage() {
         <p className="text-muted-foreground mb-1">{session.name}</p>
         {done.duplicate && (
           <p className="text-sm text-muted-foreground mb-3">
-            Already recorded a moment ago — nothing changed.
+            You scanned moments ago, so nothing changed. Wait about a minute,
+            then scan again to {goingOut ? 'come back in' : 'go out'}.
           </p>
         )}
         {goingOut && (
@@ -122,6 +142,17 @@ function OutScanPage() {
 
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
 
+      {secondsLeft > 0 ? (
+        <div className="w-full max-w-xs rounded-md border px-4 py-3">
+          <p className="font-medium">
+            Scan again in {secondsLeft}s
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            You just scanned. This short wait stops an accidental second tap
+            recording the opposite movement.
+          </p>
+        </div>
+      ) : (
       <Button
         size="lg"
         className="w-full max-w-xs"
@@ -130,6 +161,7 @@ function OutScanPage() {
       >
         {record.isPending ? 'Recording…' : goingOut ? 'Confirm — going OUT' : 'Confirm — coming IN'}
       </Button>
+      )}
       <p className="text-xs text-muted-foreground mt-3">Nothing is recorded until you confirm.</p>
     </Centered>
   );

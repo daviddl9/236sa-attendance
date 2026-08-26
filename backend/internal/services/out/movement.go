@@ -13,9 +13,29 @@ import (
 
 // MinMovementInterval is how long a repeat scan is treated as a duplicate
 // rather than a direction change. A soldier who scans twice at the gate —
-// a slow confirmation screen, a friend borrowing the phone — must not be
-// recorded as back inside camp while walking out of it.
-const MinMovementInterval = 2 * time.Minute
+// a slow confirmation screen, a stray second tap — must not be recorded as
+// back inside camp while walking out of it.
+//
+// It is deliberately short. Accidental repeats happen within seconds, while a
+// genuine turnaround — stepping out and coming straight back for something
+// forgotten — is a real movement worth recording. A minute separates the two
+// without making anyone wait long.
+const MinMovementInterval = time.Minute
+
+// NextMovementAt returns the instant at which a further movement will be
+// accepted, or nil when one can be recorded now. The scan screen uses it to
+// say when someone may scan again rather than offering a button the server
+// would refuse.
+func NextMovementAt(latest *models.OutMovement, now time.Time) *time.Time {
+	if latest == nil {
+		return nil
+	}
+	ready := latest.OccurredAt.Add(MinMovementInterval)
+	if !ready.After(now) {
+		return nil
+	}
+	return &ready
+}
 
 // RecordOutcome is the result of evaluating a movement request.
 type RecordOutcome int
