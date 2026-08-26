@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router';
+import { createFileRoute } from '@tanstack/react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { apiClient } from '../../../lib/api-client';
 import DashboardLayout from '../../../components/dashboard/layout';
@@ -22,6 +22,7 @@ import {
 } from '../../../components/ui/card';
 import { useState, useRef, useEffect } from 'react';
 import jsQR from 'jsqr';
+import { completeScan, tokenFromScan } from '../../../lib/qr-scan';
 import { ScanLine, CheckCircle2, XCircle, SwitchCamera } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../../../lib/auth-context';
@@ -30,18 +31,6 @@ import { canAccessCommanderFeatures } from '../../../lib/user-utils';
 export const Route = createFileRoute('/dashboard/attendance/scan')({
   component: ScanAttendancePage,
 });
-
-// Session QR codes encode a URL like https://host/qr/<sessionId>:<secret>.
-// The mark-attendance endpoint expects "<sessionId>:<secret>:<timestamp>".
-// Accept either the full URL or a bare token and normalize to that shape.
-function toQrData(raw: string): string | null {
-  const text = raw.trim();
-  const token = text.includes('/qr/') ? text.split('/qr/')[1] : text;
-  const cleaned = token.split(/[?#]/)[0];
-  const parts = cleaned.split(':');
-  if (parts.length < 2 || !parts[0] || !parts[1]) return null;
-  return `${parts[0]}:${parts[1]}:${Math.floor(Date.now() / 1000)}`;
-}
 
 // Acquire a camera stream that works across devices. Without a deviceId we
 // prefer the rear camera (best for scanning on phones/tablets) but only as a
@@ -80,7 +69,6 @@ function cameraErrorMessage(err: unknown): string {
 
 function ScanAttendancePage() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [scanning, setScanning] = useState(false);
   const [scannedData, setScannedData] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<'success' | 'error' | null>(null);
@@ -96,16 +84,25 @@ function ScanAttendancePage() {
     enabled: canViewSessions,
   });
 
+  // Scanning goes through the same resolver as the /qr/ landing route, so the
+  // camera handles Out codes too. Posting straight to the attendance endpoint
+  // meant an Out code was refused: it does not accept them.
   const markMutation = useMutation({
-    mutationFn: (qrData: string) => apiClient.markAttendance({ qrData }),
-    onSuccess: (_data, qrData) => {
-      const sessionId = qrData.split(':')[0];
-      toast.success('Attendance marked successfully!');
-      navigate({
-        to: '/dashboard/sessions/$sessionId',
-        params: { sessionId },
-        search: { scanned: true },
-      });
+    mutationFn: (token: string) => completeScan(token),
+    onSuccess: (outcome) => {
+      if (outcome.kind === 'error') {
+        setScanResult('error');
+        toast.error('That QR code could not be used. Please try again.');
+        setTimeout(() => {
+          setScanResult(null);
+          setScannedData(null);
+        }, 3000);
+        return;
+      }
+      toast.success(
+        outcome.kind === 'out' ? 'Out session scanned' : 'Attendance marked successfully!',
+      );
+      window.location.href = outcome.path;
     },
     onError: (error: Error) => {
       setScanResult('error');
@@ -171,7 +168,7 @@ function ScanAttendancePage() {
   };
 
   const handleScanResult = (raw: string) => {
-    const qrData = toQrData(raw);
+    const qrData = tokenFromScan(raw);
     if (!qrData) {
       toast.error('Unrecognized QR code. Please try again.');
       return;
@@ -239,7 +236,7 @@ function ScanAttendancePage() {
 
   const handleManualQR = () => {
     const trimmed = manualQRInput.trim();
-    const qrData = toQrData(trimmed);
+    const qrData = tokenFromScan(trimmed);
     if (!qrData) {
       toast.error('Unrecognized QR code.');
       return;

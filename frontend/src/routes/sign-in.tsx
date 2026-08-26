@@ -11,8 +11,9 @@ import {
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { toast } from 'sonner';
+import { completeScan } from '../lib/qr-scan';
 import { useAuth } from '../lib/auth-context';
-import { apiClient, API_URL } from '../lib/api-client';
+import { apiClient } from '../lib/api-client';
 import { PublicFooter } from '../components/public-footer';
 import { Clock } from 'lucide-react';
 import { DobFields } from '../components/dob-fields';
@@ -53,36 +54,18 @@ function SignInContent() {
         window.location.href = '/dashboard';
         return;
       }
+      // Finish the scan that sent this person to sign in. The shared resolver
+      // knows an Out code belongs on the Out screen; assuming attendance here
+      // sent them to a session page that cannot load an Out session.
       try {
-        const response = await fetch(`${API_URL}/api/qr/${search.qrToken}`, {
-          method: 'GET',
-          credentials: 'include',
-          redirect: 'manual',
-        });
-        if (response.type === 'opaqueredirect') {
-          const sessionId = search.qrToken.split(':')[0];
-          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
+        const outcome = await completeScan(search.qrToken);
+        if (outcome.kind !== 'error') {
+          window.location.href = outcome.path;
           return;
         }
-        if (response.status >= 300 && response.status < 400) {
-          const location = response.headers.get('Location');
-          if (location) {
-            try {
-              const url = new URL(location);
-              window.location.href = url.pathname + url.search;
-            } catch {
-              window.location.href = location;
-            }
-            return;
-          }
-        }
-        if (response.ok) {
-          const sessionId = search.qrToken.split(':')[0];
-          window.location.href = `/dashboard/sessions/${sessionId}?scanned=true`;
-          return;
-        }
+        toast.error('Signed in, but that QR code could not be used. Please scan again.');
       } catch {
-        toast.error('Signed in but failed to mark attendance. Please scan the QR code again.');
+        toast.error('Signed in but failed to record the scan. Please scan the QR code again.');
       }
     }
 

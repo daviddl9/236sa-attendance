@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiClient, API_URL } from '../../lib/api-client';
+import { apiClient } from '../../lib/api-client';
+import { completeScan } from '../../lib/qr-scan';
 import { useAuth } from '../../lib/auth-context';
 import {
   Dialog,
@@ -30,20 +31,6 @@ function errorMessageForStatus(status: number): string {
       return 'This session is not active.';
     default:
       return 'Failed to mark attendance. Please try again.';
-  }
-}
-
-// The backend redirects an Out-session scan to the Out confirm screen, but a
-// fetch with redirect:'manual' hides the Location header, so the destination
-// has to be established separately. /me answers for any authenticated user —
-// 200 for an Out session, 404 for an ordinary one — where the Out board and
-// session endpoints would 403 a soldier.
-async function scanDestination(sessionId: string): Promise<string> {
-  try {
-    await apiClient.getOutSelfState(sessionId);
-    return `/out/${sessionId}`;
-  } catch {
-    return `/dashboard/sessions/${sessionId}?scanned=true`;
   }
 }
 
@@ -85,61 +72,18 @@ function QRScanPage() {
       // User is authenticated - proceed with QR scan
       setStatus('loading');
 
-      // Call backend API - backend will handle authentication and redirects
+      // One shared resolver decides where a scan lands, so this page, the
+      // sign-in hand-off and the camera scanner cannot disagree about it.
       try {
-        const response = await fetch(`${API_URL}/api/qr/${token}`, {
-          method: 'GET',
-          credentials: 'include',
-          redirect: 'manual',
-        });
-
-        // Handle opaque redirects (CORS) - backend returned a redirect
-        if (response.type === 'opaqueredirect') {
-          window.location.href = await scanDestination(sessionId);
+        const outcome = await completeScan(token);
+        if (outcome.kind === 'error') {
+          setErrorMessage(errorMessageForStatus(outcome.status));
+          setErrorTarget(outcome.status === 404 ? 'sessions' : 'scan');
+          setStatus('error');
           return;
         }
-
-        // Handle transparent redirects (same-origin)
-        if (response.status >= 300 && response.status < 400) {
-          const location = response.headers.get('Location');
-          if (location) {
-            // Extract the path from the full URL (backend returns full URL)
-            try {
-              const url = new URL(location);
-              const path = url.pathname + url.search;
-              window.location.href = path;
-              return;
-            } catch {
-              // If Location is a relative URL, use it directly
-              window.location.href = location;
-              return;
-            }
-          } else {
-            // If Location header is not accessible (CORS), fallback to sign-in
-            window.location.href = `/sign-in?redirect=/qr/${token}&qrToken=${token}`;
-            return;
-          }
-        }
-
-        // If successful (shouldn't happen, backend always redirects)
-        if (response.ok) {
-          window.location.href = await scanDestination(sessionId);
-          return;
-        }
-
-        // The user is already authenticated here (the unauthenticated case is
-        // handled before the fetch), so only a genuine auth failure (expired
-        // cookie) should send them back to sign-in. Everything else — a
-        // deleted session, a closed session, or an out-of-scope user — is
-        // surfaced as an error instead of bouncing them to the login page.
-        if (response.status === 401) {
-          window.location.href = `/sign-in?redirect=/qr/${token}&qrToken=${token}`;
-          return;
-        }
-
-        setErrorMessage(errorMessageForStatus(response.status));
-        setErrorTarget(response.status === 404 ? 'sessions' : 'scan');
-        setStatus('error');
+        window.location.href = outcome.path;
+        return;
       } catch (error) {
         console.error('QR scan error:', error);
         setErrorMessage('Failed to mark attendance. Please try again.');

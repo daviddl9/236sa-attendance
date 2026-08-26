@@ -352,3 +352,60 @@ func TestManualMarkAttendanceUsesOneBatchTimestamp(t *testing.T) {
 		t.Fatalf("manual timestamps = (%s, %s), want one batch timestamp", firstMarkedAt, secondMarkedAt)
 	}
 }
+
+func newRemoveAttendanceRequest(sessionID, targetUserID string, user *models.User) *http.Request {
+	req := httptest.NewRequest(http.MethodDelete,
+		"/api/sessions/"+sessionID+"/attendance/"+targetUserID, nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("id", sessionID)
+	routeContext.URLParams.Add("userId", targetUserID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	return req.WithContext(context.WithValue(req.Context(), middleware.UserKey, user))
+}
+
+// Every commander from 3SG upwards marks and unmarks any soldier on any
+// session, whatever battery either belongs to. Marking used to be bounded by
+// the session's batteries and unmarking by the target's, so a commander could
+// mark someone present and then be refused when undoing it.
+func TestMarkAndUnmarkIgnoreBatteryForAnyCommander(t *testing.T) {
+	db, prefix := openRegistrationDB(t)
+	bravoNCO := prefix + "-bravo-nco"
+	alphaSoldier := prefix + "-alpha-soldier"
+	sessionID := prefix + "-alpha-only"
+	seedUser(t, db, bravoNCO, "BRAVO NCO", "3SG", "Bravo", "bravo-nco", true)
+	seedUser(t, db, alphaSoldier, "ALPHA SOLDIER", "PTE", "Alpha", "alpha-soldier", true)
+
+	// An Alpha-only session: previously off limits to a Bravo commander.
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attendance_session (id, name, qr_code, qr_code_secret, scope, batteries, status, created_by, start_time)
+		VALUES ($1, 'Alpha only', $2, $3, 'battery_specific', ARRAY['Alpha'], 'active', $4, NOW())
+	`, sessionID, sessionID+"-qr", sessionID+"-secret", bravoNCO); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	commander := &models.User{ID: bravoNCO, Rank: stringPtr("3SG"), Battery: stringPtr("Bravo")}
+
+	markRec := httptest.NewRecorder()
+	NewAttendanceHandler(db, nil).ManualMarkAttendance(markRec,
+		newManualAttendanceRequest(sessionID, fmt.Sprintf(`{"userIds":[%q]}`, alphaSoldier), commander))
+	if markRec.Code != http.StatusOK {
+		t.Fatalf("mark = %d %q; want 200", markRec.Code, markRec.Body.String())
+	}
+
+	rmRec := httptest.NewRecorder()
+	NewAttendanceHandler(db, nil).RemoveAttendance(rmRec,
+		newRemoveAttendanceRequest(sessionID, alphaSoldier, commander))
+	if rmRec.Code != http.StatusOK {
+		t.Fatalf("unmark = %d %q; want 200 — whoever may mark must be able to unmark",
+			rmRec.Code, rmRec.Body.String())
+	}
+
+	var records int
+	if err := db.Pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM attendance_record WHERE session_id = $1`, sessionID).Scan(&records); err != nil {
+		t.Fatalf("count records: %v", err)
+	}
+	if records != 0 {
+		t.Fatalf("records after unmark = %d; want 0", records)
+	}
+}

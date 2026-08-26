@@ -294,6 +294,23 @@ type ManualMarkRequest struct {
 }
 
 // ManualMarkAttendance marks attendance manually for users (commander only)
+// attendanceChangeIsAuthorized records where the authority to add or remove an
+// attendance record comes from: the route's Tier 2+ gate, and nothing else.
+//
+// Every commander from 3SG upwards may mark and unmark any soldier on any
+// session, whatever battery either belongs to. Marking used to be bounded by
+// the session's batteries and unmarking by the target's battery, which meant a
+// commander could mark someone present and then be refused when undoing it.
+// Both now rest on the same rule so they cannot disagree again.
+const attendanceChangeIsAuthorized = "route middleware.RequireBatteryNCO"
+
+// sessionExists reports whether the attendance session is present.
+func (h *AttendanceHandler) sessionExists(ctx context.Context, sessionID string) error {
+	var id string
+	return h.db.Pool.QueryRow(ctx,
+		`SELECT id FROM attendance_session WHERE id = $1`, sessionID).Scan(&id)
+}
+
 func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
@@ -303,14 +320,10 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Verify the session exists for the commander's transport authorization.
-	// The attendance service owns the session-validity decision below.
-	var session models.AttendanceSession
-	err := h.db.Pool.QueryRow(ctx, `
-		SELECT id, scope, batteries FROM attendance_session WHERE id = $1
-	`, sessionID).Scan(&session.ID, &session.Scope, &session.Batteries)
-
-	if err != nil {
+	// Verify the session exists. The attendance service owns the
+	// session-validity decision below, and marking authority is the route's
+	// Tier 2+ gate — see attendanceChangeIsAuthorized.
+	if err := h.sessionExists(ctx, sessionID); err != nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
@@ -324,32 +337,6 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 	if len(req.UserIDs) == 0 {
 		http.Error(w, "No users specified", http.StatusBadRequest)
 		return
-	}
-
-	// Check permissions: commanders can only mark for their battery, superadmins can mark for any
-	if !user.IsSuperadmin {
-		// Get user's battery
-		var userBattery *string
-		err := h.db.Pool.QueryRow(ctx, `SELECT battery FROM "user" WHERE id = $1`, user.ID).Scan(&userBattery)
-		if err != nil || userBattery == nil {
-			http.Error(w, "User battery not found", http.StatusBadRequest)
-			return
-		}
-
-		// Check if session is unit-wide or includes user's battery
-		if session.Scope == models.SessionScopeBatterySpecific {
-			batteryAllowed := false
-			for _, battery := range session.Batteries {
-				if battery == *userBattery {
-					batteryAllowed = true
-					break
-				}
-			}
-			if !batteryAllowed {
-				http.Error(w, "Insufficient permissions: Cannot mark attendance for this battery", http.StatusForbidden)
-				return
-			}
-		}
 	}
 
 	batchMarkedAt := time.Now()
@@ -438,39 +425,21 @@ func (h *AttendanceHandler) ManualMarkAttendance(w http.ResponseWriter, r *http.
 	}
 }
 
-// RemoveAttendance removes an attendance record (commander/superadmin)
+// RemoveAttendance removes an attendance record. Any commander the route
+// admitted (Tier 2+) may remove any soldier's mark; see
+// attendanceChangeIsAuthorized.
 func (h *AttendanceHandler) RemoveAttendance(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 	sessionID := chi.URLParam(r, "id")
 	targetUserID := chi.URLParam(r, "userId")
-	user, ok := middleware.GetUserFromContext(r.Context())
-	if !ok {
+	if _, ok := middleware.GetUserFromContext(r.Context()); !ok {
 		http.Error(w, "Not authenticated", http.StatusUnauthorized)
 		return
 	}
 
-	// Only superadmin can remove any attendance, commanders can remove for their battery
-	if !user.IsSuperadmin {
-		// Get user's battery
-		var userBattery *string
-		err := h.db.Pool.QueryRow(ctx, `SELECT battery FROM "user" WHERE id = $1`, user.ID).Scan(&userBattery)
-		if err != nil || userBattery == nil {
-			http.Error(w, "User battery not found", http.StatusBadRequest)
-			return
-		}
-
-		// Get target user's battery
-		var targetBattery *string
-		err = h.db.Pool.QueryRow(ctx, `SELECT battery FROM "user" WHERE id = $1`, targetUserID).Scan(&targetBattery)
-		if err != nil {
-			http.Error(w, "Target user not found", http.StatusNotFound)
-			return
-		}
-
-		if targetBattery == nil || *targetBattery != *userBattery {
-			http.Error(w, "Insufficient permissions", http.StatusForbidden)
-			return
-		}
+	if err := h.sessionExists(ctx, sessionID); err != nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
 	}
 
 	_, err := h.db.Pool.Exec(ctx, `
